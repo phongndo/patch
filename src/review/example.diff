@@ -1,0 +1,113 @@
+diff --git a/src/lib/cache.ts b/src/lib/cache.ts
+index 216ac89..c28d8b1 100644
+--- a/src/lib/cache.ts
++++ b/src/lib/cache.ts
+@@ -1,26 +1,49 @@
+-export interface CacheOptions {
++export interface CacheOptions<T> {
+   maxSize?: number;
++  ttl?: number;
++  onEvict?: (key: string, value: T) => void;
+ }
+ 
+-export function createCache<T>(options: CacheOptions = {}) {
+-  const { maxSize = 100 } = options;
+-  const entries = new Map<string, T>();
++interface Entry<T> {
++  value: T;
++  expiresAt: number;
++}
++
++export function createCache<T>(options: CacheOptions<T> = {}) {
++  const { maxSize = 100, ttl = Infinity, onEvict } = options;
++  const entries = new Map<string, Entry<T>>();
++
++  function remove(key: string) {
++    const entry = entries.get(key);
++    if (!entry) return;
++    entries.delete(key);
++    onEvict?.(key, entry.value);
++  }
+ 
+   return {
+     get(key: string): T | undefined {
+-      return entries.get(key);
++      const entry = entries.get(key);
++      if (!entry) return undefined;
++      if (Date.now() >= entry.expiresAt) {
++        remove(key);
++        return undefined;
++      }
++      return entry.value;
+     },
+ 
+     set(key: string, value: T): void {
+-      if (entries.size >= maxSize) {
++      if (entries.has(key)) entries.delete(key);
++      if (entries.size >= maxSize && maxSize > 0) {
+         const oldestKey = entries.keys().next().value;
+-        if (oldestKey) entries.delete(oldestKey);
++        if (oldestKey !== undefined) remove(oldestKey);
+       }
+-      entries.set(key, value);
++      if (maxSize > 0) {
++        entries.set(key, { value, expiresAt: Date.now() + ttl });
++      }
+     },
+ 
+     clear(): void {
+-      entries.clear();
++      for (const key of entries.keys()) remove(key);
+     },
+   };
+ }
+diff --git a/src/lib/cache.test.ts b/src/lib/cache.test.ts
+new file mode 100644
+index 0000000..21bca81
+--- /dev/null
++++ b/src/lib/cache.test.ts
+@@ -0,0 +1,20 @@
++import { afterEach, expect, test, vi } from "vitest";
++import { createCache } from "./cache";
++
++afterEach(() => vi.useRealTimers());
++
++test("expired entries are evicted on read", () => {
++  vi.useFakeTimers();
++  const onEvict = vi.fn();
++  const cache = createCache({ ttl: 1000, onEvict });
++  cache.set("user", { name: "Ada" });
++
++  vi.advanceTimersByTime(1001);
++
++  expect(cache.get("user")).toBeUndefined();
++  expect(onEvict).toHaveBeenCalledWith("user", { name: "Ada" });
++});
++
++test("a zero-sized cache stores no entries", () => {
++  expect(createCache({ maxSize: 0 }).get("missing")).toBeUndefined();
++});
+diff --git a/src/index.ts b/src/index.ts
+index 626b391..cb90139 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -1,2 +1,3 @@
+ export { createCache } from "./lib/cache";
++export type { CacheOptions } from "./lib/cache";
+ export { createStore } from "./lib/store";
+diff --git a/README.md b/README.md
+index 7b2d341..91a3b1f 100644
+--- a/README.md
++++ b/README.md
+@@ -1,5 +1,11 @@
+ # Toolkit
+ 
+ Small utilities for things you do every day.
+ 
++## Cache
++
++Pass `ttl` in milliseconds to expire entries automatically on read.
++Use `onEvict` to clean up resources when an entry is removed.
++The default cache holds 100 entries with no expiration.
++
+ See the API reference for examples.
