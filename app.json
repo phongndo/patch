@@ -1,0 +1,132 @@
+{
+  "$schema": "https://schema.native-sdk.dev/app/v1.json",
+  "id": "computer.patch.app",
+  "name": "patch",
+  "display_name": "Patch",
+  "description": "Local code review.",
+  "version": "0.1.0",
+  "icons": ["public/favicon.svg"],
+  "platforms": ["macos"],
+  "permissions": ["view", "command"],
+  "capabilities": ["native_views", "gpu_surfaces"],
+  "webview_layer": "exclude",
+  "shell": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Patch",
+        "width": 1380,
+        "height": 900,
+        "min_width": 880,
+        "min_height": 500,
+        "titlebar": "hidden_inset",
+        "transparent": true,
+        "activate_on_show": false,
+        "views": [
+          {
+            "label": "main-canvas",
+            "kind": "gpu_surface",
+            "fill": true,
+            "role": "Code review",
+            "accessibility_label": "Patch",
+            "gpu_backend": "metal",
+            "gpu_pixel_format": "bgra8_unorm",
+            "gpu_present_mode": "timer",
+            "gpu_alpha_mode": "premultiplied",
+            "gpu_color_space": "srgb",
+            "gpu_vsync": true
+          }
+        ]
+      }
+    ]
+  },
+  "commands": [
+    {
+      "id": "patch.open",
+      "title": "Open repository…"
+    },
+    {
+      "id": "patch.refresh",
+      "title": "Refresh changes"
+    },
+    {
+      "id": "patch.commands",
+      "title": "Commands…"
+    },
+    {
+      "id": "patch.files",
+      "title": "Go to file…"
+    },
+    {
+      "id": "patch.search",
+      "title": "Find in diff…"
+    },
+    {
+      "id": "patch.split",
+      "title": "Toggle split or unified diff"
+    },
+    {
+      "id": "patch.sidebar",
+      "title": "Toggle file rail"
+    },
+    {
+      "id": "patch.notes",
+      "title": "Toggle notes"
+    },
+    {
+      "id": "patch.help",
+      "title": "Commands…"
+    },
+    {
+      "id": "patch.settings",
+      "title": "Settings…"
+    }
+  ],
+  "shortcuts": [
+    {
+      "id": "patch.open",
+      "key": "o",
+      "modifiers": ["primary"]
+    },
+    {
+      "id": "patch.refresh",
+      "key": "r",
+      "modifiers": ["primary"]
+    },
+    {
+      "id": "patch.commands",
+      "key": "k",
+      "modifiers": ["primary"]
+    },
+    {
+      "id": "patch.files",
+      "key": "p",
+      "modifiers": ["primary"]
+    },
+    {
+      "id": "patch.search",
+      "key": "f",
+      "modifiers": ["primary"]
+    },
+    {
+      "id": "patch.split",
+      "key": "\\",
+      "modifiers": ["primary"]
+    },
+    {
+      "id": "patch.sidebar",
+      "key": "b",
+      "modifiers": ["primary"]
+    },
+    {
+      "id": "patch.notes",
+      "key": "n",
+      "modifiers": ["primary", "shift"]
+    },
+    {
+      "id": "patch.help",
+      "key": "p",
+      "modifiers": ["primary", "shift"]
+    }
+  ]
+}

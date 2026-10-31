@@ -1,0 +1,13 @@
+.{
+    .name = .patch,
+    .fingerprint = 0xe22b9636a05c2c1c,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .native_sdk = .{
+            .url = "https://github.com/vercel-labs/native/archive/16f29572307c2cc133907537c4dfd98046d4e0f4.tar.gz",
+            .hash = "native_sdk-0.1.0-hzDzQtsrRQOMvQE7lICRQ4Fe7VUxGuW2F9qteYlssJic",
+        },
+    },
+    .paths = .{ "build.zig", "build.zig.zon", "app.json", "src", "public", "dist" },
+}
