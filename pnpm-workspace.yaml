@@ -1,0 +1,5 @@
+allowBuilds:
+  "@native-sdk/cli": true
+# Trees pins an older patch with a theme peer range that excludes Diffs' theme.
+overrides:
+  "@pierre/trees>@pierre/theming": 1.0.2

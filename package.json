@@ -1,0 +1,57 @@
+{
+  "name": "patch",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "zig build run -Dautomation=true --",
+    "review": "zig build run --",
+    "test": "zig build test-native-host && zig test src/native/selection.zig && zig test src/native/keyboard.zig && zig test src/native/patch.zig && zig test src/native/git.zig && zig test src/native/motion.zig && pnpm test:native && pnpm test:web",
+    "build": "zig build",
+    "preview": "zig-out/bin/patch",
+    "routes:generate": "tsr generate",
+    "typecheck": "pnpm routes:generate && tsrs --noEmit -p tsconfig.app.json && tsrs --noEmit -p tsconfig.node.json",
+    "lint": "oxlint --deny-warnings .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "check": "pnpm typecheck && pnpm lint && pnpm format:check",
+    "dev:web": "vite",
+    "build:web": "pnpm typecheck && vite build",
+    "review:web": "pnpm build:web && node server/index.ts",
+    "preview:web": "node server/index.ts --no-open",
+    "package": "pnpm build && native package --target macos --output zig-out/Patch.app --binary zig-out/bin/patch --signing adhoc --web-layer exclude",
+    "icons:sync": "node scripts/sync-pierre-icons.mjs",
+    "test:web": "node --test server/*.test.ts",
+    "test:native": "zig build && PATCH_TEST_NATIVE=1 node --test server/git.test.ts",
+    "test:ui": "zig build -Dautomation=true && node scripts/keyboard-smoke.mjs && node scripts/mouse-smoke.mjs && node scripts/native-smoke.mjs",
+    "bench:native": "zig build -Dautomation=true && node scripts/benchmark-native.mjs --all-interactions"
+  },
+  "dependencies": {
+    "@pierre/diffs": "1.6.2",
+    "@pierre/highlights": "0.3.0",
+    "@pierre/icons": "0.9.0",
+    "@pierre/trees": "1.0.0-beta.6",
+    "@tanstack/react-router": "1.170.46",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@native-sdk/cli": "0.11.0",
+    "@tanstack/router-cli": "1.167.46",
+    "@tanstack/router-plugin": "1.168.48",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "oxfmt": "0.75.0",
+    "oxlint": "1.90.0",
+    "tsrs": "0.20.1-ts7.1.0-beta",
+    "typescript": "7.0.2",
+    "vite": "8.3.5"
+  },
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "packageManager": "pnpm@12.9.0"
+}
