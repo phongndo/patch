@@ -1,0 +1,1274 @@
+const std = @import("std");
+const canvas = @import("native_sdk").canvas;
+const app = @import("../main.zig");
+const patch = @import("patch.zig");
+const AppUi = app.AppUi;
+const Model = app.Model;
+const Msg = app.Msg;
+const theme = @import("theme.zig");
+
+fn space(ui: *AppUi, width: f32, height: f32) AppUi.Node {
+    return ui.el(.row, .{ .width = width, .height = height, .padding = 0 }, .{});
+}
+fn line(ui: *AppUi, vertical: bool) AppUi.Node {
+    return ui.el(.row, .{ .width = if (vertical) 1 else 0, .height = if (vertical) 0 else 1, .padding = 0, .style = .{ .background = theme.split_rule } }, .{});
+}
+fn smallText(ui: *AppUi, text: []const u8, color: canvas.Color) AppUi.Node {
+    return ui.text(.{ .size = .sm, .style = .{ .foreground = color } }, text);
+}
+fn tinted(ui: *AppUi, key: []const u8, name: []const u8, label: []const u8, msg: Msg, color: canvas.Color, disabled: bool, size: f32) AppUi.Node {
+    return ui.stack(.{ .key = .{ .str = key }, .width = size, .height = size, .padding = 0 }, .{
+        ui.button(.{ .key = .{ .str = "button" }, .icon = ui.fmt("app:{s}", .{name}), .semantics = .{ .label = label }, .width = size, .height = size, .size = .icon, .variant = .ghost, .on_press = msg, .disabled = disabled, .style = .{ .foreground = color, .background = theme.clear, .radius = 6 } }, ""),
+        ui.el(.tooltip, .{ .text = label, .anchor = .below, .anchor_alignment = .end, .tooltip_delay = 600, .size = .sm }, .{}),
+    });
+}
+fn iconButton(ui: *AppUi, key: []const u8, name: []const u8, label: []const u8, msg: Msg, selected: bool, disabled: bool) AppUi.Node {
+    return tinted(ui, key, name, label, msg, if (selected) theme.green else theme.muted, disabled, 28);
+}
+/// Rex's pane controls: small, quiet icons that sit in the pane's own header.
+fn paneControl(ui: *AppUi, key: []const u8, name: []const u8, label: []const u8, msg: Msg, selected: bool, disabled: bool) AppUi.Node {
+    return tinted(ui, key, name, label, msg, if (selected) theme.sidebar_ink else theme.tertiary, disabled, 24);
+}
+/// One segment of the scope capsule, the active one on a raised capsule.
+/// `fill` shares the capsule's remaining room; otherwise it hugs its words.
+fn segment(ui: *AppUi, label: []const u8, text: []const u8, mode: @import("git.zig").Mode, fill: bool, model: *const Model) AppUi.Node {
+    const active = model.mode == mode;
+    return ui.button(.{ .grow = if (fill) 1 else 0, .height = 24, .size = .sm, .variant = .ghost, .disabled = model.busy, .on_press = if (active and mode == .branch) .open_base else .{ .mode = mode }, .semantics = .{ .label = label }, .style = .{ .foreground = if (active) theme.ink else theme.sidebar_ink, .background = if (active) theme.segment_on else theme.clear, .border = if (active) theme.selected_edge else theme.clear, .stroke_width = 0.5, .radius = 12, .quiet_hover = true } }, text);
+}
+/// A full-width capsule field that shares the file rows' icon column.
+fn capsuleField(ui: *AppUi, icon: []const u8, field: AppUi.Node) AppUi.Node {
+    return ui.row(.{ .grow = 1, .height = 28, .padding = 0, .gap = 0, .cross = .center }, .{
+        space(ui, theme.rail_left, 0),
+        ui.row(.{ .grow = 1, .height = 28, .padding = 0, .gap = 0, .cross = .center, .style = .{ .background = theme.field, .radius = 14 } }, .{
+            space(ui, 12.5, 0),
+            ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.tertiary } }, icon),
+            // The field insets its own text; this lands it on the rows' label column.
+            space(ui, 1, 0),
+            field,
+            space(ui, 10, 0),
+        }),
+        space(ui, theme.rail_right, 0),
+    });
+}
+/// The review's view controls sit as Rex's do: the rail toggle beside the
+/// traffic lights, the rest right-aligned to the rail's edge (the last one
+/// 15.5 points in from where the pane begins), all 28-point controls on a
+/// 30-point pitch. They follow the rail's width, not whether it is open, so
+/// nothing moves when it opens or closes. What no longer fits folds into "…".
+const band_toggle_right: f32 = 120;
+fn bandRight(model: *const Model) f32 {
+    return model.sidebar_width + theme.pane_inset - 15.5;
+}
+fn bandFits(model: *const Model) usize {
+    const room = bandRight(model) - band_toggle_right - 2;
+    return @intFromFloat(@max(0, @floor((room + 2) / 30)));
+}
+/// The right-aligned group's width: 28 points a control, 2 between.
+fn bandWidth(model: *const Model) f32 {
+    const fits = bandFits(model);
+    const overflow = fits < 3;
+    const count: f32 = @floatFromInt((if (overflow) fits -| 1 else 3) + @as(usize, if (overflow) 1 else 0));
+    return @max(0, count * 30 - 2);
+}
+fn bandIcons(ui: *AppUi, model: *const Model) AppUi.Node {
+    const Control = struct { key: []const u8, icon: []const u8, label: []const u8, title: []const u8, msg: Msg, color: canvas.Color, disabled: bool };
+    const controls = [_]Control{
+        .{ .key = "split", .icon = if (model.split) "columns" else "rows", .label = if (model.split) "Switch to unified diff" else "Switch to split diff", .title = if (model.split) "Unified Diff" else "Split Diff", .msg = .toggle_split, .color = theme.sidebar_ink, .disabled = model.files.len == 0 },
+        .{ .key = "notes", .icon = "note", .label = "Notes", .title = if (model.notes_open) "Hide Notes" else "Show Notes", .msg = .toggle_notes, .color = if (model.notes_open) theme.ink else theme.sidebar_ink, .disabled = model.files.len == 0 },
+        .{ .key = "commands", .icon = "command", .label = "Commands · ⌘K / ?", .title = "Command Palette", .msg = .{ .action = .{ .action = .commands } }, .color = theme.sidebar_ink, .disabled = false },
+    };
+    const fits = bandFits(model);
+    const shown = if (fits >= controls.len) controls.len else fits -| 1;
+    var nodes: [controls.len + 3]AppUi.Node = undefined;
+    var count: usize = 0;
+    for (controls[0..shown]) |control| {
+        nodes[count] = tinted(ui, control.key, control.icon, control.label, control.msg, if (control.disabled) theme.tertiary else control.color, false, 28);
+        count += 1;
+    }
+    if (shown < controls.len) {
+        var items: [controls.len]AppUi.Node = undefined;
+        for (controls[shown..], 0..) |control, index| {
+            items[index] = ui.el(.menu_item, .{ .text = control.title, .icon = ui.fmt("app:{s}", .{control.icon}), .height = 30, .on_press = control.msg, .disabled = control.disabled }, .{});
+        }
+        nodes[count] = ui.stack(.{ .key = .{ .str = "more" }, .width = 28, .height = 28, .padding = 0 }, .{
+            tinted(ui, "more", "more", "More", .toggle_band_menu, if (model.band_menu) theme.ink else theme.sidebar_ink, false, 28),
+            if (model.band_menu) ui.el(.dropdown_menu, .{ .width = 200, .anchor = .below, .anchor_alignment = .start, .anchor_offset = 4, .padding = 5, .gap = 0, .on_dismiss = .close_band_menu, .style = .{ .background = theme.menu, .border = theme.glass_edge, .radius = 12 } }, ui.arena.dupe(AppUi.Node, items[0 .. controls.len - shown]) catch &.{}) else ui.spacer(0),
+        });
+        count += 1;
+    }
+    return ui.row(.{ .height = 28, .padding = 0, .gap = 2, .cross = .center }, ui.arena.dupe(AppUi.Node, nodes[0..count]) catch &.{});
+}
+fn band(ui: *AppUi) AppUi.Node {
+    return ui.row(.{ .height = theme.band_height, .padding = 0, .gap = 0, .window_drag = true }, .{});
+}
+/// The title band floats above both panes at fixed window coordinates: the
+/// controls beside the traffic lights and the review's title where the pane
+/// begins. Panes slide underneath when the rail opens or closes; nothing here moves.
+fn headerLayer(ui: *AppUi, model: *const Model) AppUi.Node {
+    var totals: struct { additions: u32 = 0, deletions: u32 = 0 } = .{};
+    for (model.files) |file| {
+        totals.additions += file.additions;
+        totals.deletions += file.deletions;
+    }
+    // With the rail open the controls sit at its edge and the title where the
+    // panes begin; as the rail eases shut they ease back beside the toggle, so
+    // nothing is left stranded mid-band. At the default width both are the
+    // same place; the rail toggle itself never moves.
+    const open_t = if (model.sidebar_width > 0) std.math.clamp(model.rail_shown / model.sidebar_width, 0, 1) else 0;
+    const group_open = @max(band_toggle_right + 2, bandRight(model) - bandWidth(model));
+    const group_closed = band_toggle_right + 3.5; // where the group sits at the default width
+    const group_left = group_closed + (group_open - group_closed) * open_t;
+    const title_open = model.sidebar_width + theme.pane_inset + 12;
+    const title_closed = @max(theme.sidebar_width + 12, group_closed + bandWidth(model) + 25);
+    const title_x = @max(group_left + bandWidth(model) + 8, title_closed + (title_open - title_closed) * open_t);
+    const reserved = (if (model.notes_open) model.notes_width + theme.pane_inset else 0) + 150;
+    return ui.column(.{ .padding = 0, .gap = 0, .cross = .start }, .{
+        ui.row(.{ .height = 50, .padding = 0, .gap = 0, .cross = .center }, .{
+            space(ui, 92, 0),
+            tinted(ui, "sidebar", "sidebar", if (model.sidebar) "Hide file rail · ⌘B" else "Show file rail · ⌘B", .toggle_sidebar, theme.sidebar_ink, false, 28),
+            space(ui, group_left - band_toggle_right, 0),
+            bandIcons(ui, model),
+            space(ui, @max(0, title_x - group_left - bandWidth(model)), 0),
+            ui.row(.{ .width = @max(0, model.canvas_width - title_x - reserved), .height = 24, .padding = 0, .gap = 0, .cross = .center }, .{
+                ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.sidebar_ink } }, if (model.imported) "document" else "branch"),
+                space(ui, 8, 0),
+                ui.text(.{ .style = .{ .foreground = if (model.active) theme.ink else theme.inactive_ink } }, reviewTitle(ui, model)),
+                space(ui, 8, 0),
+                ui.text(.{ .style = .{ .foreground = theme.tertiary } }, if (model.files.len == 1) "1 file" else ui.fmt("{d} files", .{model.files.len})),
+                space(ui, 10, 0),
+                if (model.files.len > 0) smallText(ui, ui.fmt("+{d}", .{totals.additions}), theme.green) else ui.spacer(0),
+                space(ui, 4, 0),
+                if (model.files.len > 0) smallText(ui, ui.fmt("−{d}", .{totals.deletions}), theme.red) else ui.spacer(0),
+            }),
+        }),
+    });
+}
+/// What is under review, at the top of the rail with its reload and settings.
+fn repositoryRow(ui: *AppUi, model: *const Model) AppUi.Node {
+    const name = ui.arena.dupe(canvas.TextSpan, &.{.{ .text = model.repository, .weight = .medium }}) catch &.{};
+    return ui.row(.{ .height = 30, .padding = 0, .gap = 0, .cross = .center }, .{
+        space(ui, theme.rail_left, 0),
+        ui.row(.{ .key = .{ .str = "open-repo" }, .grow = 1, .height = 30, .padding = 0, .gap = 0, .cross = .center, .on_press = .open_repo, .semantics = .{ .label = "Open repository · ⌘O", .role = .button }, .style = .{ .radius = 15 } }, .{
+            space(ui, 11.5, 0),
+            ui.appIcon(.{ .width = 16, .height = 16, .style = .{ .foreground = theme.sidebar_ink } }, if (model.imported) "document" else "repository"),
+            space(ui, 10.5, 0),
+            ui.paragraph(.{ .height = 18, .wrap = false, .overflow = .clip, .style = .{ .foreground = theme.ink } }, name),
+            space(ui, 7, 0),
+            ui.text(.{ .grow = 1, .style = .{ .foreground = theme.tertiary } }, if (model.imported) "Patch file" else model.head),
+            space(ui, 4, 0),
+        }),
+        tinted(ui, "refresh", "refresh", "Refresh · ⌘R", .refresh, theme.tertiary, model.busy, 28),
+        space(ui, theme.rail_right, 0),
+    });
+}
+/// The comparison control holds the rail's foot. Branch asks for its base in a
+/// popover above it, so choosing a comparison never moves anything.
+/// The checked-out branch, or the one chosen to review against the base.
+fn headName(model: *const Model) []const u8 {
+    return if (model.compare_head.len > 0) model.compare_head.text() else if (model.head.len > 0) model.head else "Branch";
+}
+/// One side of the comparison: its role, then its branch. The side being
+/// chosen is raised like the active scope segment.
+fn branchSide(ui: *AppUi, model: *const Model, slot: app.BranchSlot, name: []const u8) AppUi.Node {
+    const active = model.branch_slot == slot;
+    const role = if (slot == .base) "Base" else "Head";
+    return ui.row(.{ .key = .{ .str = role }, .grow = 1, .height = 28, .padding = 0, .gap = 0, .cross = .center, .on_press = .{ .branch_slot = slot }, .semantics = .{ .role = .button, .label = ui.fmt("{s} {s}", .{ role, name }) }, .style = .{ .background = if (active) theme.segment_on else theme.clear, .border = if (active) theme.selected_edge else theme.clear, .stroke_width = 0.5, .radius = 14 } }, .{
+        space(ui, 10, 0),
+        smallText(ui, role, theme.palette_hint),
+        space(ui, 7, 0),
+        ui.text(.{ .grow = 1, .style = .{ .foreground = if (active) theme.palette_ink else theme.sidebar_ink } }, name),
+        space(ui, 8, 0),
+    });
+}
+/// Choosing what to compare, in the palette's language: the two sides on
+/// top, a capsule filter, the branches newest first with the choice in theme.red,
+/// and keycaps at the foot.
+fn branchPicker(ui: *AppUi, model: *const Model) AppUi.Node {
+    var matches: [app.max_branch_matches][]const u8 = undefined;
+    const count = app.branchMatches(model, &matches);
+    const visible = 8;
+    const selected = @min(model.branch_selected, count -| 1);
+    const first = if (selected >= visible) selected + 1 - visible else 0;
+    const last = @min(count, first + visible);
+    const white = canvas.Color.rgb8(255, 255, 255);
+    var rows: [visible]AppUi.Node = undefined;
+    var n: usize = 0;
+    for (matches[first..last], first..) |name, position| {
+        const active = position == selected;
+        rows[n] = ui.row(.{ .key = .{ .index = position }, .height = theme.palette_row, .padding = 0, .gap = 0, .cross = .center, .on_press = .{ .branch_pick = position }, .semantics = .{ .role = .listitem, .label = name }, .style = .{ .background = if (active) theme.palette_active else theme.clear, .quiet_hover = true, .radius = 11 } }, .{
+            space(ui, 11, 0),
+            ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = if (active) white else theme.palette_hint } }, "branch"),
+            space(ui, 8, 0),
+            ui.text(.{ .grow = 1, .style = .{ .foreground = if (active) white else theme.palette_ink } }, name),
+            if (std.mem.eql(u8, name, model.head)) smallText(ui, "checked out", if (active) canvas.Color.rgba8(255, 255, 255, 200) else theme.palette_hint) else ui.spacer(0),
+            space(ui, 11, 0),
+        });
+        n += 1;
+    }
+    const typed = std.mem.trim(u8, model.branch_query.text(), " ");
+    const role = if (model.branch_slot == .base) "base" else "head";
+    return ui.el(.popover, .{ .key = .{ .str = "branch-picker" }, .width = 300, .anchor = .above, .anchor_alignment = .start, .anchor_offset = 8, .padding = 5, .backdrop_blur_token = .md, .on_dismiss = .close_base, .semantics = .{ .role = .dialog, .label = "Compare branches" }, .style = .{ .background = theme.palette_glass, .border = theme.glass_edge, .radius = 16 } }, .{ui.column(.{ .padding = 0, .gap = 0 }, .{
+        ui.row(.{ .height = 28, .padding = 0, .gap = 2, .cross = .center }, .{
+            branchSide(ui, model, .base, model.base.text()),
+            tinted(ui, "swap", "swap", "Swap base and head", .branch_swap, theme.palette_hint, false, 26),
+            branchSide(ui, model, .head, headName(model)),
+        }),
+        space(ui, 0, 6),
+        ui.row(.{ .height = 30, .padding = 0, .gap = 0, .cross = .center, .style = .{ .background = theme.palette_field, .radius = 15 } }, .{
+            space(ui, 11, 0),
+            ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.secondary } }, "find"),
+            space(ui, 1, 0),
+            ui.textField(.{ .key = .{ .str = ui.fmt("branch-query-{s}", .{role}) }, .grow = 1, .height = 26, .text = model.branch_query.text(), .placeholder = ui.fmt("Choose the {s} branch…", .{role}), .autofocus = true, .on_input = AppUi.inputMsg(.branch_query_edit), .on_submit = .base_compare, .semantics = .{ .label = "Filter branches" }, .variant = .ghost, .style = .{ .background = theme.clear, .border = theme.clear, .focus_ring = theme.clear, .radius = 0 } }),
+            space(ui, 8, 0),
+        }),
+        space(ui, 0, 6),
+        if (n > 0) ui.column(.{ .padding = 0, .gap = 0, .semantics = .{ .role = .list, .label = "Branches" } }, ui.arena.dupe(AppUi.Node, rows[0..n]) catch &.{}) else ui.row(.{ .height = 44, .padding = 0, .gap = 0, .cross = .center }, .{ space(ui, 12, 0), ui.text(.{ .grow = 1, .size = .sm, .text_alignment = .center, .style = .{ .foreground = theme.secondary } }, if (typed.len > 0) ui.fmt("No match · ↩ compares with “{s}”", .{typed}) else "No branches"), space(ui, 12, 0) }),
+        space(ui, 0, 5),
+        ui.row(.{ .height = 1, .padding = 0, .style = .{ .background = theme.hairline } }, .{}),
+        ui.row(.{ .height = 28, .padding = 0, .gap = 0, .cross = .center, .semantics = .{ .label = "Branch hints", .role = .group } }, .{
+            ui.spacer(1),
+            keyHint(ui, if (model.branch_slot == .base) "Head" else "Base", "⇥"),
+            space(ui, 14, 0),
+            keyHint(ui, "Compare", "↩"),
+            space(ui, 9.5, 0),
+        }),
+    })});
+}
+fn scopeBar(ui: *AppUi, model: *const Model) AppUi.Node {
+    // The third segment is the checked-out branch itself, compared with its base.
+    const head = headName(model);
+    const branch_label = if (model.head.len > 0 or model.compare_head.len > 0) ui.fmt("Branch {s}", .{head}) else "Branch";
+    const tip = ui.el(.tooltip, .{ .text = ui.fmt("Changes on {s} since {s}", .{ head, model.base.text() }), .anchor = .above, .anchor_alignment = .end, .tooltip_delay = 600, .size = .sm }, .{});
+    // Room inside the capsule, against the labels' natural widths (the
+    // button face measures Working at 58.5 and Staged at 52; a branch name
+    // runs about 6.5 points a character plus 13 of padding). Three equal
+    // thirds while every label fits one; then Working and Staged hug their
+    // words and the branch takes the rest, truncating; and in a rail too
+    // narrow for all three (Rex's narrowest is), one capsule names the scope
+    // and opens a menu of them, as Rex folds its Filter capsule.
+    const inner = model.sidebar_width - theme.rail_left - theme.rail_right - 8;
+    const branch_natural = @as(f32, @floatFromInt(head.len)) * 6.5 + 13;
+    const roomy = @max(58.5, branch_natural) <= inner / 3;
+    const compact = 58.5 + 52 + @min(branch_natural, 39) > inner;
+    const content = if (compact) blk: {
+        const name = switch (model.mode) {
+            .working => "Working",
+            .staged => "Staged",
+            .branch => head,
+        };
+        var items: [3]AppUi.Node = undefined;
+        for ([_]@import("git.zig").Mode{ .working, .staged, .branch }, 0..) |mode, index| {
+            const active = model.mode == mode;
+            items[index] = ui.el(.menu_item, .{ .text = switch (mode) {
+                .working => "Working",
+                .staged => "Staged",
+                .branch => head,
+            }, .icon = if (active) "app:check" else "app:blank", .height = 30, .on_press = if (active and mode == .branch) Msg.open_base else Msg{ .mode = mode }, .disabled = model.busy }, .{});
+        }
+        break :blk ui.stack(.{ .grow = 1, .height = 24, .padding = 0 }, .{
+            // The scope's name centered in the capsule, the chevron at its
+            // trailing edge, as a macOS pop-up button draws them.
+            ui.row(.{ .key = .{ .str = "scope" }, .grow = 1, .height = 24, .padding = 0, .gap = 0, .cross = .center, .on_press = .toggle_scope_menu, .semantics = .{ .role = .button, .label = ui.fmt("Review scope: {s}", .{name}) }, .style = .{ .background = theme.segment_on, .border = theme.selected_edge, .stroke_width = 0.5, .radius = 12 } }, .{
+                space(ui, 28, 0),
+                ui.text(.{ .grow = 1, .size = .sm, .text_alignment = .center, .style = .{ .foreground = theme.ink } }, name),
+                ui.appIcon(.{ .width = 10, .height = 10, .style = .{ .foreground = theme.sidebar_ink } }, "chevron"),
+                space(ui, 18, 0),
+            }),
+            if (model.scope_menu) ui.el(.dropdown_menu, .{ .width = 200, .anchor = .above, .anchor_alignment = .start, .anchor_offset = 6, .padding = 5, .gap = 0, .on_dismiss = .close_scope_menu, .style = .{ .background = theme.menu, .border = theme.glass_edge, .radius = 12 } }, ui.arena.dupe(AppUi.Node, &items) catch &.{}) else ui.spacer(0),
+        });
+    } else blk: {
+        var branch = ui.stack(.{ .grow = 1, .height = 24, .padding = 0 }, .{
+            segment(ui, branch_label, head, .branch, true, model),
+            if (model.base_popover) ui.spacer(0) else tip,
+        });
+        branch.widget.layout.grow = 1;
+        break :blk ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 2, .cross = .center }, .{
+            segment(ui, "Working", "Working", .working, roomy, model),
+            segment(ui, "Staged", "Staged", .staged, roomy, model),
+            branch,
+        });
+    };
+    return ui.row(.{ .height = 28, .padding = 0, .gap = 0, .cross = .center }, .{
+        space(ui, theme.rail_left, 0),
+        ui.stack(.{ .grow = 1, .height = 28, .padding = 0 }, .{
+            ui.row(.{ .grow = 1, .height = 28, .padding = 2, .gap = 0, .cross = .center, .semantics = .{ .label = "Review scope", .role = .group }, .style = .{ .background = theme.field, .radius = 14 } }, .{content}),
+            if (model.base_popover) branchPicker(ui, model) else ui.spacer(0),
+        }),
+        space(ui, theme.rail_right, 0),
+    });
+}
+/// A file's name for the rail, shortened in the middle when the rail is too
+/// narrow for it (about 6.6 points a character), so its extension and its end
+/// - what tells "tool-server.test.ts" from "tool-server.ts" - survive.
+fn railName(ui: *AppUi, model: *const Model, file: patch.File) []const u8 {
+    const name = std.fs.path.basename(file.path);
+    var stats: f32 = 0;
+    if (file.additions > 0) stats += 7 * @as(f32, @floatFromInt(std.fmt.count("+{d}", .{file.additions})));
+    if (file.deletions > 0) stats += 4 + 7 * @as(f32, @floatFromInt(std.fmt.count("-{d}", .{file.deletions})));
+    const room = model.sidebar_width - theme.rail_left - theme.rail_right - 11.5 - 16 - 10.5 - 6 - stats - 11;
+    const fits: usize = @intFromFloat(@max(6, room / 6.6));
+    if (name.len <= fits) return name;
+    const tail = (fits - 1) / 2;
+    const head = fits - 1 - tail;
+    return ui.fmt("{s}…{s}", .{ name[0..head], name[name.len - tail ..] });
+}
+fn fileRail(ui: *AppUi, model: *const Model) AppUi.Node {
+    const options = AppUi.VirtualListOptions{ .id = "files", .item_count = model.rail_rows.len, .item_extent = theme.row_pitch, .overscan = 1, .grow = 1 };
+    const window = ui.virtualWindow(options);
+    var nodes: [100]AppUi.Node = undefined;
+    var count: usize = 0;
+    for (model.rail_rows[window.start_index..window.end_index], window.start_index..) |entry, row_index| {
+        if (count == nodes.len) break;
+        nodes[count] = if (entry.file) |index| blk: {
+            const file = model.files[index];
+            const active = index == model.selected;
+            // Rex's selection: a quiet capsule with a hairline edge, inset from the sidebar.
+            const item = ui.row(.{ .key = .{ .str = "file" }, .grow = 1, .height = theme.row_height, .padding = 0, .gap = 0, .cross = .center, .on_press = .{ .select = index }, .semantics = .{ .label = file.path, .role = .listitem }, .style = .{ .background = if (active) theme.selected else theme.clear, .border = if (active) theme.selected_edge else theme.clear, .stroke_width = 0.5, .radius = theme.row_height / 2, .quiet_hover = active } }, .{
+                space(ui, 11.5, 0),
+                ui.appIcon(.{ .width = 16, .height = 16, .style = .{ .foreground = if (file.reviewed) theme.green else theme.sidebar_ink } }, if (file.reviewed) "check" else "document"),
+                space(ui, 10.5, 0),
+                ui.text(.{ .grow = 1, .style = .{ .foreground = if (active) theme.ink else if (file.reviewed) theme.tertiary else if (model.active) theme.sidebar_ink else theme.sidebar_inactive } }, railName(ui, model, file)),
+                space(ui, 6, 0),
+                if (file.additions > 0) smallText(ui, ui.fmt("+{d}", .{file.additions}), theme.green) else ui.spacer(0),
+                if (file.additions > 0 and file.deletions > 0) space(ui, 4, 0) else ui.spacer(0),
+                if (file.deletions > 0) smallText(ui, ui.fmt("−{d}", .{file.deletions}), theme.red) else ui.spacer(0),
+                space(ui, 11, 0),
+            });
+            break :blk ui.row(.{ .key = .{ .index = row_index }, .height = theme.row_pitch, .padding = 0, .gap = 0, .cross = .center }, .{ space(ui, theme.rail_left, 0), item, space(ui, theme.rail_right, 0) });
+        } else blk: {
+            // Directories read as Rex's group headers: small, medium weight, secondary.
+            var header = ui.paragraph(.{ .height = 14, .grow = 1, .wrap = false, .overflow = .clip, .style = .{ .foreground = theme.secondary } }, ui.arena.dupe(canvas.TextSpan, &.{.{ .text = entry.directory, .weight = .medium, .scale = 11.0 / 13.0 }}) catch &.{});
+            header.widget.semantics.label = entry.directory;
+            break :blk ui.column(.{ .key = .{ .index = row_index }, .height = theme.row_pitch, .padding = 0, .gap = 0 }, .{
+                space(ui, 0, 10),
+                ui.row(.{ .height = 14, .padding = 0, .gap = 0, .cross = .center }, .{ space(ui, 22.5, 0), header, space(ui, 10, 0) }),
+            });
+        };
+        count += 1;
+    }
+    return ui.column(.{ .width = model.sidebar_width, .padding = 0, .gap = 0 }, .{
+        band(ui),
+        repositoryRow(ui, model),
+        space(ui, 0, 6),
+        ui.row(.{ .height = 28, .padding = 0, .gap = 0, .cross = .center }, .{
+            capsuleField(ui, "find", ui.textField(.{ .key = .{ .str = "filter" }, .grow = 1, .height = 24, .text = model.filter.text(), .placeholder = "Find file", .on_input = AppUi.inputMsg(.filter_edit), .on_submit = .filter_accept, .semantics = .{ .label = "Find file" }, .variant = .ghost, .style = .{ .border = theme.clear, .background = theme.clear, .focus_ring = theme.clear, .radius = 0 } })),
+        }),
+        space(ui, 0, 10),
+        ui.virtualList(options, window, nodes[0..count]),
+        space(ui, 0, 8),
+        if (model.imported) ui.spacer(0) else scopeBar(ui, model),
+        // Lands the foot control on Rex's foot-bar line, 25 points above the edge.
+        space(ui, 0, 11),
+    });
+}
+fn languageFor(path: []const u8) canvas.code.Language {
+    const ext = std.fs.path.extension(path);
+    const entries = .{ .{ ".ts", .typescript }, .{ ".tsx", .tsx }, .{ ".js", .javascript }, .{ ".jsx", .jsx }, .{ ".zig", .zig }, .{ ".json", .json }, .{ ".css", .css }, .{ ".html", .html }, .{ ".rs", .rust }, .{ ".go", .go }, .{ ".py", .python }, .{ ".sh", .shell }, .{ ".yaml", .yaml }, .{ ".yml", .yaml }, .{ ".md", .markdown } };
+    inline for (entries) |entry| if (std.mem.eql(u8, ext, entry[0])) return entry[1];
+    return .plain;
+}
+fn groupedCode(ui: *AppUi, node: AppUi.Node, group: u64, offset: usize) AppUi.Node {
+    var result = node;
+    result.static_text_group_fingerprint = 0;
+    if (result.widget.kind == .text) {
+        result.widget.static_text_group_id = group;
+        result.widget.static_text_group_offset = offset;
+    }
+    if (node.nodes.len > 0) {
+        const children = ui.arena.dupe(AppUi.Node, node.nodes) catch return result;
+        for (children) |*child| child.* = groupedCode(ui, child.*, group, offset);
+        result.nodes = children;
+    }
+    return result;
+}
+/// The changed run inside a line: byte range [start, end) of its source.
+const Emphasis = struct { start: usize = 0, end: usize = 0 };
+fn utf8Start(text: []const u8, index: usize) usize {
+    var i = @min(index, text.len);
+    while (i > 0 and i < text.len and (text[i] & 0xC0) == 0x80) i -= 1;
+    return i;
+}
+/// Word-level highlights for a paired change: what lies between the common
+/// prefix and suffix. A side that was mostly rewritten keeps only its wash.
+fn intraline(old: []const u8, new: []const u8) struct { old: Emphasis = .{}, new: Emphasis = .{} } {
+    var p: usize = 0;
+    while (p < old.len and p < new.len and old[p] == new[p]) p += 1;
+    p = @min(utf8Start(old, p), utf8Start(new, p));
+    var s: usize = 0;
+    while (s < old.len - p and s < new.len - p and old[old.len - 1 - s] == new[new.len - 1 - s]) s += 1;
+    while (s > 0 and ((old.len - s < old.len and (old[old.len - s] & 0xC0) == 0x80) or (new.len - s < new.len and (new[new.len - s] & 0xC0) == 0x80))) s -= 1;
+    const side = struct {
+        fn pick(text: []const u8, start: usize, end: usize) Emphasis {
+            const span = end - start;
+            if (span == 0 or text.len < 4 or span * 10 > text.len * 7) return .{};
+            return .{ .start = start, .end = end };
+        }
+    };
+    return .{ .old = side.pick(old, p, old.len - s), .new = side.pick(new, p, new.len - s) };
+}
+/// Lays a background over [start, end) of `text`, splitting highlighted spans
+/// at the edges. Falls back to the plain spans if the split would not fit.
+fn emphasize(spans: []const canvas.TextSpan, text: []const u8, range: Emphasis, color: canvas.TextSpanColor, out: []canvas.TextSpan) []const canvas.TextSpan {
+    if (range.end <= range.start) return spans;
+    var count: usize = 0;
+    for (spans) |span| {
+        const begin = @intFromPtr(span.text.ptr) - @intFromPtr(text.ptr);
+        const finish = begin + span.text.len;
+        const cuts = [_]usize{ begin, std.math.clamp(range.start, begin, finish), std.math.clamp(range.end, begin, finish), finish };
+        for (0..3) |part| {
+            if (cuts[part + 1] <= cuts[part]) continue;
+            if (count == out.len) return spans;
+            var piece = span;
+            piece.text = text[cuts[part]..cuts[part + 1]];
+            if (part == 1) piece.background = color;
+            out[count] = piece;
+            count += 1;
+        }
+    }
+    return out[0..count];
+}
+fn codeLine(ui: *AppUi, model: *const Model, source: []const u8, number: u32, old: bool, file: usize, row_index: usize, offset: usize, language: canvas.code.Language, emphasis: Emphasis) AppUi.Node {
+    const group = app.selection.groupId(file, old, model.selection_epoch, model.generation);
+    const key = ui.fmt("source-{d}-{d}-{any}", .{ model.generation, row_index, old });
+    const label = ui.fmt("{s} code line {d}", .{ if (old) "Old" else "New", number });
+    const text = ui.fmt("{s}\n", .{source});
+    // The general code component also creates vertical scrolling, a track,
+    // and a root container. A virtualized single line needs just native text;
+    // the review pans every line together. Keep the SDK's chunking for
+    // unusually long lines.
+    if (source.len > 4096) return groupedCode(ui, ui.code(.{ .global_key = .{ .str = key }, .language = language, .wrap = false, .height = 24, .grow = 1, .semantics = .{ .label = label } }, text), group, offset);
+    var storage: [canvas.max_text_spans_per_paragraph]canvas.TextSpan = undefined;
+    var state: canvas.code.HighlightState = .{};
+    const highlighted = canvas.CodeContentPolicy.highlight(ui.code_content_policy, text, language, &storage, &state);
+    var split: [canvas.max_text_spans_per_paragraph]canvas.TextSpan = undefined;
+    const changed = emphasize(highlighted, text, emphasis, if (old) .destructive else .success, &split);
+    // The first search hit on the line is marked in amber, as the search counts it.
+    const query = model.search_query.text();
+    var hits: [canvas.max_text_spans_per_paragraph]canvas.TextSpan = undefined;
+    const spans = if (query.len > 0) if (std.ascii.indexOfIgnoreCase(source, query)) |at| emphasize(changed, text, .{ .start = at, .end = at + query.len }, .warning, &hits) else changed else changed;
+    // One clipped line of text, shifted by the review's shared horizontal
+    // offset so every line pans together; the cell does the clipping. The
+    // 17-point line box sits on the line numbers' baseline.
+    // Monospace text has a known width, so the line is sized without
+    // measuring it (measuring every line cost a frame of scroll latency).
+    var paragraph = ui.paragraph(.{ .global_key = .{ .str = key }, .width = @as(f32, @floatFromInt(source.len)) * app.code_advance + 24, .height = 17, .wrap = false, .overflow = .clip, .transform = if (model.scroll_x > 0) canvas.Affine.translate(-model.scroll_x, 0) else .{} }, spans);
+    paragraph.widget.static_text_group_id = group;
+    paragraph.widget.static_text_group_offset = offset;
+    paragraph.widget.layout.zero_intrinsic = true;
+    // The clip names the line; the cell around it carries the context menu.
+    var cell = ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0, .cross = .center, .semantics = .{ .label = label, .role = .group } }, .{paragraph});
+    cell.widget.layout.clip_content = true;
+    cell.widget.layout.zero_intrinsic = true;
+    return cell;
+}
+/// The gutter: one button per line. Numbers are padded to four digit widths
+/// with figure spaces, so the centered labels line up on their right edges; a
+/// noted line adds a short amber bar at the edge (the only extra widget, and
+/// only there: a row of extras per line overran the canvas's widget budget).
+fn gutter(ui: *AppUi, model: *const Model, file: usize, number: u32, old: bool, hovered: bool, current: bool, selected: bool, match: bool, wash: canvas.Color) AppUi.Node {
+    const color = if (current or selected or hovered) theme.ink else if (std.meta.eql(wash, theme.added)) theme.gutter_added else if (std.meta.eql(wash, theme.removed)) theme.gutter_removed else theme.line_number;
+    const digits = std.fmt.count("{d}", .{number});
+    const pad = "\u{2007}\u{2007}\u{2007}";
+    const text = if (hovered) "" else ui.fmt("{s}{d}", .{ pad[0 .. 3 * (4 -| digits)], number });
+    const noted = app.noted(model, file, number, old);
+    const button = ui.button(.{ .width = if (noted) 46 else 48, .height = 24, .size = .sm, .variant = .ghost, .icon = if (hovered) "app:add" else "", .on_press = .{ .line_press = .{ .file = file, .line = number, .old = old } }, .style = .{ .foreground = color, .background = if (current) theme.current_line else if (match) theme.match else theme.clear, .radius = 0 }, .semantics = .{ .label = ui.fmt("Comment on {s} line {d}", .{ if (old) "old" else "new", number }) } }, text);
+    if (!noted) return button;
+    return ui.row(.{ .width = 48, .height = 24, .padding = 0, .gap = 0, .cross = .center }, .{ ui.row(.{ .width = 2, .height = 16, .padding = 0, .style = .{ .background = theme.note, .radius = 1 } }, .{}), button });
+}
+fn codeCell(ui: *AppUi, model: *const Model, source: []const u8, number: u32, old: bool, file: usize, row_index: usize, offset: usize, wash: canvas.Color, language: canvas.code.Language, current: bool, match: bool, emphasis: Emphasis) AppUi.Node {
+    const hovered = if (model.hover) |hit| hit.row == row_index and hit.old == old else false;
+    const selected = model.mouse.active and model.mouse.range != null and model.mouse.range.?.contains(file, old, row_index);
+    const fill = if (selected) theme.text_selection else wash;
+    // The opaque review pane already supplies the unchanged-line color.
+    const background = if (!selected and std.meta.eql(wash, theme.background)) theme.clear else fill;
+    // Empty sides still occupy their half of the row, but have no source,
+    // gutter action, or enabled context action to construct.
+    if (number == 0) return ui.row(.{ .grow = 1, .min_width = 48, .height = 24, .padding = 0, .gap = 0, .style = .{ .background = background } }, .{});
+    const menu_items = ui.arena.dupe(AppUi.ContextMenuItem, &.{
+        .{ .label = if (selected) "Comment on selection" else "Add line comment", .msg = if (selected) Msg.comment_selection else .{ .anchor = .{ .file = file, .line = number, .old = old } }, .enabled = number > 0 },
+        .{ .label = if (selected) "Copy selection" else "Copy line", .msg = .{ .copy_line = .{ .file = file, .row = row_index, .old = old, .line = number } }, .enabled = number > 0 },
+    }) catch &.{};
+    const source_node = if (number > 0) codeLine(ui, model, source, number, old, file, row_index, offset, language, emphasis) else ui.spacer(1);
+    return ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0, .cross = .center, .context_menu = menu_items, .style = .{ .background = background } }, .{
+        // A noted line carries a short accent bar at the gutter's edge; its
+        // number keeps the change's color.
+        // A noted line carries a short amber bar at the gutter's edge; the
+        // number, right-aligned in fixed-width digits, keeps the change's color.
+        if (number > 0) gutter(ui, model, file, number, old, hovered, current, selected, match, wash) else space(ui, 48, 0),
+        source_node,
+    });
+}
+/// Actions for a mouse selection: an opaque raised capsule floating 6 points
+/// under the selection's last line, 12 points in from the pane's edge, so it
+/// never straddles rows of different colors or touches the pane's theme.border.
+fn selectionBar(ui: *AppUi, model: *const Model) AppUi.Node {
+    const range = model.mouse.range.?;
+    const bar = ui.el(.popover, .{ .width = 210, .height = 34, .padding = 3, .gap = 4, .anchor = .below, .anchor_alignment = .end, .anchor_offset = 6, .on_dismiss = .clear_selection, .semantics = .{ .label = "Selection actions" }, .style = .{ .background = theme.header_current, .border = theme.glass_edge, .radius = 12 } }, .{
+        ui.row(.{ .padding = 0, .gap = 2, .cross = .center }, .{
+            ui.button(.{ .icon = "app:add", .height = 28, .size = .sm, .variant = .ghost, .on_press = .comment_selection, .semantics = .{ .label = "Comment on selected lines" }, .style = .{ .radius = 9 } }, "Comment"),
+            smallText(ui, ui.fmt("{d}–{d}", .{ range.first_line, range.last_line }), theme.muted),
+            ui.spacer(1),
+            iconButton(ui, "copy-selection", "copy", "Copy selected code", .copy_selection, false, false),
+        }),
+    });
+    // The bar anchors to a 210-point marker at the row's right, 12 points in.
+    return ui.row(.{ .height = 24, .padding = 0, .gap = 0 }, .{ ui.spacer(1), ui.stack(.{ .width = 210, .height = 24, .padding = 0 }, .{bar}), space(ui, 12, 0) });
+}
+fn fileHeader(ui: *AppUi, model: *const Model, index: usize, current: bool) AppUi.Node {
+    const file = model.files[index];
+    var notes: usize = 0;
+    for (model.notes.items) |note| if (std.mem.eql(u8, note.path, file.path)) {
+        notes += 1;
+    };
+    // The whole header folds the file; a folded file keeps just this row. It
+    // is a raised capsule inset from the pane, as the rail's rows are, naming
+    // the file and then, quietly, its folder.
+    const name = ui.arena.dupe(canvas.TextSpan, &.{.{ .text = std.fs.path.basename(file.path), .weight = .medium }}) catch &.{};
+    // 22 points in a 24-point row, so folded headers stacked together part by 2.
+    const header = ui.row(.{ .key = .{ .str = ui.fmt("header-{d}", .{index}) }, .grow = 1, .height = 22, .padding = 0, .gap = 0, .cross = .center, .on_press = .{ .collapse_file = index }, .semantics = .{ .label = ui.fmt("{s} {s}", .{ if (file.collapsed) "Expand" else "Collapse", file.path }), .role = .button }, .style = .{ .background = if (current) theme.selected else theme.clear, .radius = 7 } }, .{
+        space(ui, 6, 0),
+        ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.tertiary } }, if (file.collapsed) "collapsed" else "expanded"),
+        space(ui, 6, 0),
+        ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.muted } }, "document"),
+        space(ui, 8, 0),
+        ui.paragraph(.{ .height = 16, .size = .sm, .wrap = false, .overflow = .clip, .style = .{ .foreground = if (file.collapsed) theme.sidebar_ink else theme.ink } }, name),
+        space(ui, 8, 0),
+        ui.text(.{ .grow = 1, .size = .sm, .style = .{ .foreground = theme.tertiary } }, std.fs.path.dirname(file.path) orelse ""),
+        if (file.additions > 0) smallText(ui, ui.fmt("+{d}", .{file.additions}), theme.green) else ui.spacer(0),
+        if (file.additions > 0 and file.deletions > 0) space(ui, 6, 0) else ui.spacer(0),
+        if (file.deletions > 0) smallText(ui, ui.fmt("−{d}", .{file.deletions}), theme.red) else ui.spacer(0),
+        space(ui, 8, 0),
+        ui.button(.{ .key = .{ .str = "file-note" }, .width = 24, .height = 24, .icon = "app:comment", .size = .icon, .variant = .ghost, .on_press = .{ .note_file = index }, .style = .{ .foreground = if (notes > 0) theme.note else theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Add note to {s}", .{file.path}) } }, ""),
+        ui.button(.{ .key = .{ .str = "file-reviewed" }, .width = 24, .height = 24, .icon = if (file.reviewed) "app:check" else "app:checkbox", .size = .icon, .variant = .ghost, .on_press = .{ .reviewed_file = index }, .style = .{ .foreground = if (file.reviewed) theme.green else theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Mark {s} reviewed", .{file.path}) } }, ""),
+        space(ui, 9, 0),
+    });
+    return ui.row(.{ .height = 24, .padding = 0, .gap = 0, .cross = .center, .style = .{ .background = theme.gap } }, .{header});
+}
+/// What a hunk header says once git's range syntax is set aside: the enclosing
+/// declaration git found, or the new side's line range when there is none.
+fn hunkTitle(ui: *AppUi, header: []const u8) []const u8 {
+    const close = std.mem.indexOfPos(u8, header, 2, "@@") orelse return header;
+    const context = std.mem.trim(u8, header[close + 2 ..], " \t");
+    if (context.len > 0) return context;
+    // "@@ -a,b +c,d @@": report c through c + d - 1.
+    const plus = std.mem.indexOfScalar(u8, header, '+') orelse return header;
+    var parts = std.mem.tokenizeAny(u8, header[plus + 1 .. close], ", ");
+    const start = std.fmt.parseInt(u32, parts.next() orelse "", 10) catch return header;
+    const count = std.fmt.parseInt(u32, parts.next() orelse "1", 10) catch 1;
+    return if (count <= 1) ui.fmt("Line {d}", .{start}) else ui.fmt("Lines {d}–{d}", .{ start, start + count - 1 });
+}
+/// Whether a code row opens (`after` false) or closes (`after` true) its
+/// hunk: the neighbour that way is not another code row of the same hunk.
+fn hunkEdge(model: *const Model, index: usize, after: bool) bool {
+    if (!after and index == 0) return true;
+    const neighbour = if (after) index + 1 else index - 1;
+    if (neighbour >= model.display.len) return true;
+    const entry = model.display[neighbour];
+    const code = entry.code orelse return true;
+    if (entry.file != model.display[index].file) return true;
+    const file = model.files[entry.file];
+    const rows = if (model.split) file.split else file.unified;
+    return rows[code].meta;
+}
+/// Rounds a hunk pane: ground-colored corner masks over the first row's top
+/// corners or the last row's bottom ones (a pane can be one row of each).
+fn paneCorners(ui: *AppUi, content: AppUi.Node, height: f32, top: bool, bottom: bool) AppUi.Node {
+    const corner = struct {
+        fn of(u: *AppUi, name: []const u8) AppUi.Node {
+            return u.appIcon(.{ .width = 10, .height = 10, .style = .{ .foreground = theme.gap } }, name);
+        }
+    }.of;
+    const side = struct {
+        fn of(u: *AppUi, h: f32, upper: ?AppUi.Node, lower: ?AppUi.Node) AppUi.Node {
+            return u.column(.{ .width = 10, .height = h, .padding = 0, .gap = 0 }, .{ upper orelse u.spacer(0), u.spacer(1), lower orelse u.spacer(0) });
+        }
+    }.of;
+    // Masks are opaque ground; over glass they would show as squares.
+    if (theme.gap.a < 1 or theme.pane.a < 1) return content;
+    return ui.stack(.{ .grow = 1, .height = height, .padding = 0 }, .{
+        content,
+        ui.row(.{ .grow = 1, .height = height, .padding = 0, .gap = 0 }, .{
+            side(ui, height, if (top) corner(ui, "corner-tl") else null, if (bottom) corner(ui, "corner-bl") else null),
+            ui.spacer(1),
+            side(ui, height, if (top) corner(ui, "corner-tr") else null, if (bottom) corner(ui, "corner-br") else null),
+        }),
+    });
+}
+/// The file being read pinned at the top of the review once its own header
+/// has scrolled away, so a long file can still be folded from anywhere in it.
+fn stickyHeader(ui: *AppUi, model: *const Model) ?AppUi.Node {
+    if (model.display.len == 0) return null;
+    const top = @min(model.display.len - 1, @as(usize, @intFromFloat(@max(0, model.scroll_offset) / 24)));
+    const file = model.display[top].file;
+    if (file >= model.starts.len or model.starts[file] >= top) return null;
+    return ui.column(.{ .height = 26, .padding = 0, .gap = 0, .style = .{ .background = theme.gap } }, .{ fileHeader(ui, model, file, false), space(ui, 0, 2) });
+}
+fn review(ui: *AppUi, model: *const Model) AppUi.Node {
+    if (model.files.len == 0) return ui.column(.{ .grow = 1, .main = .center, .cross = .center, .gap = 12 }, .{
+        ui.appIcon(.{ .width = 28, .height = 28, .style = .{ .foreground = theme.muted } }, if (model.busy) "refresh" else "check"),
+        smallText(ui, if (model.busy) "Loading…" else "No changes", theme.muted),
+        ui.button(.{ .icon = "app:folder", .size = .sm, .variant = .ghost, .on_press = .open_repo }, "Open repository"),
+    });
+    const options = AppUi.VirtualListOptions{ .id = ui.fmt("review-{d}", .{model.generation}), .item_count = model.display.len, .item_extent = 24, .overscan = 1, .grow = 1, .semantics = .{ .label = "Changes" }, .on_scroll = AppUi.scrollMsg(.scrolled) };
+    var window = ui.virtualWindow(options);
+    if (model.jump_offset) |offset| {
+        const viewport = @max(100, model.viewport_height);
+        window = canvas.virtualListRange(.{ .item_count = model.display.len, .item_extent = 24, .viewport_extent = viewport, .scroll_offset = offset, .overscan = 1 });
+    }
+    var nodes: [100]AppUi.Node = undefined;
+    var count: usize = 0;
+    for (model.display[window.start_index..window.end_index], window.start_index..) |entry, index| {
+        if (count == nodes.len) break;
+        const file = model.files[entry.file];
+        const rows = if (model.split) file.split else file.unified;
+        nodes[count] = if (entry.spacer) ui.row(.{ .height = 24, .padding = 0, .style = .{ .background = theme.gap } }, .{}) else if (entry.code) |code| blk: {
+            const row = rows[code];
+            // Hunk headers sit on the pane itself, in the code's own face: a
+            // quiet ellipsis in the gutter and the enclosing declaration where
+            // the code begins. The full git header stays as its label.
+            if (row.meta) {
+                const text = if (file.status == .added) "New file" else if (file.status == .deleted) "Deleted file" else hunkTitle(ui, row.left);
+                const title = ui.arena.dupe(canvas.TextSpan, &.{.{ .text = text, .monospace = true }}) catch &.{};
+                var top = ui.row(.{ .height = 18, .padding = 0, .gap = 0, .cross = .center }, .{
+                    ui.row(.{ .width = 48, .height = 18, .padding = 0, .main = .center, .cross = .center }, .{smallText(ui, "⋯", theme.line_number)}),
+                    ui.paragraph(.{ .height = 16, .size = .sm, .wrap = false, .overflow = .clip, .semantics = .{ .label = row.left }, .style = .{ .foreground = theme.line_number } }, title),
+                });
+                top.widget.layout.clip_content = true;
+                break :blk ui.column(.{ .key = .{ .index = index }, .height = 24, .padding = 0, .gap = 0 }, .{
+                    ui.row(.{ .height = 6, .padding = 0, .style = .{ .background = theme.gap } }, .{}),
+                    paneCorners(ui, top, 18, true, false),
+                });
+            }
+            const language = languageFor(file.path);
+            const current = model.cursor_active and model.cursor == index;
+            const match = app.isMatch(model, index);
+            const old = (model.cursor_old and row.old > 0) or row.new == 0;
+            const pair = if (row.removed and row.added) intraline(row.left, row.right) else @TypeOf(intraline("", "")){};
+            const content = if (model.split and file.status != .added and file.status != .deleted) ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0 }, .{
+                codeCell(ui, model, row.left, row.old, true, entry.file, index, row.old_offset, if (row.removed) theme.removed else theme.background, language, current and old, match, pair.old), line(ui, true),
+                codeCell(ui, model, row.right, row.new, false, entry.file, index, row.new_offset, if (row.added) theme.added else theme.background, language, current and !old, match, pair.new),
+            }) else ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0 }, .{
+                codeCell(ui, model, if (row.removed) row.left else row.right, if (row.removed) row.old else row.new, row.removed, entry.file, index, if (row.removed) row.old_offset else row.new_offset, if (row.removed) theme.removed else if (row.added) theme.added else theme.background, language, current, match, .{}),
+            });
+            break :blk if (hunkEdge(model, index, true)) paneCorners(ui, content, 24, false, true) else content;
+        } else fileHeader(ui, model, entry.file, model.cursor_active and model.cursor == index);
+        const bar = model.mouse.active and !model.mouse.dragging and model.mouse.range != null and model.mouse.range.?.focus == index;
+        if (bar) {
+            nodes[count] = ui.stack(.{ .key = .{ .index = index }, .height = 24, .padding = 0 }, .{ nodes[count], selectionBar(ui, model) });
+        } else {
+            nodes[count].key = .{ .index = index };
+            nodes[count].widget.layout.grow = 0;
+        }
+        count += 1;
+    }
+    var ground = ui.column(.{ .grow = 1, .padding = 0, .gap = 0, .style = .{ .background = theme.pane } }, .{ui.virtualList(options, window, nodes[0..count])});
+    ground.widget.layout.grow = 1;
+    const list = ground;
+    const pinned = stickyHeader(ui, model) orelse return list;
+    var stacked = ui.stack(.{ .grow = 1, .padding = 0 }, .{ list, ui.column(.{ .padding = 0, .gap = 0 }, .{pinned}) });
+    stacked.widget.layout.grow = 1;
+    return stacked;
+}
+/// Every note in the review, grouped by file in review order: a file's name
+/// jumps to it, a note to its line, and the file being read is marked.
+fn notePanel(ui: *AppUi, model: *const Model) AppUi.Node {
+    var nodes: [160]AppUi.Node = undefined;
+    var count: usize = 0;
+    for (model.files, 0..) |file, file_index| {
+        var any = false;
+        for (model.notes.items) |note| any = any or std.mem.eql(u8, note.path, file.path);
+        if (!any or count + 2 >= nodes.len) continue;
+        const current = file_index == model.selected;
+        const name = ui.arena.dupe(canvas.TextSpan, &.{.{ .text = std.fs.path.basename(file.path), .weight = .medium }}) catch &.{};
+        nodes[count] = ui.row(.{ .key = .{ .str = ui.fmt("notes-file-{d}", .{file_index}) }, .height = 26, .padding = 0, .gap = 0, .cross = .center, .on_press = .{ .select = file_index }, .semantics = .{ .role = .button, .label = ui.fmt("Go to {s}", .{file.path}) }, .style = .{ .background = if (current) theme.selected else theme.clear, .radius = 7 } }, .{
+            space(ui, 6, 0),
+            ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.muted } }, "document"),
+            space(ui, 7, 0),
+            ui.paragraph(.{ .height = 16, .wrap = false, .overflow = .clip, .style = .{ .foreground = if (current) theme.ink else theme.sidebar_ink } }, name),
+            space(ui, 7, 0),
+            ui.text(.{ .grow = 1, .size = .sm, .style = .{ .foreground = theme.tertiary } }, std.fs.path.dirname(file.path) orelse ""),
+            space(ui, 6, 0),
+        });
+        count += 1;
+        for (model.notes.items, 0..) |note, index| {
+            if (!std.mem.eql(u8, note.path, file.path) or count >= nodes.len) continue;
+            nodes[count] = ui.column(.{ .key = .{ .index = index }, .padding = 12, .gap = 8, .on_press = .{ .goto_note = index }, .semantics = .{ .role = .button, .label = ui.fmt("Go to note on {s}", .{file.path}) }, .style = .{ .background = theme.background, .radius = 8 } }, .{
+                ui.row(.{ .padding = 0, .cross = .center }, .{
+                    ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.note } }, "note"),
+                    space(ui, 7, 0),
+                    smallText(ui, if (note.line_end > note.line) ui.fmt("{s}ines {d}–{d}", .{ if (note.old) "Old l" else "L", note.line, note.line_end }) else if (note.line > 0) ui.fmt("{s}ine {d}", .{ if (note.old) "Old l" else "L", note.line }) else "Whole file", theme.muted),
+                    ui.spacer(1),
+                    iconButton(ui, ui.fmt("edit-{d}", .{index}), "add", "Edit note", .{ .edit_note = index }, false, false),
+                    iconButton(ui, ui.fmt("delete-{d}", .{index}), "trash", "Delete note", .{ .delete_note = index }, false, false),
+                }),
+                ui.text(.{ .wrap = true, .style = .{ .foreground = theme.ink } }, note.text),
+            });
+            count += 1;
+        }
+    }
+    if (count == 0 and !model.editing) {
+        nodes[0] = ui.column(.{ .padding = 16, .gap = 6, .cross = .center }, .{
+            smallText(ui, "No notes yet", theme.secondary),
+            caption(ui, "Select lines and press C to add one."),
+        });
+        count = 1;
+    }
+    return paneSurface(ui, "notes-pane", 0, .{
+        ui.row(.{ .height = theme.pane_header, .padding = 0, .gap = 0, .cross = .center }, .{
+            space(ui, 12, 0),
+            ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.sidebar_ink } }, "comment"),
+            space(ui, 8, 0),
+            ui.text(.{ .grow = 1, .style = .{ .foreground = theme.ink } }, "Notes"),
+            paneControl(ui, "new-note", "add", "Add file note · C", .add_note, false, false),
+            paneControl(ui, "close-notes", "close", "Close notes", .toggle_notes, false, false),
+            space(ui, 8, 0),
+        }),
+        // A scroll region holds one track; the cards flow down it.
+        ui.scroll(.{ .grow = 1, .padding = 10, .gap = 0 }, .{ui.column(.{ .padding = 0, .gap = 8 }, ui.arena.dupe(AppUi.Node, nodes[0..count]) catch &.{})}),
+        if (model.editing) ui.column(.{ .padding = 10, .gap = 8 }, .{
+            smallText(ui, if (model.anchor.line_end > model.anchor.line) ui.fmt("{s}:{d}–{d}", .{ model.files[model.draft_file].path, model.anchor.line, model.anchor.line_end }) else if (model.anchor.line > 0) ui.fmt("{s}:{d}", .{ model.files[model.draft_file].path, model.anchor.line }) else model.files[model.draft_file].path, theme.muted),
+            ui.el(.textarea, .{ .key = .{ .str = "draft" }, .height = 140, .text = model.draft.text(), .placeholder = "Leave a note…", .autofocus = model.focus == .note, .on_input = AppUi.inputMsg(.draft_edit), .on_submit = .save_note, .semantics = .{ .label = "Review note" }, .style = .{ .background = theme.field, .border = theme.clear, .radius = 10 } }, .{}),
+            ui.row(.{ .padding = 0, .gap = 6, .main = .end }, .{
+                iconButton(ui, "cancel-note", "close", "Cancel note", .cancel_note, false, false),
+                iconButton(ui, "save-note", "check", "Save note · ⌘↵", .save_note, true, model.draft.isEmpty()),
+            }),
+        }) else ui.spacer(0),
+    });
+}
+/// A Rex pane: an opaque rounded surface. Its content clips to the pane's
+/// rectangle: a rounded clip costs a frame of scroll latency, and nothing that
+/// fills reaches the corners (the header and status rows have no fill).
+fn paneSurface(ui: *AppUi, key: []const u8, width: f32, children: anytype) AppUi.Node {
+    return groundSurface(ui, key, width, theme.pane, children);
+}
+fn groundSurface(ui: *AppUi, key: []const u8, width: f32, ground: canvas.Color, children: anytype) AppUi.Node {
+    var surface = ui.column(.{ .key = .{ .str = key }, .width = width, .grow = if (width == 0) 1 else 0, .padding = 0, .gap = 0, .style = .{ .background = ground, .radius = theme.pane_radius } }, children);
+    surface.widget.layout.clip_content = true;
+    if (theme.pane_edge.a == 0) return surface;
+    // Glass panes carry a faint edge, as Rex's Modern material does. Only a
+    // panel draws a border, so the solid panes skip the extra layer.
+    var edged = ui.el(.panel, .{ .key = .{ .str = ui.fmt("{s}-edge", .{key}) }, .width = width, .grow = if (width == 0) 1 else 0, .padding = 0, .style = .{ .background = theme.clear, .border = theme.pane_edge, .stroke_width = 1, .radius = theme.pane_radius } }, .{surface});
+    edged.widget.layout.grow = if (width == 0) 1 else 0;
+    return edged;
+}
+fn reviewFooter(ui: *AppUi, model: *const Model) AppUi.Node {
+    var hint_buffer: [24]u8 = undefined;
+    const hint = model.keys.hint(&hint_buffer);
+    const matches = model.search_matches;
+    var match_index: usize = 0;
+    for (matches, 0..) |index, position| {
+        if (index <= model.cursor) match_index = position + 1 else break;
+    }
+    // Left: the find field (a capsule, like every field in Patch) or where the
+    // cursor is; right: panning and match counts, ending 14 points in, where
+    // the band's progress ends.
+    const column_text = if (model.scroll_x > 0) ui.fmt("From column {d}", .{@as(usize, @intFromFloat(model.scroll_x / app.code_advance)) + 1}) else "";
+    return ui.row(.{ .height = 32, .padding = 0, .gap = 0, .cross = .center }, .{
+        space(ui, 8, 0),
+        if (model.focus == .search) ui.row(.{ .grow = 1, .height = 26, .padding = 0, .gap = 0, .cross = .center, .style = .{ .background = theme.field, .radius = 13 } }, .{
+            space(ui, 10, 0),
+            ui.appIcon(.{ .width = 13, .height = 13, .style = .{ .foreground = theme.secondary } }, "find"),
+            space(ui, 4, 0),
+            ui.textField(.{ .key = .{ .str = "diff-search" }, .grow = 1, .height = 24, .text = model.search_query.text(), .placeholder = "Find in diff…", .autofocus = true, .on_input = AppUi.inputMsg(.search_edit), .on_submit = .search_accept, .semantics = .{ .label = "Find in diff" }, .variant = .ghost, .style = .{ .background = theme.clear, .border = theme.clear, .focus_ring = theme.clear, .radius = 0 } }),
+            space(ui, 8, 0),
+        }) else ui.row(.{ .padding = 0, .gap = 0, .cross = .center }, .{ space(ui, 4, 0), if (model.cursor_active and !app.onFoldedHeader(model)) smallText(ui, ui.fmt("Line {d} · {s}", .{ app.cursorNumber(model), if (app.cursorIsOld(model)) "old" else "new" }), theme.muted) else ui.spacer(0) }),
+        if (hint.len > 0) space(ui, 10, 0) else ui.spacer(0),
+        if (hint.len > 0) smallText(ui, hint, theme.green) else ui.spacer(0),
+        if (model.focus == .search) space(ui, 12, 0) else ui.spacer(1),
+        if (column_text.len > 0) smallText(ui, column_text, theme.tertiary) else ui.spacer(0),
+        if (column_text.len > 0 and model.search_query.len > 0) space(ui, 12, 0) else ui.spacer(0),
+        if (model.search_query.len > 0) smallText(ui, ui.fmt("{d}/{d}", .{ match_index, matches.len }), if (matches.len == 0) theme.red else theme.muted) else ui.spacer(0),
+        if (model.search_query.len > 0 and model.focus != .search) space(ui, 10, 0) else ui.spacer(0),
+        if (model.search_query.len > 0 and model.focus != .search) smallText(ui, "n / N", theme.muted) else ui.spacer(0),
+        space(ui, 14, 0),
+    });
+}
+fn reviewTitle(ui: *AppUi, model: *const Model) []const u8 {
+    if (model.imported) return model.repository;
+    return switch (model.mode) {
+        .working => "Working changes",
+        .staged => "Staged changes",
+        .branch => if (model.head.len > 0 or model.compare_head.len > 0) ui.fmt("{s} since {s}", .{ headName(model), model.base.text() }) else ui.fmt("Changes since {s}", .{model.base.text()}),
+    };
+}
+/// The pane is titled by the comparison under review, with its totals and progress.
+fn paneHeader(ui: *AppUi, model: *const Model) AppUi.Node {
+    var totals: struct { reviewed: usize = 0, additions: u32 = 0, deletions: u32 = 0 } = .{};
+    for (model.files) |file| {
+        totals.reviewed += @intFromBool(file.reviewed);
+        totals.additions += file.additions;
+        totals.deletions += file.deletions;
+    }
+    // The title lives in the header layer above; this strip keeps notices and progress.
+    return ui.row(.{ .height = theme.pane_header, .padding = 0, .gap = 0, .cross = .center, .window_drag = true }, .{
+        ui.spacer(1),
+        space(ui, 12, 0),
+        // Review progress: the check brightens once every file is done.
+        if (model.files.len > 0) ui.row(.{ .padding = 0, .gap = 5, .cross = .center, .semantics = .{ .label = "Review progress" } }, .{
+            ui.appIcon(.{ .width = 13, .height = 13, .style = .{ .foreground = if (totals.reviewed == model.files.len) theme.green else theme.tertiary } }, "check"),
+            smallText(ui, ui.fmt("{d}/{d}", .{ totals.reviewed, model.files.len }), theme.secondary),
+        }) else ui.spacer(0),
+        space(ui, 14, 0),
+    });
+}
+fn reviewPane(ui: *AppUi, model: *const Model) AppUi.Node {
+    // The review is a ground, not one pane: each hunk below is its own pane
+    // on it, as Rex stacks blocks.
+    return groundSurface(ui, "review-pane", 0, theme.gap, .{
+        paneHeader(ui, model),
+        if (model.error_text.len > 0) ui.row(.{ .height = 32, .padding = 8, .cross = .center, .style = .{ .background = theme.removed } }, .{
+            space(ui, 4, 0), smallText(ui, model.error_text, theme.red), ui.spacer(1), paneControl(ui, "dismiss", "close", "Dismiss", .dismiss, false, false),
+        }) else ui.spacer(0),
+        ui.column(.{ .key = .{ .str = ui.fmt("review-focus-{d}", .{model.focus_epoch}) }, .grow = 1, .padding = 0, .gap = 0, .autofocus = model.focus == .review, .semantics = .{ .role = .group, .label = "Review pane", .focusable = true }, .style = .{ .focus_ring = theme.clear } }, .{
+            review(ui, model), reviewFooter(ui, model),
+        }),
+    });
+}
+/// Rex's keycap: the key in a thin outlined box beside its action.
+fn keyHint(ui: *AppUi, label: []const u8, key: []const u8) AppUi.Node {
+    return ui.row(.{ .padding = 0, .gap = 6, .cross = .center }, .{
+        smallText(ui, label, theme.secondary),
+        ui.el(.panel, .{ .height = 18, .padding = 0, .style = .{ .background = theme.clear, .border = theme.keycap, .stroke_width = 1, .radius = 5 } }, .{
+            ui.row(.{ .height = 18, .padding = 0, .gap = 0, .cross = .center }, .{ space(ui, 5, 0), smallText(ui, key, theme.secondary), space(ui, 5, 0) }),
+        }),
+    });
+}
+/// The palette shows one key per command, preferring the ⌘ chord; the rest
+/// of a command's keys are listed in Settings › Keyboard.
+fn primaryShortcut(shortcut: []const u8) []const u8 {
+    var parts = std.mem.splitSequence(u8, shortcut, " / ");
+    var first: []const u8 = "";
+    while (parts.next()) |part| {
+        if (first.len == 0) first = part;
+        if (std.mem.indexOf(u8, part, "⌘") != null) return part;
+    }
+    return first;
+}
+/// Rex's palette: a frosted 330-point surface near the top of the window, a
+/// capsule search field, 28-point rows, and keycap hints at its foot.
+fn palette(ui: *AppUi, model: *const Model) AppUi.Node {
+    const files = model.palette == .files;
+    const row_h = theme.palette_row;
+    const height = @min(theme.palette_rows * row_h, @as(f32, @floatFromInt(model.choice_count)) * row_h);
+    const options = AppUi.VirtualListOptions{ .id = "palette-results", .item_count = model.choice_count, .item_extent = row_h, .height = height, .overscan = 1, .semantics = .{ .label = "Results" }, .on_scroll = AppUi.scrollMsg(.palette_scrolled) };
+    const window = canvas.virtualListRange(.{ .item_count = model.choice_count, .item_extent = row_h, .viewport_extent = height, .scroll_offset = model.palette_offset, .overscan = 1 });
+    var rows: [16]AppUi.Node = undefined;
+    var count: usize = 0;
+    for (window.start_index..window.end_index) |position| {
+        if (count == rows.len) break;
+        const item = model.choices[position];
+        const command = if (!item.file) app.keyboard.commands[item.index] else null;
+        const title = if (item.file) std.fs.path.basename(model.files[item.index].path) else command.?.title;
+        const detail = if (item.file) std.fs.path.dirname(model.files[item.index].path) orelse "" else primaryShortcut(command.?.shortcut);
+        const active = position == model.choice_selected;
+        rows[count] = ui.row(.{ .key = .{ .index = position }, .height = row_h, .padding = 0, .gap = 0, .cross = .center, .on_press = .{ .palette_choose = position }, .semantics = .{ .role = .listitem, .label = if (item.file) model.files[item.index].path else title }, .style = .{ .background = if (active) theme.palette_active else theme.clear, .quiet_hover = true, .radius = 11 } }, .{
+            space(ui, 11.5, 0),
+            ui.text(.{ .grow = 1, .style = .{ .foreground = if (active) canvas.Color.rgb8(255, 255, 255) else theme.palette_ink } }, title),
+            smallText(ui, detail, if (active) canvas.Color.rgba8(255, 255, 255, 200) else theme.palette_hint),
+            space(ui, 11, 0),
+        });
+        count += 1;
+    }
+    // It fades in and settles a few points down as it opens.
+    const surface = ui.el(.popover, .{ .key = .{ .str = "command-palette" }, .opacity = model.palette_fade, .transform = if (model.palette_fade < 1) canvas.Affine.translate(0, -6 * (1 - model.palette_fade)) else .{}, .width = theme.palette_width, .anchor = .below, .anchor_alignment = .start, .anchor_offset = 0, .padding = 5, .backdrop_blur_token = .md, .on_dismiss = .close_palette, .semantics = .{ .role = .dialog, .label = if (files) "Go to file" else "Commands" }, .style = .{ .background = theme.palette_glass, .border = theme.glass_edge, .radius = 16 } }, .{ui.column(.{ .padding = 0, .gap = 0 }, .{
+        ui.row(.{ .height = 30, .padding = 0, .gap = 0, .cross = .center, .style = .{ .background = theme.palette_field, .radius = 15 } }, .{
+            space(ui, 11, 0),
+            ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.secondary } }, "find"),
+            space(ui, 1, 0),
+            ui.textField(.{ .key = .{ .str = "palette-query" }, .grow = 1, .height = 26, .text = model.palette_query.text(), .placeholder = if (files) "Search files…" else "Search commands and files…", .autofocus = true, .on_input = AppUi.inputMsg(.palette_edit), .on_submit = .palette_accept, .semantics = .{ .label = if (files) "File picker" else "Command search" }, .variant = .ghost, .style = .{ .background = theme.clear, .border = theme.clear, .focus_ring = theme.clear, .radius = 0 } }),
+            space(ui, 8, 0),
+        }),
+        space(ui, 0, 10),
+        if (count > 0) ui.virtualList(options, window, rows[0..count]) else ui.row(.{ .height = 56, .padding = 0, .main = .center, .cross = .center }, .{smallText(ui, "No matches", theme.secondary)}),
+        space(ui, 0, 5),
+        ui.row(.{ .height = 1, .padding = 0, .style = .{ .background = theme.hairline } }, .{}),
+        ui.row(.{ .height = 28, .padding = 0, .gap = 0, .cross = .center, .semantics = .{ .label = "Palette hints", .role = .group } }, .{
+            ui.spacer(1),
+            keyHint(ui, "Close", "esc"),
+            space(ui, 14, 0),
+            if (count > 0) keyHint(ui, if (files) "Open" else "Run", "↩") else ui.spacer(0),
+            space(ui, 9.5, 0),
+        }),
+    })});
+    // Anchored just below a zero-height marker, centered, 75 points down: Rex's spot.
+    return ui.column(.{ .padding = 0, .gap = 0, .cross = .center }, .{
+        space(ui, 0, theme.palette_top),
+        ui.stack(.{ .width = theme.palette_width, .height = 0, .padding = 0 }, .{surface}),
+    });
+}
+
+// Settings, in Rex's manner: a list of sections beside grouped cards whose rows
+// pair a title and a quiet description with a trailing control.
+const Section = app.SettingsSection;
+/// A section's icon: a gradient squircle drawn as an image, as macOS and Rex
+/// draw theirs.
+fn tile(ui: *AppUi, icon: usize, size: f32) AppUi.Node {
+    return ui.image(.{ .width = size, .height = size, .image = app.settings_icon_base + icon });
+}
+fn sectionInfo(section: Section) struct { title: []const u8, icon: usize } {
+    return switch (section) {
+        .review => .{ .title = "Review", .icon = 0 },
+        .layout => .{ .title = "Layout", .icon = 1 },
+        .appearance => .{ .title = "Appearance", .icon = 4 },
+        .keyboard => .{ .title = "Keyboard", .icon = 2 },
+        .about => .{ .title = "About", .icon = 3 },
+    };
+}
+fn sectionRow(ui: *AppUi, model: *const Model, section: Section) AppUi.Node {
+    const info = sectionInfo(section);
+    const active = model.settings_section == section;
+    return ui.row(.{ .key = .{ .str = info.title }, .height = 32, .padding = 0, .gap = 0, .cross = .center, .on_press = .{ .settings_section = section }, .semantics = .{ .label = info.title, .role = .listitem }, .style = .{ .background = if (active) theme.selected else theme.clear, .border = if (active) theme.selected_edge else theme.clear, .stroke_width = 0.5, .radius = 8 } }, .{
+        space(ui, 8, 0),
+        tile(ui, info.icon, 22),
+        space(ui, 10, 0),
+        ui.text(.{ .grow = 1, .style = .{ .foreground = if (active) theme.ink else theme.sidebar_ink } }, info.title),
+    });
+}
+fn caption(ui: *AppUi, text: []const u8) AppUi.Node {
+    return ui.paragraph(.{ .wrap = true, .style = .{ .foreground = theme.secondary } }, ui.arena.dupe(canvas.TextSpan, &.{.{ .text = text, .scale = 11.0 / 13.0 }}) catch &.{});
+}
+fn heading(ui: *AppUi, text: []const u8) AppUi.Node {
+    // Rex: section titles at row-title size, set heavier, with more room above
+    // (28 points) than below (8), so each section reads as its own group.
+    return ui.column(.{ .padding = 0, .gap = 0 }, .{
+        space(ui, 0, 28),
+        ui.row(.{ .height = 18, .padding = 0, .gap = 0, .cross = .center }, .{
+            space(ui, 2, 0),
+            ui.paragraph(.{ .height = 18, .wrap = false, .style = .{ .foreground = theme.ink } }, ui.arena.dupe(canvas.TextSpan, &.{.{ .text = text, .weight = .medium }}) catch &.{}),
+        }),
+        space(ui, 0, 8),
+    });
+}
+fn settingRow(ui: *AppUi, title: []const u8, detail: []const u8, control: AppUi.Node) AppUi.Node {
+    return ui.row(.{ .key = .{ .str = title }, .padding = 0, .gap = 0, .cross = .center }, .{
+        space(ui, 14, 0),
+        ui.column(.{ .grow = 1, .padding = 0, .gap = 2 }, .{
+            space(ui, 0, 11),
+            ui.text(.{ .style = .{ .foreground = theme.ink } }, title),
+            if (detail.len > 0) caption(ui, detail) else ui.spacer(0),
+            space(ui, 0, 11),
+        }),
+        space(ui, 12, 0),
+        control,
+        space(ui, 14, 0),
+    });
+}
+fn divider(ui: *AppUi) AppUi.Node {
+    return ui.row(.{ .height = 1, .padding = 0, .gap = 0 }, .{ space(ui, 14, 0), ui.row(.{ .grow = 1, .height = 1, .padding = 0, .style = .{ .background = theme.settings_divider } }, .{}), space(ui, 14, 0) });
+}
+fn card(ui: *AppUi, rows: []const AppUi.Node) AppUi.Node {
+    var nodes: [24]AppUi.Node = undefined;
+    var count: usize = 0;
+    for (rows, 0..) |row, index| {
+        if (count + 2 > nodes.len) break;
+        if (index > 0) {
+            nodes[count] = divider(ui);
+            count += 1;
+        }
+        nodes[count] = row;
+        count += 1;
+    }
+    return ui.column(.{ .padding = 0, .gap = 0, .style = .{ .background = theme.card, .radius = 12 } }, ui.arena.dupe(AppUi.Node, nodes[0..count]) catch &.{});
+}
+/// Rex's switch: a theme.red accent track when on, a quiet track when off, white knob.
+fn toggle(ui: *AppUi, label: []const u8, on: bool, msg: Msg) AppUi.Node {
+    const knob = ui.row(.{ .width = 14, .height = 14, .padding = 0, .style = .{ .background = canvas.Color.rgb8(244, 244, 244), .radius = 7 } }, .{});
+    return ui.row(.{ .key = .{ .str = label }, .width = 30, .height = 18, .padding = 2, .gap = 0, .cross = .center, .on_press = msg, .semantics = .{ .label = label, .role = .checkbox }, .style = .{ .background = if (on) theme.accent else theme.switch_off, .radius = 9 } }, if (on) .{ ui.spacer(1), knob } else .{ knob, ui.spacer(1) });
+}
+fn choice(ui: *AppUi, label: []const u8, active: bool, msg: Msg) AppUi.Node {
+    return ui.button(.{ .height = 22, .size = .sm, .variant = .ghost, .on_press = msg, .semantics = .{ .label = label }, .style = .{ .foreground = if (active) theme.ink else theme.sidebar_ink, .background = if (active) theme.segment_on else theme.clear, .border = if (active) theme.selected_edge else theme.clear, .stroke_width = 0.5, .radius = 11, .quiet_hover = true } }, label);
+}
+fn choices(ui: *AppUi, nodes: anytype) AppUi.Node {
+    return ui.row(.{ .height = 26, .padding = 2, .gap = 2, .cross = .center, .style = .{ .background = theme.field, .radius = 13 } }, nodes);
+}
+fn keycap(ui: *AppUi, text: []const u8) AppUi.Node {
+    return ui.row(.{ .height = 20, .padding = 0, .gap = 0, .cross = .center, .style = .{ .background = theme.field, .radius = 5 } }, .{ space(ui, 7, 0), smallText(ui, text, theme.sidebar_ink), space(ui, 7, 0) });
+}
+/// A theme as a card: a little review in its own colors (a title, a removed
+/// and an added line, its accent), then its name. The chosen one is ringed.
+fn themeSwatch(ui: *AppUi, model: *const Model, index: usize) AppUi.Node {
+    const scheme = theme.schemes[index];
+    const selected = model.theme_index == index;
+    const bar = struct {
+        fn of(u: *AppUi, color: canvas.Color, width: f32) AppUi.Node {
+            return u.row(.{ .height = 6, .padding = 0, .gap = 0 }, .{ space(u, 10, 0), u.row(.{ .width = width, .height = 6, .padding = 0, .style = .{ .background = color, .radius = 3 } }, .{}) });
+        }
+    }.of;
+    const mixed = struct {
+        fn of(a: canvas.Color, b: canvas.Color, t: f32) canvas.Color {
+            return .{ .r = a.r + (b.r - a.r) * t, .g = a.g + (b.g - a.g) * t, .b = a.b + (b.b - a.b) * t, .a = 1 };
+        }
+    }.of;
+    const title = ui.arena.dupe(canvas.TextSpan, &.{.{ .text = "Aa", .weight = .medium }}) catch &.{};
+    var swatch = ui.el(.panel, .{ .key = .{ .str = scheme.id }, .grow = 1, .padding = 4, .on_press = .{ .set_theme = index }, .semantics = .{ .role = .button, .label = ui.fmt("{s} theme", .{scheme.name}) }, .style = .{ .background = theme.card, .border = if (selected) theme.accent else theme.hairline, .stroke_width = if (selected) 2 else 1, .radius = 12 } }, .{ui.column(.{ .padding = 0, .gap = 6 }, .{
+        ui.column(.{ .height = 58, .padding = 0, .gap = 5, .style = .{ .background = scheme.background, .radius = 8 } }, .{
+            space(ui, 0, 4),
+            ui.row(.{ .height = 18, .padding = 0, .gap = 0, .cross = .center }, .{
+                space(ui, 10, 0),
+                ui.paragraph(.{ .height = 16, .wrap = false, .style = .{ .foreground = scheme.foreground } }, title),
+                ui.spacer(1),
+                ui.row(.{ .width = 8, .height = 8, .padding = 0, .style = .{ .background = scheme.accent, .radius = 4 } }, .{}),
+                space(ui, 10, 0),
+            }),
+            bar(ui, mixed(scheme.background, scheme.red, 0.55), 64),
+            bar(ui, mixed(scheme.background, scheme.green, 0.55), 92),
+        }),
+        ui.row(.{ .height = 18, .padding = 0, .gap = 0, .cross = .center }, .{
+            space(ui, 10, 0),
+            ui.text(.{ .grow = 1, .size = .sm, .style = .{ .foreground = if (selected) theme.ink else theme.sidebar_ink } }, scheme.name),
+            smallText(ui, if (scheme.dark) "Dark" else "Light", theme.tertiary),
+            space(ui, 10, 0),
+        }),
+    })});
+    swatch.widget.layout.grow = 1;
+    return swatch;
+}
+fn themeGrid(ui: *AppUi, model: *const Model) AppUi.Node {
+    const columns = 3;
+    var rows: [(theme.schemes.len + columns - 1) / columns]AppUi.Node = undefined;
+    for (&rows, 0..) |*row, r| {
+        var cells: [columns]AppUi.Node = undefined;
+        for (&cells, 0..) |*cell, c| {
+            const index = r * columns + c;
+            cell.* = if (index < theme.schemes.len) themeSwatch(ui, model, index) else ui.spacer(1);
+        }
+        row.* = ui.row(.{ .padding = 0, .gap = 10 }, ui.arena.dupe(AppUi.Node, &cells) catch &.{});
+    }
+    return ui.column(.{ .padding = 0, .gap = 10 }, ui.arena.dupe(AppUi.Node, &rows) catch &.{});
+}
+/// One override color: its swatch, then a hex field whose placeholder is the
+/// theme's own value.
+fn colorRow(ui: *AppUi, model: *const Model, index: usize) AppUi.Node {
+    const scheme = app.activeScheme(model);
+    const base = theme.schemes[model.theme_index];
+    const own = switch (index) {
+        0 => base.background,
+        1 => base.foreground,
+        2 => base.accent,
+        3 => base.green,
+        else => base.red,
+    };
+    const shown = switch (index) {
+        0 => scheme.background,
+        1 => scheme.foreground,
+        2 => scheme.accent,
+        3 => scheme.green,
+        else => scheme.red,
+    };
+    var hex_buffer: [7]u8 = undefined;
+    const placeholder = ui.fmt("{s}", .{theme.formatHex(&hex_buffer, own)});
+    const on_input = switch (index) {
+        0 => AppUi.inputMsg(.color0_edit),
+        1 => AppUi.inputMsg(.color1_edit),
+        2 => AppUi.inputMsg(.color2_edit),
+        3 => AppUi.inputMsg(.color3_edit),
+        else => AppUi.inputMsg(.color4_edit),
+    };
+    const role = app.color_roles[index];
+    return settingRow(ui, role, if (model.colors[index].len > 0) "Your color, over the theme's." else "The theme's own.", ui.row(.{ .padding = 0, .gap = 8, .cross = .center }, .{
+        ui.row(.{ .width = 18, .height = 18, .padding = 0, .style = .{ .background = shown, .border = theme.hairline, .stroke_width = 1, .radius = 5 } }, .{}),
+        ui.row(.{ .width = 96, .height = 26, .padding = 0, .gap = 0, .cross = .center, .style = .{ .background = theme.field, .radius = 7 } }, .{
+            space(ui, 8, 0),
+            ui.textField(.{ .key = .{ .str = ui.fmt("color-{d}", .{index}) }, .grow = 1, .height = 24, .text = model.colors[index].text(), .placeholder = placeholder, .on_input = on_input, .semantics = .{ .label = ui.fmt("{s} color", .{role}) }, .variant = .ghost, .style = .{ .background = theme.clear, .border = theme.clear, .focus_ring = theme.clear, .radius = 0 } }),
+        }),
+    }));
+}
+fn settingsBody(ui: *AppUi, model: *const Model) AppUi.Node {
+    return switch (model.settings_section) {
+        .review => ui.column(.{ .padding = 0, .gap = 0 }, .{
+            heading(ui, "Reviewing"),
+            card(ui, &.{
+                settingRow(ui, "Fold reviewed files", "Marking a file reviewed folds it to its header, so what is left to read stays in view.", toggle(ui, "Fold reviewed files", model.collapse_reviewed, .toggle_fold_setting)),
+                settingRow(ui, "Diff layout", "How changes are laid out. ⌘\\ switches while you review.", choices(ui, .{ choice(ui, "Split", model.split, .{ .default_split = true }), choice(ui, "Unified", !model.split, .{ .default_split = false }) })),
+            }),
+            heading(ui, "Comparison"),
+            card(ui, &.{
+                settingRow(ui, "Open with", "What Patch reviews when it opens a repository.", choices(ui, .{ choice(ui, "Working", model.default_mode == .working, .{ .default_mode = .working }), choice(ui, "Staged", model.default_mode == .staged, .{ .default_mode = .staged }), choice(ui, "Branch", model.default_mode == .branch, .{ .default_mode = .branch }) })),
+                settingRow(ui, "Base branch", "Branch comparisons start from the merge base with this branch.", ui.row(.{ .width = 150, .height = 26, .padding = 0, .gap = 0, .cross = .center, .style = .{ .background = theme.field, .radius = 13 } }, .{
+                    ui.textField(.{ .key = .{ .str = "settings-base" }, .grow = 1, .height = 24, .text = model.base.text(), .placeholder = "main", .on_input = AppUi.inputMsg(.base_edit), .semantics = .{ .label = "Default base branch" }, .variant = .ghost, .style = .{ .border = theme.clear, .background = theme.clear, .focus_ring = theme.clear, .radius = 0 } }),
+                })),
+            }),
+        }),
+        .layout => ui.column(.{ .padding = 0, .gap = 0 }, .{
+            heading(ui, "Window"),
+            card(ui, &.{
+                settingRow(ui, "Show file rail", "The list of changed files beside the review. ⌘B toggles it.", toggle(ui, "Show file rail", model.sidebar, .toggle_rail_setting)),
+                settingRow(ui, "Pane widths", ui.fmt("Rail {d:.0} pt · Notes {d:.0} pt. Drag the gap between panes to resize them.", .{ model.sidebar_width, model.notes_width }), ui.button(.{ .height = 26, .size = .sm, .variant = .ghost, .on_press = .reset_widths, .semantics = .{ .label = "Reset pane widths" }, .style = .{ .foreground = theme.ink, .background = theme.segment_on, .radius = 13 } }, "Reset")),
+            }),
+        }),
+        .keyboard => blk: {
+            var rows: [24]AppUi.Node = undefined;
+            var count: usize = 0;
+            for (app.keyboard.commands) |item| {
+                if (item.shortcut.len == 0 or count == rows.len) continue;
+                rows[count] = settingRow(ui, item.title, "", keycap(ui, item.shortcut));
+                count += 1;
+            }
+            break :blk ui.column(.{ .padding = 0, .gap = 0 }, .{
+                heading(ui, "Shortcuts"),
+                ui.row(.{ .padding = 0, .gap = 0 }, .{ space(ui, 2, 0), ui.column(.{ .grow = 1, .padding = 0, .gap = 0 }, .{caption(ui, "Vim keys move through the review. Counts repeat a motion, as in 5j or 2]c. Every command is also in the palette, ⌘K.")}) }),
+                space(ui, 0, 8),
+                card(ui, ui.arena.dupe(AppUi.Node, rows[0..count]) catch &.{}),
+            });
+        },
+        .appearance => ui.column(.{ .padding = 0, .gap = 0 }, .{
+            heading(ui, "Theme"),
+            themeGrid(ui, model),
+            heading(ui, "Panes"),
+            card(ui, &.{
+                settingRow(ui, "Material", "Glass lets the window's blur show through the review and the notes.", choices(ui, .{ choice(ui, "Solid", !model.glass_panes, .{ .set_glass = false }), choice(ui, "Glass", model.glass_panes, .{ .set_glass = true }) })),
+            }),
+            heading(ui, "Colors"),
+            card(ui, &.{
+                colorRow(ui, model, 0),
+                colorRow(ui, model, 1),
+                colorRow(ui, model, 2),
+                colorRow(ui, model, 3),
+                colorRow(ui, model, 4),
+                settingRow(ui, "Reset colors", "Return every color to the theme's own.", ui.button(.{ .height = 26, .size = .sm, .variant = .ghost, .on_press = .reset_colors, .semantics = .{ .label = "Reset colors" }, .style = .{ .foreground = theme.ink, .background = theme.segment_on, .radius = 13 } }, "Reset")),
+            }),
+            space(ui, 0, 8),
+        }),
+        .about => ui.column(.{ .padding = 0, .gap = 0 }, .{
+            space(ui, 0, 18),
+            card(ui, &.{
+                ui.row(.{ .height = 72, .padding = 0, .gap = 0, .cross = .center }, .{
+                    space(ui, 14, 0),
+                    tile(ui, 5, 40),
+                    space(ui, 14, 0),
+                    ui.column(.{ .grow = 1, .padding = 0, .gap = 2 }, .{
+                        ui.paragraph(.{ .height = 18, .wrap = false, .style = .{ .foreground = theme.ink } }, ui.arena.dupe(canvas.TextSpan, &.{.{ .text = "Patch", .weight = .medium }}) catch &.{}),
+                        caption(ui, "Version 0.1.0 · Local code review. Git access is read-only."),
+                    }),
+                }),
+            }),
+            heading(ui, "Data"),
+            card(ui, &.{
+                settingRow(ui, "Review progress and notes", "Saved on this Mac for each repository and patch snapshot. A changed patch starts a fresh review.", ui.button(.{ .height = 26, .size = .sm, .variant = .ghost, .on_press = .copy_data_path, .semantics = .{ .label = "Copy data folder path" }, .style = .{ .foreground = theme.ink, .background = theme.segment_on, .radius = 13 } }, "Copy Path")),
+            }),
+        }),
+    };
+}
+fn sectionMatches(model: *const Model, section: Section) bool {
+    const query = model.settings_query.text();
+    if (query.len == 0) return true;
+    return std.ascii.indexOfIgnoreCase(sectionInfo(section).title, query) != null;
+}
+/// The Settings window, in Rex's arrangement: an inset sidebar panel holding the
+/// traffic lights, a search capsule and the sections; the section's cards beside it.
+pub fn settingsWindow(ui: *AppUi, model: *const Model) AppUi.Node {
+    const info = sectionInfo(model.settings_section);
+    const sections = [_]Section{ .review, .layout, .appearance, .keyboard, .about };
+    var rows: [sections.len]AppUi.Node = undefined;
+    var count: usize = 0;
+    for (sections) |section| if (sectionMatches(model, section)) {
+        rows[count] = sectionRow(ui, model, section);
+        count += 1;
+    };
+    const title = ui.arena.dupe(canvas.TextSpan, &.{.{ .text = info.title, .weight = .medium, .scale = 17.0 / 13.0 }}) catch &.{};
+    var panel = ui.el(.panel, .{ .width = 200, .grow = 0, .padding = 0, .style = .{ .background = theme.settings_panel, .border = theme.hairline, .stroke_width = 0.5, .radius = 12 } }, .{
+        ui.column(.{ .grow = 1, .padding = 0, .gap = 0 }, .{
+            ui.row(.{ .height = 42, .padding = 0, .window_drag = true }, .{}),
+            ui.row(.{ .height = 30, .padding = 0, .gap = 0, .cross = .center }, .{
+                space(ui, 8, 0),
+                ui.row(.{ .grow = 1, .height = 30, .padding = 0, .gap = 0, .cross = .center, .style = .{ .background = theme.field, .radius = 15 } }, .{
+                    space(ui, 11, 0),
+                    ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.tertiary } }, "find"),
+                    space(ui, 1, 0),
+                    ui.textField(.{ .key = .{ .str = "settings-search" }, .grow = 1, .height = 24, .text = model.settings_query.text(), .placeholder = "Search Settings", .on_input = AppUi.inputMsg(.settings_search_edit), .semantics = .{ .label = "Search Settings" }, .variant = .ghost, .style = .{ .border = theme.clear, .background = theme.clear, .focus_ring = theme.clear, .radius = 0 } }),
+                    space(ui, 8, 0),
+                }),
+                space(ui, 8, 0),
+            }),
+            space(ui, 0, 10),
+            ui.row(.{ .padding = 0, .gap = 0 }, .{ space(ui, 8, 0), ui.column(.{ .grow = 1, .padding = 0, .gap = 2, .semantics = .{ .label = "Settings sections", .role = .list } }, ui.arena.dupe(AppUi.Node, rows[0..count]) catch &.{}), space(ui, 8, 0) }),
+        }),
+    });
+    panel.widget.layout.clip_content = true;
+    return ui.stack(.{ .padding = 0, .style = .{ .background = theme.settings_bg, .foreground = theme.ink, .radius = 0 } }, .{
+        ui.row(.{ .padding = 0, .gap = 0 }, .{
+            ui.column(.{ .padding = 0, .gap = 0 }, .{ space(ui, 0, 8), ui.row(.{ .grow = 1, .padding = 0, .gap = 0 }, .{ space(ui, 8, 0), panel }), space(ui, 0, 8) }),
+            ui.column(.{ .grow = 1, .padding = 0, .gap = 0 }, .{
+                ui.row(.{ .height = 50, .padding = 0, .gap = 0, .cross = .center, .window_drag = true }, .{
+                    space(ui, 24, 0),
+                    ui.paragraph(.{ .height = 24, .wrap = false, .style = .{ .foreground = theme.ink } }, title),
+                }),
+                ui.scroll(.{ .grow = 1, .padding = 0, .gap = 0 }, .{
+                    ui.row(.{ .padding = 0, .gap = 0 }, .{
+                        space(ui, 22, 0),
+                        ui.column(.{ .grow = 1, .max_width = 640, .padding = 0, .gap = 0 }, .{ settingsBody(ui, model), space(ui, 0, 24) }),
+                        space(ui, 22, 0),
+                    }),
+                }),
+            }),
+        }),
+    });
+}
+/// Notices float as a frosted capsule at the foot of the review, as Rex's do.
+fn toast(ui: *AppUi, model: *const Model) AppUi.Node {
+    const left = model.rail_shown + theme.pane_inset;
+    const right = theme.pane_inset + (if (model.notes_shown > 0) model.notes_shown + theme.pane_inset else 0);
+    var pill = ui.el(.panel, .{ .height = 30, .padding = 0, .semantics = .{ .role = .group, .label = model.notice }, .style = .{ .background = theme.menu, .border = theme.glass_edge, .stroke_width = 0.5, .radius = 15 } }, .{
+        ui.row(.{ .height = 30, .padding = 0, .gap = 0, .cross = .center }, .{ space(ui, 14, 0), ui.text(.{ .style = .{ .foreground = theme.ink } }, model.notice), space(ui, 14, 0) }),
+    });
+    pill.widget.layout.grow = 0;
+    return ui.column(.{ .padding = 0, .gap = 0 }, .{
+        ui.spacer(1),
+        ui.row(.{ .padding = 0, .gap = 0 }, .{ space(ui, left, 0), ui.row(.{ .grow = 1, .padding = 0, .main = .center }, .{pill}), space(ui, right, 0) }),
+        // Clear of the review's status strip, so it never covers the find bar.
+        space(ui, 0, 26 + (if (model.focus == .search or model.search_query.len > 0) @as(f32, 30) else 0)),
+    });
+}
+/// A pane that can close: its content keeps its width and is clipped while the
+/// split eases the pane open or shut, so it slides instead of reflowing. No
+/// minimum width: a floor would make the split jump to it before easing. The
+/// model clamps widths that a drag reports.
+fn drawer(ui: *AppUi, open: bool, content: AppUi.Node) AppUi.Node {
+    // Content keeps its width and is clipped, so the pane slides rather than reflows.
+    var node = ui.row(.{ .padding = 0, .gap = 0, .main = .start }, .{content});
+    node.widget.layout.clip_content = true;
+    // The split alone sizes a drawer; its fixed-width content must not hold it open.
+    node.widget.layout.zero_intrinsic = true;
+    node.widget.semantics.hidden = !open;
+    return node;
+}
+pub fn view(ui: *AppUi, model: *const Model) AppUi.Node {
+    const inset = theme.pane_inset;
+    // Both splits stay mounted. Their fractions follow the widths on screen,
+    // which the model eases a frame at a time when a pane opens or closes, so
+    // each frame is a real layout (no split tween sliding a stale one).
+    const span = model.canvas_width - inset;
+    // 0 would mean an uncontrolled split; a hair above it is a closed rail.
+    const rail = std.math.clamp(model.rail_shown / span, 0.0001, 0.95);
+    const main_width = model.canvas_width - model.rail_shown - inset - inset;
+    const notes = if (model.notes_shown > 0) std.math.clamp((main_width - model.notes_shown - inset) / main_width, 0.05, 1) else 1;
+    // A split clamps a drag only to its panes' minimums, so each side pane's
+    // range is two minimums: its own while it rests open, and the review's,
+    // which leaves the side pane no more than its maximum.
+    const idle = model.motion == null;
+    const panes = ui.split(.{ .grow = 1, .gap = inset, .value = notes, .on_resize = AppUi.valueMsg(.notes_resized) }, .{
+        withMin(reviewPane(ui, model), @max(360, main_width - inset - theme.notes_max - inset)),
+        withMin(drawer(ui, model.notes_open, if (!model.notes_open and !model.notes_mounted) ui.spacer(0) else ui.row(.{ .width = model.notes_width + inset, .padding = 0, .gap = 0 }, .{ notePanel(ui, model), space(ui, inset, 0) })), if (model.notes_open and idle) theme.notes_min + inset else 0),
+    });
+    const main = ui.column(.{ .grow = 1, .padding = 0, .gap = 0 }, .{
+        space(ui, 0, inset),
+        ui.row(.{ .grow = 1, .padding = 0, .gap = 0 }, .{panes}),
+        space(ui, 0, inset),
+    });
+    // The window's dark tint is a native layer under the canvas (glass.m), so the
+    // canvas never blends a full-window fill on every frame.
+    return ui.stack(.{ .padding = 0, .style = .{ .background = theme.clear, .foreground = theme.ink, .radius = 0 } }, .{
+        ui.split(.{ .grow = 1, .gap = inset, .value = rail, .on_resize = AppUi.valueMsg(.sidebar_resized) }, .{
+            withMin(drawer(ui, model.sidebar, if (!model.sidebar and !model.rail_mounted) ui.spacer(0) else fileRail(ui, model)), if (model.sidebar and idle) theme.rail_min else 0),
+            withMin(main, @max(480, span - theme.rail_max)),
+        }),
+        headerLayer(ui, model),
+        if (model.notice.len > 0) toast(ui, model) else ui.spacer(0),
+        if (model.palette != .closed) palette(ui, model) else ui.spacer(0),
+    });
+}
+fn withMin(node: AppUi.Node, width: f32) AppUi.Node {
+    var result = node;
+    result.widget.layout.min_size.width = width;
+    return result;
+}
