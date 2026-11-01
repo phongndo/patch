@@ -2624,7 +2624,7 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
     var dir_buf: [4096]u8 = undefined;
-    const dir = init.environ_map.get("PATCH_STATE_DIR") orelse try sdk.app_dirs.resolveOne(.{ .name = "computer.patch.app" }, sdk.app_dirs.currentPlatform(), .{ .home = init.environ_map.get("HOME"), .xdg_data_home = init.environ_map.get("XDG_DATA_HOME") }, .data, &dir_buf);
+    const dir = init.environ_map.get("PATCH_STATE_DIR") orelse try sdk.app_dirs.resolveOne(.{ .name = "computer.patch.app" }, sdk.app_dirs.currentPlatform(), .{ .home = init.environ_map.get("HOME"), .xdg_data_home = init.environ_map.get("XDG_DATA_HOME"), .local_app_data = init.environ_map.get("LOCALAPPDATA"), .app_data = init.environ_map.get("APPDATA") }, .data, &dir_buf);
     try std.Io.Dir.cwd().createDirPath(init.io, dir);
     session = .{ .io = init.io, .data_dir = try gpa.dupe(u8, dir), .measure_startup = init.environ_map.contains("NATIVE_SDK_WINDOW_TIMING") };
     // Git runs in the repository, so the attributes file needs an absolute path.
