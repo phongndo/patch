@@ -1215,7 +1215,10 @@ fn poll(model: *Model, fx: *Effects) void {
     if (job.stale) notify(model, fx, "Files changed while loading · ⌘R reads them again");
     if (job.store_failed) model.error_text = "Saved review progress could not be read; this review will not be saved.";
     if (job.keeper != null) fx.startTimer(.{ .key = 10, .interval_ms = 150, .mode = .repeating, .on_fire = Effects.timerMsg(.keeper_tick) });
-    if (job.sources_done.load(.acquire)) adoptSources(model, fx) else fx.startTimer(.{ .key = 11, .interval_ms = 16, .mode = .repeating, .on_fire = Effects.timerMsg(.sources_tick) });
+    // Sources and highlights are taken in as each is ready, the highlights
+    // perhaps well after the sources.
+    if (!job.highlights_done.load(.acquire)) fx.startTimer(.{ .key = 11, .interval_ms = 16, .mode = .repeating, .on_fire = Effects.timerMsg(.sources_tick) });
+    if (job.sources_done.load(.acquire)) adoptSources(model, fx);
     if (session.imported == null) {
         const last_path = std.fmt.allocPrint(gpa, "{s}/repository", .{session.data_dir}) catch return;
         defer gpa.free(last_path);
@@ -1299,11 +1302,12 @@ fn adoptSources(model: *Model, fx: *Effects) void {
         adoptMarks(model, job);
         fx.cancelTimer(11);
     }
-    if (job.sources.len != model.files.len) return;
+    // Files opened for reference since (after the review's own) have none.
+    if (model.sources.len > 0 or job.sources.len == 0 or job.sources.len > model.files.len) return;
     model.sources = job.sources;
     const alloc = job.arena.allocator();
     var changed = registerImages(model, fx);
-    for (model.files, 0..) |*file, index| {
+    for (model.files[0..model.sources.len], 0..) |*file, index| {
         const text = model.sources[index].new orelse continue;
         if (file.message or file.binary or model.sources[index].new_binary or file.status == .added or file.status == .deleted) continue;
         const rows = file.fullRows();
@@ -1318,13 +1322,12 @@ fn adoptSources(model: *Model, fx: *Effects) void {
 /// Takes in the files' highlights, keeping a slot for each file (files
 /// opened for reference are highlighted as they open).
 fn adoptMarks(model: *Model, job: *Job) void {
-    if (model.marks.len > 0) gpa.free(model.marks);
-    model.marks = &.{};
     const marks = gpa.alloc(Marks, model.files.len) catch return;
     @memset(marks, .{});
-    for (job.highlights, 0..) |mark, index| if (index < marks.len) {
-        marks[index] = mark;
-    };
+    for (marks, 0..) |*mark, index| {
+        if (index < job.highlights.len) mark.* = job.highlights[index] else if (index < model.marks.len) mark.* = model.marks[index];
+    }
+    if (model.marks.len > 0) gpa.free(model.marks);
     model.marks = marks;
 }
 /// Decodes the image files' sides for drawing, letting go of the last
@@ -2181,11 +2184,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         },
         .sources_tick => |timer| if (timer.outcome == .fired) {
             const job = session.document orelse return fx.cancelTimer(11);
-            if (model.sources.len == 0 and job.sources_done.load(.acquire)) adoptSources(model, fx);
-            if (model.sources.len > 0 and job.highlights_done.load(.acquire)) {
-                adoptMarks(model, job);
-                fx.cancelTimer(11);
-            }
+            if (job.sources_done.load(.acquire)) adoptSources(model, fx);
         },
         .toggle_notes => {
             model.band_menu = false;
