@@ -7,6 +7,8 @@ import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 
 const exec = promisify(execFile);
+// NixOS has no /bin/ps; take it from PATH off macOS.
+const ps = process.platform === "darwin" ? "/bin/ps" : "ps";
 const args = process.argv.slice(2);
 const option = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
 const binary = resolve(option("--binary", "zig-out/bin/patch"));
@@ -77,8 +79,8 @@ async function until(predicate, timeout = 15_000) {
           .filter((line) => line.includes("error event="))
           .join("\n")}\n${stderr.slice(-1500)}`,
       );
-    if (app && app.exitCode !== null)
-      throw new Error(`App exited (${app.exitCode}): ${stderr.slice(-2000)}`);
+    if (app && (app.exitCode !== null || app.signalCode !== null))
+      throw new Error(`App exited (${app.exitCode ?? app.signalCode}): ${stderr.slice(-2000)}`);
     await delay(3);
   }
   throw new Error(`Benchmark timeout: ${stderr.slice(-3000)}`);
@@ -120,7 +122,8 @@ async function stop() {
     }
     return;
   }
-  if (!app || app.exitCode !== null) return;
+  // A process ended by a signal keeps a null exit code; its exit already fired.
+  if (!app || app.exitCode !== null || app.signalCode !== null) return;
   const stopped = new Promise((done) => app.once("exit", done));
   app.kill("SIGTERM");
   await stopped;
@@ -369,16 +372,18 @@ try {
     const reviewTimes = samples
       .map((sample) => sample.reviewVisible)
       .filter((value) => value !== null);
+    // Only the macOS host logs when a window is shown; elsewhere it is unmeasured.
+    const shownTimes = samples.map((sample) => sample.shown).filter((value) => value !== null);
     results.launches[name] = {
       observed_ready_ms: summary(samples.map((sample) => sample.ready)),
-      visible_ms: summary(samples.map((sample) => sample.shown).filter((value) => value !== null)),
+      visible_ms: shownTimes.length ? summary(shownTimes) : null,
       review_visible_ms: reviewTimes.length ? summary(reviewTimes) : null,
       preflight,
       samples,
     };
     const measured = results.launches[name];
     console.log(
-      `${name}: window ${measured.visible_ms.median.toFixed(1)} ms; first review ${measured.review_visible_ms?.median.toFixed(1) ?? "unmeasured"} ms; ${production ? "milestones" : "snapshot"} observed ${measured.observed_ready_ms.median.toFixed(1)} ms.`,
+      `${name}: window ${measured.visible_ms?.median.toFixed(1) ?? "unmeasured"} ms; first review ${measured.review_visible_ms?.median.toFixed(1) ?? "unmeasured"} ms; ${production ? "milestones" : "snapshot"} observed ${measured.observed_ready_ms.median.toFixed(1)} ms.`,
     );
   }
   if (!args.includes("--startup-only")) {
@@ -470,7 +475,7 @@ try {
       );
     }
     results.resident_mb =
-      Number((await exec("/bin/ps", ["-p", String(app.pid), "-o", "rss="])).stdout.trim()) / 1024;
+      Number((await exec(ps, ["-p", String(app.pid), "-o", "rss="])).stdout.trim()) / 1024;
     if (args.includes("--interaction"))
       assert.ok(
         Object.hasOwn(results.interactions, option("--interaction")),
@@ -491,7 +496,7 @@ try {
   if (args.includes("--assert")) {
     for (const [name, measured] of Object.entries(results.launches)) {
       assert.ok(
-        measured.visible_ms.p90 <= 250,
+        measured.visible_ms && measured.visible_ms.p90 <= 250,
         `${name}: window should become visible within 250 ms`,
       );
       assert.ok(
