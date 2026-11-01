@@ -394,7 +394,7 @@ try {
     );
     await profile(
       "keyboard",
-      Array.from({ length: 30 }, () => ["widget-key", "main-canvas", "j"]),
+      Array.from({ length: 30 }, () => ["widget-key", "main-canvas", "down"]),
     );
     await profile(
       "palette",
@@ -412,14 +412,14 @@ try {
         keys(Array.from({ length: 20 }, (_, i) => (i % 2 ? "up" : "down"))),
       );
       await key("escape");
-      await profile("review_toggle", keys(Array(12).fill("r")));
+      await profile("review_toggle", keys(Array(12).fill("cmd+shift+enter")));
       await profile("sidebar_toggle", keys(Array(12).fill("cmd+b")));
       if (!(await snapshot()).includes('role=textbox name="Find file"')) await key("cmd+b");
       await profile("notes_toggle", keys(Array(12).fill("cmd+shift+n")));
       if ((await snapshot()).includes('name="Close notes"')) await key("cmd+shift+n");
       await profile("split_toggle", keys(Array(12).fill("cmd+backslash")));
       if ((await snapshot()).includes('name="Switch to split diff"')) await key("cmd+backslash");
-      await key("c");
+      await key("enter");
       await profile("note_typing", keys([..."instant notes", ...Array(13).fill("backspace")]));
       await key("escape");
       await key("cmd+f");
@@ -429,7 +429,7 @@ try {
       await launch("file_interactions", join(directory, "many_files.diff"), 0);
       await profile(
         "file_navigation",
-        keys(Array.from({ length: 20 }, (_, i) => (i % 2 ? "shift+k" : "shift+j"))),
+        keys(Array.from({ length: 20 }, (_, i) => (i % 2 ? "cmd+alt+up" : "cmd+alt+down"))),
       );
       await command("widget-click", "main-canvas", widget(await snapshot(), "Find file"));
       await profile("file_filter", keys([..."file12", ...Array(6).fill("backspace")]));

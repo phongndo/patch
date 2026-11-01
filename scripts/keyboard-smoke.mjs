@@ -56,8 +56,8 @@ async function absent(text) {
 async function key(chord) {
   await command("widget-key", "main-canvas", chord);
 }
-async function keys(sequence) {
-  for (const char of sequence) await key(char);
+async function keys(...chords) {
+  for (const chord of chords) await key(chord);
 }
 function idFor(state, label) {
   const line = state.split("\n").find((entry) => entry.includes(`name="${label}"`));
@@ -69,44 +69,46 @@ async function setText(label, text) {
 }
 try {
   await waitFor('role=list name="Changes"');
-  await keys("gg");
+  await key("cmd+up");
   await waitFor("Line 1 · new");
-  await key("j");
+  await key("down");
   await waitFor("Line 2 · new");
-  await key("h");
+  // Letters are not commands: j neither moves nor types anywhere.
+  await keys("j", "g", "G");
+  await waitFor("Line 2 · new");
+  await key("left");
   await waitFor("Line 2 · old");
-  await key("l");
+  await key("right");
   await waitFor("Line 2 · new");
-  await keys("gg3j");
+  await keys("cmd+up", "down", "down", "down");
   await waitFor("Line 20 · new");
-  await keys("gg]c");
+  await keys("cmd+up", "alt+down");
   await waitFor("Line 2 · new");
-  await keys("]c");
+  await key("alt+down");
   await waitFor("Line 21 · new");
-  await keys("[c");
+  await key("alt+up");
   await waitFor("Line 2 · new");
   const reviewPane = idFor(await snapshot(), "Review pane");
-  await key("shift+j");
+  await key("alt+cmd+down");
   await waitFor("Line 1 · new");
   assert.equal(
     idFor(await snapshot(), "Review pane"),
     reviewPane,
     "Keyboard file navigation must preserve the focused review pane",
   );
-  await key("shift+k");
+  await key("alt+cmd+up");
   await waitFor("Line 1 · new");
   assert.equal(idFor(await snapshot(), "Review pane"), reviewPane);
-  console.log("Vim motions, counts, side selection, change jumps, and file jumps passed.");
+  console.log("Arrow motions, side selection, change jumps, and file jumps passed.");
 
-  await key("/");
+  await key("cmd+f");
   await waitFor('role=textbox name="Find in diff"');
-  assert.ok(!(await snapshot()).includes('text="/"'), "Search opener leaked into the query");
   await setText("Find in diff", "needle");
   await key("enter");
   await waitFor("Line 2 · new");
-  await key("n");
+  await key("cmd+g");
   await waitFor("Line 21 · new");
-  await key("shift+n");
+  await key("cmd+shift+g");
   await waitFor("Line 2 · new");
   await key("escape");
 
@@ -151,35 +153,35 @@ try {
   await key("enter");
   await absent('role=textbox name="File picker"');
   await waitFor("Line 1 · new");
-  await key("j");
+  await key("down");
   await waitFor("Line 2 · new");
   console.log("Diff search, repeated matches, command palette, and fuzzy file picker passed.");
 
-  await key("c");
+  await key("enter");
   await waitFor('role=textbox name="Review note"');
   const editor = (await snapshot())
     .split("\n")
     .find((entry) => entry.includes('name="Review note"'));
-  assert.ok(!editor.includes('text="c"'), "Comment opener leaked into the editor");
+  assert.ok(!/text="\S/.test(editor), "Comment opener leaked into the editor");
   for (const char of "jkrn") await command("widget-key", "main-canvas", char, char);
   await waitFor('text="jkrn"');
   await key("escape");
-  await key("k");
+  await key("up");
   await waitFor("Line 1 · new");
-  await key("c");
+  await key("enter");
   await waitFor('role=textbox name="Review note"');
   assert.ok((await snapshot()).includes('text="jkrn"'), "Escape discarded the note draft");
   await setText("Review note", "Keyboard review note.");
   await key("cmd+enter");
   await absent('role=textbox name="Review note"');
   await waitFor("Keyboard review note.");
-  await key("r");
+  await key("cmd+shift+enter");
   await waitFor('name="1/2"');
-  await key("shift+r");
+  await key("cmd+enter");
   await waitFor('name="1/2"');
-  await key("shift+r");
+  await key("cmd+enter");
   await waitFor('name="2/2"');
-  await key("u");
+  await key("cmd+z");
   await waitFor('name="1/2"');
   console.log(
     "Comment typing safety, Escape focus return, keyboard save, review-and-advance, and undo passed.",
@@ -199,9 +201,23 @@ try {
   await key("enter");
   await absent('role=textbox name="Command search"');
   await waitFor("Line 1 · new");
-  await key("j");
+  await key("down");
   await waitFor("Line 2 · new");
   console.log("The command palette searches and opens changed files alongside commands.");
+
+  await key("cmd+l");
+  await waitFor('role=textbox name="File picker"');
+  await setText("File picker", ":21");
+  await key("enter");
+  await absent('role=textbox name="File picker"');
+  await waitFor("Line 21 · new");
+  await key("cmd+p");
+  await setText("File picker", "b.ts:2");
+  await key("enter");
+  await waitFor("Line 2 · new");
+  await key("cmd+down");
+  await waitFor("Line 3 · new");
+  console.log("Go to line, from ⌘L and from a file:line query, passed.");
   assert.ok((await snapshot()).includes("dispatch_errors=0"));
   console.log("All keyboard UI checks passed.");
 } catch (error) {

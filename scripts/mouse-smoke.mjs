@@ -91,8 +91,8 @@ try {
     "Mouse range note.",
   );
   await key("escape");
-  await key("shift+j");
-  await key("c");
+  await key("cmd+alt+down");
+  await key("enter");
   await waitFor("a.ts:2–4");
   await waitFor('text="Mouse range note."');
   await key("cmd+enter");
