@@ -21,6 +21,8 @@
     "review:web": "pnpm build:web && node server/index.ts",
     "preview:web": "node server/index.ts --no-open",
     "package": "pnpm build && native package --target macos --output zig-out/Patch.app --binary zig-out/bin/patch --signing adhoc --web-layer exclude",
+    "package:linux": "pnpm build && native package --target linux --output zig-out/patch-linux --binary zig-out/bin/patch --web-layer exclude",
+    "package:windows": "zig build -Dtarget=x86_64-windows-gnu && native package --target windows --output zig-out/patch-windows --binary zig-out/bin/patch.exe --web-layer exclude",
     "icons:sync": "node scripts/sync-pierre-icons.mjs",
     "test:web": "node --test server/*.test.ts",
     "test:native": "zig build && PATCH_TEST_NATIVE=1 node --test server/git.test.ts",

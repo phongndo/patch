@@ -6,7 +6,7 @@
   "description": "Local code review.",
   "version": "0.1.0",
   "icons": ["assets/icon.svg"],
-  "platforms": ["macos"],
+  "platforms": ["macos", "linux", "windows"],
   "permissions": ["view", "command"],
   "capabilities": ["native_views", "gpu_surfaces"],
   "webview_layer": "exclude",
