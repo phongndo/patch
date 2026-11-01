@@ -11,11 +11,15 @@ pnpm dev --repo /path/to/repository
 
 Click the repository at the top of the file rail to switch repositories; the
 button beside it reads newer changes. The comparison control at the foot of the
-rail chooses what to review: Working compares HEAD with the index and working
-tree, including untracked files; Staged reads only the index; the third segment
-is the checked-out branch, compared from the merge base with its base. Clicking
-it opens a picker for both sides (Base and Head, with a swap): type to filter,
-↑↓ to choose, ⇥ to switch side, ↩ to compare. Drag the gap beside the rail or
+rail chooses what to show: **Files** browses every file of the project (see
+below); **Changes** compares HEAD with the index and working tree, including
+untracked files, and clicking it again shows only what is staged (the segment
+then reads Staged; click once more for all changes); the third segment, named
+for the checked-out branch, compares it from the merge base with its base.
+The chevron beside the branch's name (or **Change branches…** in the command
+palette) opens a picker for both sides (Base and Head, with a swap): type to
+filter, ↑↓ to choose, ⇥ to switch side, ↩ to compare. The highlight slides to
+the segment you choose. Drag the gap beside the rail or
 the notes to resize them; both ease open and closed.
 
 A branch can be reviewed whole or one commit at a time. Beside the repository's
@@ -66,6 +70,18 @@ twelve themes (Noir, Nord, Gruvbox, Tokyo Night, Catppuccin Mocha and Latte,
 Rosé Pine and Dawn, Solarized Dark and Light, Dracula, Paper), solid or glass
 panes, and your own Background, Text, Accent, Added and Removed colors over any
 theme. The theme palettes come from those open-source projects (MIT).
+
+## Browsing all files
+
+**Files** at the foot of the rail (or **Browse all files** in the command
+palette) shows every file in the working tree: those Git tracks and new ones
+it would add, ignored files aside. The rail lists them and the pane holds the
+ones you open, each read from disk as it opens, so a large repository lists at
+once. Choose a file in the rail or with **⌘P** to open it; its header's ×
+closes it again. Files read whole, highlighted like the review; **gd** and
+**gb** work as they do there, **J** / **K** step between open files, and find
+searches them. Nothing is reviewed or noted while browsing. **Changes** or the
+branch goes back to reviewing. Settings › Open with can start Patch here.
 
 ## Reading around a change
 

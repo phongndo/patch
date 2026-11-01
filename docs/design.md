@@ -45,10 +45,13 @@ takes values from those sources rather than approximating them.
   into a "…" menu, and as the rail closes they ease back beside the toggle.
 - The rail lists the repository and its reload at the top, directories as Rex's
   small medium-weight group headers, files as flat capsule rows on a 32-point
-  rhythm, and the comparison control at its foot: Working, Staged, and the
-  checked-out branch. In a narrow rail it becomes one capsule with a menu.
-- The branch segment opens a picker in the palette's language: Base and Head
-  sides with a swap, a filter, branches newest first, keycaps at the foot.
+  rhythm, and the comparison control at its foot: Files, Changes (Staged on a
+  second press), and the checked-out branch by name. In a narrow rail it
+  becomes one capsule with a menu.
+- The three segments are equal thirds; one highlight slides between them on
+  the panes' curve. The branch segment's own chevron opens a picker in the
+  palette's language: Base and Head sides with a swap, a filter, branches
+  newest first, keycaps at the foot. Pressing the branch only shows it.
 - Panes resize from the gaps between them, within Rex's measured range, and
   ease open and closed (240 ms, Core Animation's default curve) with a real
   layout every frame.
