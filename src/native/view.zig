@@ -37,11 +37,14 @@ fn paneControl(ui: *AppUi, key: []const u8, name: []const u8, label: []const u8,
 /// One segment of the scope capsule, the active one on a raised capsule.
 /// `fill` shares the capsule's remaining room; otherwise it hugs its words.
 /// One segment of the comparison control, over the highlight that slides
-/// between them (`scopeBar`), so it draws only its word. It stays as it is
-/// while a review loads (a press then does nothing) rather than greying out
-/// under the highlight on every switch.
-fn segment(ui: *AppUi, label: []const u8, text: []const u8, msg: Msg, active: bool, width: ?f32) AppUi.Node {
-    return ui.button(.{ .width = width orelse 0, .grow = if (width == null) 1 else 0, .height = 24, .size = .sm, .variant = .ghost, .on_press = msg, .semantics = .{ .label = label }, .style = .{ .foreground = if (active) theme.ink else theme.sidebar_ink, .background = theme.clear, .border = theme.clear, .radius = 12, .quiet_hover = true } }, text);
+/// between them (`scopeBar`), so it draws only its word, or its icon when
+/// the rail is too narrow for words. It stays as it is while a review loads
+/// (a press then does nothing) rather than greying out under the highlight
+/// on every switch.
+fn segment(ui: *AppUi, label: []const u8, text: []const u8, icon: ?[]const u8, msg: Msg, active: bool, width: ?f32) AppUi.Node {
+    const style: canvas.WidgetStyle = .{ .foreground = if (active) theme.ink else theme.sidebar_ink, .background = theme.clear, .border = theme.clear, .radius = 12, .quiet_hover = true };
+    if (icon) |name| return ui.button(.{ .width = width orelse 0, .grow = if (width == null) 1 else 0, .height = 24, .icon = ui.fmt("app:{s}", .{name}), .size = .icon, .variant = .ghost, .on_press = msg, .semantics = .{ .label = label }, .style = style }, "");
+    return ui.button(.{ .width = width orelse 0, .grow = if (width == null) 1 else 0, .height = 24, .size = .sm, .variant = .ghost, .on_press = msg, .semantics = .{ .label = label }, .style = style }, text);
 }
 /// A full-width capsule field that shares the file rows' icon column.
 fn capsuleField(ui: *AppUi, icon: []const u8, field: AppUi.Node) AppUi.Node {
@@ -273,43 +276,14 @@ fn scopeBar(ui: *AppUi, model: *const Model) AppUi.Node {
     const files_msg: Msg = .{ .mode = .files };
     const branch_tip = ui.el(.tooltip, .{ .text = ui.fmt("Changes on {s} since {s}", .{ head, model.base.text() }), .anchor = .above, .anchor_alignment = .end, .tooltip_delay = 600, .size = .sm }, .{});
     const changes_tip = ui.el(.tooltip, .{ .text = if (staged) "Staged changes · click for all uncommitted changes" else if (changes_active) "Uncommitted changes · click for staged changes only" else "Uncommitted changes", .anchor = .above, .anchor_alignment = .start, .tooltip_delay = 600, .size = .sm }, .{});
-    // Three equal thirds, the branch's name truncating in its own (its
-    // tooltip names it whole); in a rail too narrow for Changes (61.5 points
-    // as laid out) to fit a third, one capsule names the scope and opens a
-    // menu of them, as Rex folds its Filter capsule.
+    // Three equal thirds at any rail width, following the rail as it is
+    // dragged; the branch's name truncates in its own (its tooltip names it
+    // whole). Where a third is too narrow for Changes (61.5 points as laid
+    // out), every segment shows its icon instead of its word.
     const inner = model.sidebar_width - theme.rail_left - theme.rail_right - 8;
-    const compact = inner / 3 < 62;
-    const content = if (compact) blk: {
-        const name: []const u8 = switch (model.mode) {
-            .files => "Files",
-            .working => "Changes",
-            .staged => "Staged",
-            .branch => head,
-        };
-        const Item = struct { text: []const u8, active: bool, msg: Msg };
-        const entries = [_]Item{
-            .{ .text = "Files", .active = model.mode == .files, .msg = files_msg },
-            .{ .text = "Changes", .active = model.mode == .working, .msg = .{ .mode = .working } },
-            .{ .text = "Staged changes", .active = staged, .msg = .{ .mode = .staged } },
-            .{ .text = head, .active = model.mode == .branch, .msg = branch_msg },
-            .{ .text = "Change branches…", .active = false, .msg = .open_base },
-        };
-        var items: [entries.len]AppUi.Node = undefined;
-        for (entries, &items) |entry, *item| {
-            item.* = ui.el(.menu_item, .{ .text = entry.text, .icon = if (entry.active) "app:check" else "app:blank", .height = 30, .on_press = entry.msg, .disabled = model.busy }, .{});
-        }
-        break :blk ui.stack(.{ .grow = 1, .height = 24, .padding = 0 }, .{
-            // The scope's name centered in the capsule, the chevron at its
-            // trailing edge, as a macOS pop-up button draws them.
-            ui.row(.{ .key = .{ .str = "scope" }, .grow = 1, .height = 24, .padding = 0, .gap = 0, .cross = .center, .on_press = .toggle_scope_menu, .semantics = .{ .role = .button, .label = ui.fmt("Review scope: {s}", .{name}) }, .style = .{ .background = theme.segment_on, .border = theme.selected_edge, .stroke_width = 0.5, .radius = 12 } }, .{
-                space(ui, 28, 0),
-                ui.text(.{ .grow = 1, .size = .sm, .text_alignment = .center, .style = .{ .foreground = theme.ink } }, name),
-                ui.appIcon(.{ .width = 10, .height = 10, .style = .{ .foreground = theme.sidebar_ink } }, "chevron"),
-                space(ui, 18, 0),
-            }),
-            if (model.scope_menu) ui.el(.dropdown_menu, .{ .width = 200, .anchor = .above, .anchor_alignment = .start, .anchor_offset = 6, .padding = 5, .gap = 0, .on_dismiss = .close_scope_menu, .style = .{ .background = theme.menu, .border = theme.glass_edge, .radius = 12 } }, ui.arena.dupe(AppUi.Node, &items) catch &.{}) else ui.spacer(0),
-        });
-    } else blk: {
+    const icons = inner / 3 < 62;
+    const files_tip = ui.el(.tooltip, .{ .text = "Every file of the project", .anchor = .above, .anchor_alignment = .start, .tooltip_delay = 600, .size = .sm }, .{});
+    const content = blk: {
         // Each segment's place, so the highlight can sit under one and
         // slide between them.
         const widths: [3]f32 = @splat(inner / 3);
@@ -320,8 +294,13 @@ fn scopeBar(ui: *AppUi, model: *const Model) AppUi.Node {
         const thumb_x = std.math.lerp(starts[from], starts[from + 1], along);
         const thumb_width = std.math.lerp(widths[from], widths[from + 1], along);
         const thumb = ui.row(.{ .width = thumb_width, .height = 24, .padding = 0, .transform = canvas.Affine.translate(thumb_x, 0), .style = .{ .background = theme.segment_on, .border = theme.selected_edge, .stroke_width = 0.5, .radius = 12 } }, .{});
+        var files = ui.stack(.{ .width = widths[0], .height = 24, .padding = 0 }, .{
+            segment(ui, "Files", "Files", if (icons) "document" else null, files_msg, model.mode == .files, widths[0]),
+            files_tip,
+        });
+        files.widget.layout.grow = 0;
         var changes = ui.stack(.{ .width = widths[1], .height = 24, .padding = 0 }, .{
-            segment(ui, changes_text, changes_text, changes_msg, changes_active, widths[1]),
+            segment(ui, changes_text, changes_text, if (!icons) null else if (staged) "add" else "modified", changes_msg, changes_active, widths[1]),
             changes_tip,
         });
         changes.widget.layout.grow = 0;
@@ -335,7 +314,7 @@ fn scopeBar(ui: *AppUi, model: *const Model) AppUi.Node {
         picker.widget.layout.grow = 0;
         var branch = ui.stack(.{ .width = widths[2], .height = 24, .padding = 0 }, .{
             ui.row(.{ .width = widths[2], .height = 24, .padding = 0, .gap = 0, .cross = .center }, .{
-                segment(ui, ui.fmt("Branch {s}", .{head}), head, branch_msg, shown, null),
+                segment(ui, ui.fmt("Branch {s}", .{head}), head, if (icons) "branch" else null, branch_msg, shown, null),
                 picker,
             }),
             if (model.base_popover) ui.spacer(0) else branch_tip,
@@ -344,7 +323,7 @@ fn scopeBar(ui: *AppUi, model: *const Model) AppUi.Node {
         break :blk ui.stack(.{ .grow = 1, .height = 24, .padding = 0 }, .{
             ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0 }, .{thumb}),
             ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 2, .cross = .center }, .{
-                segment(ui, "Files", "Files", files_msg, model.mode == .files, widths[0]),
+                files,
                 changes,
                 branch,
             }),

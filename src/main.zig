@@ -168,7 +168,6 @@ pub const Model = struct {
     base_popover: bool = false,
     band_menu: bool = false,
     /// The narrow rail's scope menu (Working, Staged, the branch) is open.
-    scope_menu: bool = false,
     /// The comparison control's highlight slides between its segments: from
     /// a position (a segment's index, or between two mid-slide) toward the
     /// segment shown, `scope_slide` of the way there, eased.
@@ -271,8 +270,6 @@ pub const Msg = union(enum) {
     open_settings,
     open_base,
     toggle_band_menu,
-    toggle_scope_menu,
-    close_scope_menu,
     branch_query_edit: canvas.TextInputEvent,
     pan: f32,
     goto_note: usize,
@@ -2049,7 +2046,6 @@ fn handle(model: *Model, msg: Msg, fx: *Effects) void {
             };
         },
         .open_base => if (!model.busy) {
-            model.scope_menu = false;
             openBranchPicker(model, .base);
         },
         .branch_query_edit => |edit| {
@@ -2079,8 +2075,6 @@ fn handle(model: *Model, msg: Msg, fx: *Effects) void {
             load(model, fx);
         },
         .toggle_band_menu => model.band_menu = !model.band_menu,
-        .toggle_scope_menu => model.scope_menu = !model.scope_menu,
-        .close_scope_menu => model.scope_menu = false,
         .app_active => |active| model.active = active,
         .close_band_menu => model.band_menu = false,
         .close_base => {
@@ -2281,7 +2275,6 @@ fn handle(model: *Model, msg: Msg, fx: *Effects) void {
         .open_patch => pick(model, fx, false),
         .refresh => load(model, fx),
         .mode => |mode| if (!model.busy) {
-            model.scope_menu = false;
             model.base_popover = false;
             // The highlight slides over from wherever it is now.
             if (scopeSlot(mode) != scopeSlot(model.mode)) {
@@ -2314,7 +2307,6 @@ fn handle(model: *Model, msg: Msg, fx: *Effects) void {
             model.sidebar = !model.sidebar;
             // Menus anchored in the rail go with it.
             model.base_popover = false;
-            model.scope_menu = false;
             movePanes(model, fx);
         },
         .pane_tick => |timer| if (timer.outcome == .fired) stepPanes(model, fx),
