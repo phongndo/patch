@@ -32,9 +32,12 @@ fn paneControl(ui: *AppUi, key: []const u8, name: []const u8, label: []const u8,
 }
 /// One segment of the scope capsule, the active one on a raised capsule.
 /// `fill` shares the capsule's remaining room; otherwise it hugs its words.
-fn segment(ui: *AppUi, label: []const u8, text: []const u8, mode: @import("git.zig").Mode, fill: bool, model: *const Model) AppUi.Node {
-    const active = model.mode == mode;
-    return ui.button(.{ .grow = if (fill) 1 else 0, .height = 24, .size = .sm, .variant = .ghost, .disabled = model.busy, .on_press = if (active and mode == .branch) .open_base else .{ .mode = mode }, .semantics = .{ .label = label }, .style = .{ .foreground = if (active) theme.ink else theme.sidebar_ink, .background = if (active) theme.segment_on else theme.clear, .border = if (active) theme.selected_edge else theme.clear, .stroke_width = 0.5, .radius = 12, .quiet_hover = true } }, text);
+/// One segment of the comparison control, over the highlight that slides
+/// between them (`scopeBar`), so it draws only its word. It stays as it is
+/// while a review loads (a press then does nothing) rather than greying out
+/// under the highlight on every switch.
+fn segment(ui: *AppUi, label: []const u8, text: []const u8, msg: Msg, active: bool, width: ?f32) AppUi.Node {
+    return ui.button(.{ .width = width orelse 0, .grow = if (width == null) 1 else 0, .height = 24, .size = .sm, .variant = .ghost, .on_press = msg, .semantics = .{ .label = label }, .style = .{ .foreground = if (active) theme.ink else theme.sidebar_ink, .background = theme.clear, .border = theme.clear, .radius = 12, .quiet_hover = true } }, text);
 }
 /// A full-width capsule field that shares the file rows' icon column.
 fn capsuleField(ui: *AppUi, icon: []const u8, field: AppUi.Node) AppUi.Node {
@@ -252,37 +255,44 @@ fn branchPicker(ui: *AppUi, model: *const Model) AppUi.Node {
     })});
 }
 fn scopeBar(ui: *AppUi, model: *const Model) AppUi.Node {
-    // The third segment is the checked-out branch itself, compared with its base.
+    // Three segments: every file of the project, the uncommitted changes
+    // (or the staged ones alone), and the checked-out branch against its base.
     const head = headName(model);
-    const branch_label = if (model.head.len > 0 or model.compare_head.len > 0) ui.fmt("Branch {s}", .{head}) else "Branch";
-    const tip = ui.el(.tooltip, .{ .text = ui.fmt("Changes on {s} since {s}", .{ head, model.base.text() }), .anchor = .above, .anchor_alignment = .end, .tooltip_delay = 600, .size = .sm }, .{});
-    // Room inside the capsule, against the labels' natural widths (the
-    // button face measures Working at 58.5 and Staged at 52; a branch name
-    // runs about 6.5 points a character plus 13 of padding). Three equal
-    // thirds while every label fits one; then Working and Staged hug their
-    // words and the branch takes the rest, truncating; and in a rail too
-    // narrow for all three (Rex's narrowest is), one capsule names the scope
-    // and opens a menu of them, as Rex folds its Filter capsule.
+    const staged = model.mode == .staged;
+    const changes_text: []const u8 = if (staged) "Staged" else "Changes";
+    const changes_active = model.mode == .working or staged;
+    // Pressing Changes again trades all uncommitted changes for the staged
+    // ones alone, and back. The branch only switches; what it compares is
+    // changed from the button that appears in it once it is shown.
+    const changes_msg: Msg = .{ .mode = if (model.mode == .working) .staged else .working };
+    const branch_msg: Msg = .{ .mode = .branch };
+    const files_msg: Msg = .{ .mode = .files };
+    const branch_tip = ui.el(.tooltip, .{ .text = ui.fmt("Changes on {s} since {s}", .{ head, model.base.text() }), .anchor = .above, .anchor_alignment = .end, .tooltip_delay = 600, .size = .sm }, .{});
+    const changes_tip = ui.el(.tooltip, .{ .text = if (staged) "Staged changes · click for all uncommitted changes" else if (changes_active) "Uncommitted changes · click for staged changes only" else "Uncommitted changes", .anchor = .above, .anchor_alignment = .start, .tooltip_delay = 600, .size = .sm }, .{});
+    // Three equal thirds, the branch's name truncating in its own (its
+    // tooltip names it whole); in a rail too narrow for Changes (61.5 points
+    // as laid out) to fit a third, one capsule names the scope and opens a
+    // menu of them, as Rex folds its Filter capsule.
     const inner = model.sidebar_width - theme.rail_left - theme.rail_right - 8;
-    const branch_natural = @as(f32, @floatFromInt(head.len)) * 6.5 + 13;
-    const roomy = @max(58.5, branch_natural) <= inner / 3;
-    const compact = 58.5 + 52 + @min(branch_natural, 39) > inner;
+    const compact = inner / 3 < 62;
     const content = if (compact) blk: {
-        const name = switch (model.mode) {
-            .working => "Working",
+        const name: []const u8 = switch (model.mode) {
+            .files => "Files",
+            .working => "Changes",
             .staged => "Staged",
             .branch => head,
-            .files => "All files",
         };
-        var items: [3]AppUi.Node = undefined;
-        for ([_]@import("git.zig").Mode{ .working, .staged, .branch }, 0..) |mode, index| {
-            const active = model.mode == mode;
-            items[index] = ui.el(.menu_item, .{ .text = switch (mode) {
-                .working => "Working",
-                .staged => "Staged",
-                .branch => head,
-                .files => unreachable,
-            }, .icon = if (active) "app:check" else "app:blank", .height = 30, .on_press = if (active and mode == .branch) Msg.open_base else Msg{ .mode = mode }, .disabled = model.busy }, .{});
+        const Item = struct { text: []const u8, active: bool, msg: Msg };
+        const entries = [_]Item{
+            .{ .text = "Files", .active = model.mode == .files, .msg = files_msg },
+            .{ .text = "Changes", .active = model.mode == .working, .msg = .{ .mode = .working } },
+            .{ .text = "Staged changes", .active = staged, .msg = .{ .mode = .staged } },
+            .{ .text = head, .active = model.mode == .branch, .msg = branch_msg },
+            .{ .text = "Change branches…", .active = false, .msg = .open_base },
+        };
+        var items: [entries.len]AppUi.Node = undefined;
+        for (entries, &items) |entry, *item| {
+            item.* = ui.el(.menu_item, .{ .text = entry.text, .icon = if (entry.active) "app:check" else "app:blank", .height = 30, .on_press = entry.msg, .disabled = model.busy }, .{});
         }
         break :blk ui.stack(.{ .grow = 1, .height = 24, .padding = 0 }, .{
             // The scope's name centered in the capsule, the chevron at its
@@ -296,15 +306,44 @@ fn scopeBar(ui: *AppUi, model: *const Model) AppUi.Node {
             if (model.scope_menu) ui.el(.dropdown_menu, .{ .width = 200, .anchor = .above, .anchor_alignment = .start, .anchor_offset = 6, .padding = 5, .gap = 0, .on_dismiss = .close_scope_menu, .style = .{ .background = theme.menu, .border = theme.glass_edge, .radius = 12 } }, ui.arena.dupe(AppUi.Node, &items) catch &.{}) else ui.spacer(0),
         });
     } else blk: {
-        var branch = ui.stack(.{ .grow = 1, .height = 24, .padding = 0 }, .{
-            segment(ui, branch_label, head, .branch, true, model),
-            if (model.base_popover) ui.spacer(0) else tip,
+        // Each segment's place, so the highlight can sit under one and
+        // slide between them.
+        const widths: [3]f32 = @splat(inner / 3);
+        const starts = [3]f32{ 0, widths[0] + 2, widths[0] + widths[1] + 4 };
+        const position = std.math.clamp(app.scopePosition(model), 0, 2);
+        const from: usize = @min(1, @as(usize, @intFromFloat(@floor(position))));
+        const along = position - @as(f32, @floatFromInt(from));
+        const thumb_x = std.math.lerp(starts[from], starts[from + 1], along);
+        const thumb_width = std.math.lerp(widths[from], widths[from + 1], along);
+        const thumb = ui.row(.{ .width = thumb_width, .height = 24, .padding = 0, .transform = canvas.Affine.translate(thumb_x, 0), .style = .{ .background = theme.segment_on, .border = theme.selected_edge, .stroke_width = 0.5, .radius = 12 } }, .{});
+        var changes = ui.stack(.{ .width = widths[1], .height = 24, .padding = 0 }, .{
+            segment(ui, changes_text, changes_text, changes_msg, changes_active, widths[1]),
+            changes_tip,
         });
-        branch.widget.layout.grow = 1;
-        break :blk ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 2, .cross = .center }, .{
-            segment(ui, "Working", "Working", .working, roomy, model),
-            segment(ui, "Staged", "Staged", .staged, roomy, model),
-            branch,
+        changes.widget.layout.grow = 0;
+        // A chevron at the branch's trailing edge opens the picker for its
+        // base and head, whatever is shown; pressing the branch only shows it.
+        const shown = model.mode == .branch;
+        var picker = ui.stack(.{ .width = 20, .height = 24, .padding = 0 }, .{
+            ui.button(.{ .key = .{ .str = "change-branches" }, .width = 20, .height = 24, .icon = "app:chevron", .size = .icon, .variant = .ghost, .on_press = .open_base, .semantics = .{ .label = "Change branches…" }, .style = .{ .foreground = theme.sidebar_ink, .background = theme.clear, .radius = 12, .quiet_hover = true } }, ""),
+            ui.el(.tooltip, .{ .text = "Change branches…", .anchor = .above, .anchor_alignment = .end, .tooltip_delay = 400, .size = .sm }, .{}),
+        });
+        picker.widget.layout.grow = 0;
+        var branch = ui.stack(.{ .width = widths[2], .height = 24, .padding = 0 }, .{
+            ui.row(.{ .width = widths[2], .height = 24, .padding = 0, .gap = 0, .cross = .center }, .{
+                segment(ui, ui.fmt("Branch {s}", .{head}), head, branch_msg, shown, null),
+                picker,
+            }),
+            if (model.base_popover) ui.spacer(0) else branch_tip,
+        });
+        branch.widget.layout.grow = 0;
+        break :blk ui.stack(.{ .grow = 1, .height = 24, .padding = 0 }, .{
+            ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0 }, .{thumb}),
+            ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 2, .cross = .center }, .{
+                segment(ui, "Files", "Files", files_msg, model.mode == .files, widths[0]),
+                changes,
+                branch,
+            }),
         });
     };
     return ui.row(.{ .height = 28, .padding = 0, .gap = 0, .cross = .center }, .{
@@ -1511,7 +1550,7 @@ fn settingsBody(ui: *AppUi, model: *const Model) AppUi.Node {
             }),
             heading(ui, "Comparison"),
             card(ui, &.{
-                settingRow(ui, "Open with", "What Patch shows when it opens a repository: a comparison to review, or all its files to read.", choices(ui, .{ choice(ui, "Working", model.default_mode == .working, .{ .default_mode = .working }), choice(ui, "Staged", model.default_mode == .staged, .{ .default_mode = .staged }), choice(ui, "Branch", model.default_mode == .branch, .{ .default_mode = .branch }), choice(ui, "Files", model.default_mode == .files, .{ .default_mode = .files }) })),
+                settingRow(ui, "Open with", "What Patch shows when it opens a repository: a comparison to review, or all its files to read.", choices(ui, .{ choice(ui, "Files", model.default_mode == .files, .{ .default_mode = .files }), choice(ui, "Changes", model.default_mode == .working, .{ .default_mode = .working }), choice(ui, "Staged", model.default_mode == .staged, .{ .default_mode = .staged }), choice(ui, "Branch", model.default_mode == .branch, .{ .default_mode = .branch }) })),
                 settingRow(ui, "Ignore whitespace", "Hide changes that only add, remove or re-indent whitespace. Also in the command palette.", toggle(ui, "Ignore whitespace", model.ignore_whitespace, .toggle_whitespace)),
                 settingRow(ui, "Diff algorithm", "Histogram often lines up rewritten code more readably than Git's default.", choices(ui, .{ choice(ui, "Default", model.algorithm == .default, .{ .set_algorithm = .default }), choice(ui, "Histogram", model.algorithm == .histogram, .{ .set_algorithm = .histogram }), choice(ui, "Patience", model.algorithm == .patience, .{ .set_algorithm = .patience }) })),
                 settingRow(ui, "Base branch", "Branch comparisons start from the merge base with this branch.", ui.row(.{ .width = 150, .height = 26, .padding = 0, .gap = 0, .cross = .center, .style = .{ .background = theme.field, .radius = 13 } }, .{
