@@ -103,7 +103,8 @@ try {
     "set_text",
     "Native smoke test note.",
   );
-  await click("Save note · ⌘↵");
+  // The label spells the chord as the platform does.
+  await click(process.platform === "darwin" ? "Save note · ⌘↵" : "Save note · Ctrl+Enter");
   await waitFor("Native smoke test note.");
   await click("Mark large.ts reviewed");
   await waitFor(`1/${fileCount}`);

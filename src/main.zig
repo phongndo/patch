@@ -1272,7 +1272,7 @@ fn poll(model: *Model, fx: *Effects) void {
     }
     if (old_document) |old_job| old_job.destroy();
     if (job.dirty) persist(model);
-    if (job.stale) notify(model, fx, "Files changed while loading · ⌘R reads them again");
+    if (job.stale) notify(model, fx, keyboard.label("Files changed while loading · ⌘R reads them again"));
     if (job.store_failed) model.error_text = "Saved review progress could not be read; this review will not be saved.";
     if (job.keeper != null) fx.startTimer(.{ .key = 10, .interval_ms = 150, .mode = .repeating, .on_fire = Effects.timerMsg(.keeper_tick) });
     // Sources and highlights are taken in as each is ready, the highlights
@@ -2191,7 +2191,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             const job = session.document orelse return fx.cancelTimer(10);
             if (!job.keeper_done.load(.acquire)) return;
             fx.cancelTimer(10);
-            if (job.keeper_stale.swap(false, .acq_rel)) notify(model, fx, "Files changed while loading · ⌘R reads them again");
+            if (job.keeper_stale.swap(false, .acq_rel)) notify(model, fx, keyboard.label("Files changed while loading · ⌘R reads them again"));
         },
         .toggle_sidebar => {
             model.sidebar = !model.sidebar;
@@ -2473,10 +2473,12 @@ fn routeEvent(context: *anyopaque, runtime: *sdk.Runtime, event: sdk.Event) anye
                     try state.dispatch(runtime, input.window_id, .{ .action = .{ .action = .escape } });
                     return;
                 }
-                // Lists move with the arrows, or ⌃N and ⌃P as in every Mac text field.
-                const plain = !value.command and !value.option and !value.shift;
-                const down = plain and (value.key == .down or (value.control and value.key == keyboard.Key.char('n')));
-                const up = plain and (value.key == .up or (value.control and value.key == keyboard.Key.char('p')));
+                // Lists move with the arrows, or ⌃N and ⌃P as in every Mac text field;
+                // off macOS Ctrl is the primary key, so it arrives as `command`.
+                const plain = !value.option and !value.shift;
+                const ctrl = if (keyboard.primary_is_control) value.command or value.control else value.control and !value.command;
+                const down = plain and ((value.key == .down and !value.command) or (ctrl and value.key == keyboard.Key.char('n')));
+                const up = plain and ((value.key == .up and !value.command) or (ctrl and value.key == keyboard.Key.char('p')));
                 if (down or up) {
                     if (state.model.palette != .closed) {
                         try state.dispatch(runtime, input.window_id, .{ .palette_move = if (down) 1 else -1 });

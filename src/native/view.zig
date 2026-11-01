@@ -10,6 +10,7 @@ const AppUi = app.AppUi;
 const Model = app.Model;
 const Msg = app.Msg;
 const theme = @import("theme.zig");
+const spell = app.keyboard.label;
 
 fn space(ui: *AppUi, width: f32, height: f32) AppUi.Node {
     return ui.el(.row, .{ .width = width, .height = height, .padding = 0 }, .{});
@@ -79,7 +80,7 @@ fn bandIcons(ui: *AppUi, model: *const Model) AppUi.Node {
     const controls = [_]Control{
         .{ .key = "split", .icon = if (model.split) "columns" else "rows", .label = if (model.split) "Switch to unified diff" else "Switch to split diff", .title = if (model.split) "Unified Diff" else "Split Diff", .msg = .toggle_split, .color = theme.sidebar_ink, .disabled = model.files.len == 0 },
         .{ .key = "notes", .icon = "note", .label = "Notes", .title = if (model.notes_open) "Hide Notes" else "Show Notes", .msg = .toggle_notes, .color = if (model.notes_open) theme.ink else theme.sidebar_ink, .disabled = model.files.len == 0 },
-        .{ .key = "commands", .icon = "command", .label = "Commands · ⌘K", .title = "Command Palette", .msg = .{ .action = .{ .action = .commands } }, .color = theme.sidebar_ink, .disabled = false },
+        .{ .key = "commands", .icon = "command", .label = spell("Commands · ⌘K"), .title = "Command Palette", .msg = .{ .action = .{ .action = .commands } }, .color = theme.sidebar_ink, .disabled = false },
     };
     const fits = bandFits(model);
     const shown = if (fits >= controls.len) controls.len else fits -| 1;
@@ -135,7 +136,7 @@ fn headerLayer(ui: *AppUi, model: *const Model) AppUi.Node {
     return ui.column(.{ .padding = 0, .gap = 0, .cross = .start }, .{
         ui.row(.{ .height = 50, .padding = 0, .gap = 0, .cross = .center }, .{
             space(ui, 92, 0),
-            tinted(ui, "sidebar", "sidebar", if (model.sidebar) "Hide file rail · ⌘B" else "Show file rail · ⌘B", .toggle_sidebar, theme.sidebar_ink, false, 28),
+            tinted(ui, "sidebar", "sidebar", if (model.sidebar) spell("Hide file rail · ⌘B") else spell("Show file rail · ⌘B"), .toggle_sidebar, theme.sidebar_ink, false, 28),
             space(ui, group_left - band_toggle_right, 0),
             bandIcons(ui, model),
             space(ui, @max(0, title_x - group_left - bandWidth(model)), 0),
@@ -162,7 +163,7 @@ fn repositoryRow(ui: *AppUi, model: *const Model) AppUi.Node {
     const commits = model.mode == .branch and !model.imported and model.commits.len > 0;
     return ui.row(.{ .height = 30, .padding = 0, .gap = 0, .cross = .center }, .{
         space(ui, theme.rail_left, 0),
-        ui.row(.{ .key = .{ .str = "open-repo" }, .grow = if (commits) 0 else 1, .height = 30, .padding = 0, .gap = 0, .cross = .center, .on_press = .open_repo, .semantics = .{ .label = "Open repository · ⌘O", .role = .button }, .style = .{ .radius = 15 } }, .{
+        ui.row(.{ .key = .{ .str = "open-repo" }, .grow = if (commits) 0 else 1, .height = 30, .padding = 0, .gap = 0, .cross = .center, .on_press = .open_repo, .semantics = .{ .label = spell("Open repository · ⌘O"), .role = .button }, .style = .{ .radius = 15 } }, .{
             space(ui, 11.5, 0),
             ui.appIcon(.{ .width = 16, .height = 16, .style = .{ .foreground = theme.sidebar_ink } }, if (model.imported) "document" else "repository"),
             space(ui, 10.5, 0),
@@ -172,7 +173,7 @@ fn repositoryRow(ui: *AppUi, model: *const Model) AppUi.Node {
             if (commits) ui.spacer(0) else space(ui, 4, 0),
         }),
         if (commits) commitPicker(ui, model) else ui.spacer(0),
-        tinted(ui, "refresh", "refresh", "Refresh · ⌘R", .refresh, theme.tertiary, model.busy, 28),
+        tinted(ui, "refresh", "refresh", spell("Refresh · ⌘R"), .refresh, theme.tertiary, model.busy, 28),
         space(ui, theme.rail_right, 0),
     });
 }
@@ -1087,7 +1088,7 @@ fn notePanel(ui: *AppUi, model: *const Model) AppUi.Node {
             ui.el(.textarea, .{ .key = .{ .str = "draft" }, .height = 140, .text = model.draft.text(), .placeholder = "Leave a note…", .autofocus = model.focus == .note, .on_input = AppUi.inputMsg(.draft_edit), .on_submit = .save_note, .semantics = .{ .label = "Review note" }, .style = .{ .background = theme.field, .border = theme.clear, .radius = 10 } }, .{}),
             ui.row(.{ .padding = 0, .gap = 6, .main = .end }, .{
                 iconButton(ui, "cancel-note", "close", "Cancel note", .cancel_note, false, false),
-                iconButton(ui, "save-note", "check", "Save note · ⌘↵", .save_note, true, model.draft.isEmpty()),
+                iconButton(ui, "save-note", "check", spell("Save note · ⌘↵"), .save_note, true, model.draft.isEmpty()),
             }),
         }) else ui.spacer(0),
     });
@@ -1493,7 +1494,7 @@ fn settingsBody(ui: *AppUi, model: *const Model) AppUi.Node {
             card(ui, &.{
                 settingRow(ui, "Fold reviewed files", "Marking a file reviewed folds it to its header, so what is left to read stays in view.", toggle(ui, "Fold reviewed files", model.collapse_reviewed, .toggle_fold_setting)),
                 settingRow(ui, "Fold generated files", "Lockfiles and paths marked linguist-generated open folded to their headers.", toggle(ui, "Fold generated files", model.fold_generated, .toggle_generated_setting)),
-                settingRow(ui, "Diff layout", "How changes are laid out. ⌘\\ switches while you review.", choices(ui, .{ choice(ui, "Split", model.split, .{ .default_split = true }), choice(ui, "Unified", !model.split, .{ .default_split = false }) })),
+                settingRow(ui, "Diff layout", spell("How changes are laid out. ⌘\\ switches while you review."), choices(ui, .{ choice(ui, "Split", model.split, .{ .default_split = true }), choice(ui, "Unified", !model.split, .{ .default_split = false }) })),
             }),
             heading(ui, "Comparison"),
             card(ui, &.{
@@ -1508,7 +1509,7 @@ fn settingsBody(ui: *AppUi, model: *const Model) AppUi.Node {
         .layout => ui.column(.{ .padding = 0, .gap = 0 }, .{
             heading(ui, "Window"),
             card(ui, &.{
-                settingRow(ui, "Show file rail", "The list of changed files beside the review. ⌘B toggles it.", toggle(ui, "Show file rail", model.sidebar, .toggle_rail_setting)),
+                settingRow(ui, "Show file rail", spell("The list of changed files beside the review. ⌘B toggles it."), toggle(ui, "Show file rail", model.sidebar, .toggle_rail_setting)),
                 settingRow(ui, "Pane widths", ui.fmt("Rail {d:.0} pt · Notes {d:.0} pt. Drag the gap between panes to resize them.", .{ model.sidebar_width, model.notes_width }), ui.button(.{ .height = 26, .size = .sm, .variant = .ghost, .on_press = .reset_widths, .semantics = .{ .label = "Reset pane widths" }, .style = .{ .foreground = theme.ink, .background = theme.segment_on, .radius = 13 } }, "Reset")),
             }),
         }),
@@ -1533,7 +1534,7 @@ fn settingsBody(ui: *AppUi, model: *const Model) AppUi.Node {
             }
             sections[section_count] = space(ui, 0, 12);
             section_count += 1;
-            sections[section_count] = ui.row(.{ .padding = 0, .gap = 0 }, .{ space(ui, 2, 0), ui.column(.{ .grow = 1, .padding = 0, .gap = 0 }, .{caption(ui, "Arrows move through the review and Return acts on the line you are on; the rest take ⌘. Keys wait while you type in a field, except the ⌘ keys that open, find and switch. Every command is also in the palette, ⌘K.")}) });
+            sections[section_count] = ui.row(.{ .padding = 0, .gap = 0 }, .{ space(ui, 2, 0), ui.column(.{ .grow = 1, .padding = 0, .gap = 0 }, .{caption(ui, spell("Arrows move through the review and Return acts on the line you are on; the rest take ⌘. Keys wait while you type in a field, except the ⌘ keys that open, find and switch. Every command is also in the palette, ⌘K."))}) });
             section_count += 1;
             break :blk ui.column(.{ .padding = 0, .gap = 0 }, ui.arena.dupe(AppUi.Node, sections[0..section_count]) catch &.{});
         },

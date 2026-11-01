@@ -5,6 +5,7 @@
 //! same thing.
 
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub const Action = enum {
     line_down,
@@ -225,8 +226,15 @@ fn keyNamed(name: []const u8) ?Key {
     return null;
 }
 
-/// Decodes a physical key-down. Modifier keys alone are not chords.
-pub fn decode(name: []const u8, shift: bool, control: bool, command: bool, option: bool) ?Chord {
+/// The key the keymap's `cmd` means: ⌘ on macOS, Ctrl on Linux and Windows,
+/// as the manifest's `primary` modifier is.
+pub const primary_is_control = builtin.os.tag != .macos;
+
+/// Decodes a physical key-down. Modifier keys alone are not chords. Off macOS
+/// the hosts report Ctrl as both `control` and the primary key (`command`);
+/// it is the primary key there, so it matches the keymap's `cmd` chords.
+pub fn decode(name: []const u8, shift: bool, control_in: bool, command: bool, option: bool) ?Chord {
+    const control = control_in and !(primary_is_control and command);
     for ([_][]const u8{ "shift", "control", "ctrl", "alt", "option", "command", "meta", "super", "capslock", "fn" }) |modifier| if (std.ascii.eqlIgnoreCase(name, modifier)) return null;
     // Shifted punctuation names its key cap, so ? is shift and /.
     const shifted = [_][2]u8{ .{ '?', '/' }, .{ ':', ';' }, .{ '{', '[' }, .{ '}', ']' }, .{ '|', '\\' }, .{ '<', ',' }, .{ '>', '.' }, .{ '+', '=' }, .{ '_', '-' }, .{ '"', '\'' }, .{ '~', '`' } };
@@ -259,7 +267,46 @@ fn glyphs(comptime chord: Chord) []const u8 {
         .backspace => "⌫",
         _ => &[_]u8{std.ascii.toUpper(@intFromEnum(chord.key))},
     };
+    // Off macOS modifiers are named in the order Linux and Windows write them.
+    if (primary_is_control) return (if (chord.control or chord.command) "Ctrl+" else "") ++ (if (chord.option) "Alt+" else "") ++ (if (chord.shift) "Shift+" else "") ++ label(key);
     return (if (chord.control) "⌃" else "") ++ (if (chord.option) "⌥" else "") ++ (if (chord.shift) "⇧" else "") ++ (if (chord.command) "⌘" else "") ++ key;
+}
+
+/// Keys written with Mac glyphs, as this platform spells them: unchanged on
+/// macOS; elsewhere ⌘ and ⌃ read Ctrl, ⌥ Alt and ⇧ Shift, joined by `+`, and
+/// the Mac-only key caps take their names.
+pub fn label(comptime text: []const u8) []const u8 {
+    if (!primary_is_control) return text;
+    return comptime spelled: {
+        @setEvalBranchQuota(50_000);
+        const names = .{
+            .{ "⌘", "Ctrl+" },
+            .{ "⌃", "Ctrl+" },
+            .{ "⌥", "Alt+" },
+            .{ "⇧", "Shift+" },
+            .{ "↩", "Enter" },
+            .{ "↵", "Enter" },
+            .{ "⇥", "Tab" },
+            .{ "⌫", "Backspace" },
+            .{ "⇞", "PgUp" },
+            .{ "⇟", "PgDn" },
+            .{ "↖", "Home" },
+            .{ "↘", "End" },
+        };
+        var out: []const u8 = "";
+        var i: usize = 0;
+        next: while (i < text.len) {
+            for (names) |pair| if (std.mem.startsWith(u8, text[i..], pair[0])) {
+                out = out ++ pair[1];
+                i += pair[0].len;
+                continue :next;
+            };
+            out = out ++ text[i .. i + 1];
+            i += 1;
+        }
+        const final = out[0..out.len].*;
+        break :spelled &final;
+    };
 }
 const labels = blk: {
     @setEvalBranchQuota(100_000);
@@ -414,6 +461,22 @@ test "arrows move, and chords reach further without modes" {
     try std.testing.expectEqual(Action.hunk_reviewed, match(decode("enter", true, false, false, true).?, .review).?);
     try std.testing.expectEqual(Action.page_up, match(decode("space", true, false, false, false).?, .review).?);
 }
+test "Ctrl is the primary key off macOS" {
+    // The Linux and Windows hosts flag Ctrl as both control and command.
+    const ctrl_k = decode("k", false, true, true, false).?;
+    if (primary_is_control) {
+        try std.testing.expectEqual(Action.commands, match(ctrl_k, .global).?);
+        try std.testing.expectEqualStrings("Ctrl+K", shortcut(.commands));
+        try std.testing.expectEqualStrings("Alt+Shift+Enter", shortcut(.hunk_reviewed));
+        try std.testing.expectEqualStrings("Refresh · Ctrl+R", label("Refresh · ⌘R"));
+    } else {
+        try std.testing.expect(match(ctrl_k, .global) == null);
+        try std.testing.expectEqualStrings("⌘K", shortcut(.commands));
+        try std.testing.expectEqualStrings("Refresh · ⌘R", label("Refresh · ⌘R"));
+    }
+    // A Ctrl chord the automation sends alone stays a Ctrl chord everywhere.
+    try std.testing.expectEqual(Action.center, match(decode("l", false, true, false, false).?, .review).?);
+}
 test "letters do nothing on their own" {
     for ("abcdefghijklmnopqrstuvwxyz/?:[]") |char| {
         const chord = decode(&[_]u8{char}, false, false, false, false).?;
@@ -440,6 +503,14 @@ test "every chord does one thing" {
     };
 }
 test "labels read as key caps" {
+    if (primary_is_control) {
+        try std.testing.expectEqualStrings("Ctrl+Alt+↓", shortcut(.file_next));
+        try std.testing.expectEqualStrings("Ctrl+Shift+]", shortcut(.commit_next));
+        try std.testing.expectEqualStrings("PgDn  Space", keysFor(.page_down));
+        try std.testing.expectEqualStrings("Ctrl+K  Ctrl+Shift+P", keysFor(.commands));
+        try std.testing.expectEqualStrings("Ctrl+\\", shortcut(.split));
+        return;
+    }
     try std.testing.expectEqualStrings("⌥⌘↓", shortcut(.file_next));
     try std.testing.expectEqualStrings("⇧⌘]", shortcut(.commit_next));
     try std.testing.expectEqualStrings("⇟  Space", keysFor(.page_down));
