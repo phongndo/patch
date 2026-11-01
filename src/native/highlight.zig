@@ -865,9 +865,14 @@ const Capture = struct {
 
 const Budget = struct {
     deadline: u64,
+    /// Set from another thread to give up early.
+    stop: ?*const std.atomic.Value(bool) = null,
     expired: bool = false,
     fn check(self: *Budget) bool {
         if (!self.expired and ts.patch_monotonic_ns() >= self.deadline) self.expired = true;
+        if (!self.expired) if (self.stop) |stop| if (stop.load(.monotonic)) {
+            self.expired = true;
+        };
         return self.expired;
     }
 };
@@ -907,6 +912,10 @@ const Error = error{ OutOfMemory, Timeout };
 /// text and fenced code, HTML's scripts and styles) that don't finish in time
 /// keep the colors around them. Free the result with `deinit`.
 pub fn highlight(alloc: std.mem.Allocator, language: Language, source: []const u8) !Highlights {
+    return highlightUntil(alloc, language, source, null);
+}
+/// `highlight`, giving up (as if out of time) once `stop` is set.
+pub fn highlightUntil(alloc: std.mem.Allocator, language: Language, source: []const u8, stop: ?*const std.atomic.Value(bool)) !Highlights {
     const line_count = std.mem.count(u8, source, "\n") + 1;
     const lines = try alloc.alloc(u32, line_count + 1);
     errdefer alloc.free(lines);
@@ -929,7 +938,7 @@ pub fn highlight(alloc: std.mem.Allocator, language: Language, source: []const u
         .kinds = kinds,
         .parser = parser,
         .cursor = cursor,
-        .budget = .{ .deadline = ts.patch_monotonic_ns() + time_budget_ns },
+        .budget = .{ .deadline = ts.patch_monotonic_ns() + time_budget_ns, .stop = stop },
     };
     layer(&run, language, null, 0) catch |err| switch (err) {
         error.Timeout => return .{ .tokens = &.{}, .lines = lines },

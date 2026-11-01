@@ -258,6 +258,7 @@ pub const Msg = union(enum) {
     close_reference: usize,
     lookup_tick: sdk.EffectTimer,
     sources_tick: sdk.EffectTimer,
+    shade_tick: sdk.EffectTimer,
     open_settings,
     open_base,
     toggle_band_menu,
@@ -390,6 +391,10 @@ const Job = struct {
     /// Each file's sides highlighted whole, after the sources are read.
     highlights: []Marks = &.{},
     highlights_done: std.atomic.Value(bool) = .init(false),
+    /// Set as the review is let go of, so highlighting stops early.
+    stopping: std.atomic.Value(bool) = .init(false),
+    /// Files opened for reference, highlighted off the main thread.
+    shades: std.ArrayList(*Shade) = .empty,
     const SourceRequest = struct { path: []const u8, old: []const u8, new: []const u8, disk: bool };
     fn run(self: *Job) void {
         self.load() catch |err| {
@@ -472,12 +477,13 @@ const Job = struct {
         const marks = alloc.alloc(Marks, self.sources.len) catch return;
         @memset(marks, .{});
         for (self.source_requests, self.sources, marks) |request, sides, *mark| {
+            if (self.stopping.load(.monotonic)) break;
             const language = highlight.languageFor(request.path) orelse continue;
             if (sides.old) |text| if (!sides.old_binary) {
-                mark.old = highlight.highlight(alloc, language, text.bytes) catch null;
+                mark.old = highlight.highlightUntil(alloc, language, text.bytes, &self.stopping) catch null;
             };
             if (sides.new) |text| if (!sides.new_binary) {
-                mark.new = highlight.highlight(alloc, language, text.bytes) catch null;
+                mark.new = highlight.highlightUntil(alloc, language, text.bytes, &self.stopping) catch null;
             };
         }
         self.highlights = marks;
@@ -741,6 +747,9 @@ const Job = struct {
         for (files, marks) |*file, mark| file.generated = mark orelse patch.isLockfile(file.path);
     }
     fn destroy(self: *Job) void {
+        self.stopping.store(true, .monotonic);
+        for (self.shades.items) |shade| shade.destroy();
+        self.shades.deinit(gpa);
         if (self.thread) |thread| thread.join();
         if (self.keeper) |thread| thread.join();
         if (self.sourcer) |thread| thread.join();
@@ -777,6 +786,28 @@ const Session = struct {
     /// The output the shown blame and symbol hits point into, owned by `gpa`.
     blame_output: []u8 = &.{},
     symbol_output: []u8 = &.{},
+};
+/// A file opened for reference, highlighted on a thread of its own. Its
+/// text is the review's (the review outlives it: `Job.destroy`).
+const Shade = struct {
+    language: highlight.Language,
+    path: []const u8,
+    text: []const u8,
+    stop: *const std.atomic.Value(bool),
+    arena: std.heap.ArenaAllocator = .init(gpa),
+    result: ?highlight.Highlights = null,
+    done: std.atomic.Value(bool) = .init(false),
+    adopted: bool = false,
+    thread: ?std.Thread = null,
+    fn work(self: *Shade) void {
+        self.result = highlight.highlightUntil(self.arena.allocator(), self.language, self.text, self.stop) catch null;
+        self.done.store(true, .release);
+    }
+    fn destroy(self: *Shade) void {
+        if (self.thread) |thread| thread.join();
+        self.arena.deinit();
+        gpa.destroy(self);
+    }
 };
 /// One Git question, asked on a thread of its own.
 const Lookup = struct {
@@ -1661,10 +1692,10 @@ fn openLocation(model: *Model, fx: *Effects, path: []const u8, line_number: u32)
     if (gpa.alloc(Marks, files.len)) |marks| {
         @memset(marks, .{});
         @memcpy(marks[0..@min(model.marks.len, marks.len)], model.marks[0..@min(model.marks.len, marks.len)]);
-        if (highlight.languageFor(path)) |language| marks[files.len - 1].new = highlight.highlight(alloc, language, text) catch null;
         if (model.marks.len > 0) gpa.free(model.marks);
         model.marks = marks;
     } else |_| {}
+    if (highlight.languageFor(path)) |language| shadeReference(fx, job, language, reference.path, text);
     reindex(model);
     layoutRows(model);
     findMatches(model);
@@ -1674,6 +1705,36 @@ fn openLocation(model: *Model, fx: *Effects, path: []const u8, line_number: u32)
     goLine(model, fx, line_number);
     model.cursor_active = true;
     alignCursor(model, fx);
+}
+/// Highlights a file opened for reference off the main thread; its lines
+/// keep the line-by-line colors until then.
+fn shadeReference(fx: *Effects, job: *Job, language: highlight.Language, path: []const u8, text: []const u8) void {
+    const shade = gpa.create(Shade) catch return;
+    shade.* = .{ .language = language, .path = path, .text = text, .stop = &job.stopping };
+    job.shades.append(gpa, shade) catch {
+        gpa.destroy(shade);
+        return;
+    };
+    shade.thread = std.Thread.spawn(.{}, Shade.work, .{shade}) catch null;
+    if (shade.thread == null) shade.work();
+    fx.startTimer(.{ .key = 13, .interval_ms = 16, .mode = .repeating, .on_fire = Effects.timerMsg(.shade_tick) });
+}
+/// Takes in reference files' highlights as they finish.
+fn adoptShades(model: *Model, fx: *Effects) void {
+    const job = session.document orelse return fx.cancelTimer(13);
+    var waiting = false;
+    for (job.shades.items) |shade| {
+        if (shade.adopted) continue;
+        if (!shade.done.load(.acquire)) {
+            waiting = true;
+            continue;
+        }
+        shade.adopted = true;
+        for (model.files, 0..) |file, index| if (file.reference and file.path.ptr == shade.path.ptr and index < model.marks.len) {
+            model.marks[index].new = shade.result;
+        };
+    }
+    if (!waiting) fx.cancelTimer(13);
 }
 /// Puts the cursor's line a third of the way down, with context above it.
 fn alignCursor(model: *Model, fx: *Effects) void {
@@ -2173,6 +2234,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             model.cursor = @min(model.cursor, model.display.len -| 1);
         },
         .lookup_tick => |timer| if (timer.outcome == .fired) finishLookup(model, fx),
+        .shade_tick => |timer| if (timer.outcome == .fired) adoptShades(model, fx),
         .goto_move => |target| if (target.move > 0 and target.move <= model.moves.len) {
             const move = model.moves[target.move - 1];
             const index: usize = if (target.to) move.to_file else move.from_file;
