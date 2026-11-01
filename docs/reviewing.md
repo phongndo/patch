@@ -29,7 +29,9 @@ out and quote outdated ones.
 ## Storage
 
 Progress, notes, and every version Patch has shown you live under
-`~/Library/Application Support/computer.patch.app/` (`PATCH_STATE_DIR`
+`~/Library/Application Support/computer.patch.app/` on macOS,
+`~/.local/share/computer.patch.app/` (or `$XDG_DATA_HOME`) on Linux, and
+`%LOCALAPPDATA%\computer.patch.app\Data\` on Windows (`PATCH_STATE_DIR`
 overrides it). Patch keeps its own Git object store there so it can diff
 against versions that were never committed; it never writes to the
 repository.
