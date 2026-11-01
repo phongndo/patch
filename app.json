@@ -5,7 +5,7 @@
   "display_name": "Patch",
   "description": "Local code review.",
   "version": "0.1.0",
-  "icons": ["public/favicon.svg"],
+  "icons": ["assets/icon.svg"],
   "platforms": ["macos"],
   "permissions": ["view", "command"],
   "capabilities": ["native_views", "gpu_surfaces"],

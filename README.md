@@ -167,6 +167,9 @@ Xcode command-line tools. The web reviewer also runs on Linux.
 - `src/native/glass.m`: macOS window glass, tint and appearance, traffic lights, Display P3.
 - `src/native/motion.zig`: the pane easing curve.
 - `src/native/settings-icons/`: Settings section icons (SVG sources, rendered by `scripts/render-settings-icons.mjs`).
+- `assets/icon.svg`: the app icon, full-bleed so packaging insets and masks it to the macOS grid;
+  `public/favicon.svg` is the same art with its corners rounded. Both stay in the Native SDK's
+  icon dialect: solid `#rrggbb` paints only, no gradients or opacity.
 - `src/native/git.zig`: read-only Git subprocesses, bounded concurrency and patch size,
   diff options, the attributes file, `linguist-generated` lookups, commits,
   `range-diff`, and Patch's own object store (snapshots, trees, diffs between them).
