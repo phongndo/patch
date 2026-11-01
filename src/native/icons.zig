@@ -40,8 +40,4 @@ pub const all = [_]canvas.icons.Entry{
     entry("blank", "icons/blank.svg"),
     entry("swap", "icons/swap.svg"),
     entry("note", "icons/note.svg"),
-    entry("corner-tl", "icons/corner-tl.svg"),
-    entry("corner-tr", "icons/corner-tr.svg"),
-    entry("corner-bl", "icons/corner-bl.svg"),
-    entry("corner-br", "icons/corner-br.svg"),
 };

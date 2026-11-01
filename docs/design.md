@@ -12,9 +12,11 @@ takes values from those sources rather than approximating them.
 
 ## Surfaces
 
-- A dark tinted window holds the file rail. The review is a ground on that
-  window, and each hunk is its own rounded pane on it (radius 10, 6 points
-  apart, 8 points from the window's edge), as Rex stacks blocks.
+- A dark tinted window holds the file rail and the review. The review has no
+  pane of its own: its title strip and the ground between files are the
+  window itself, and each file is its own rounded pane on it (radius
+  10, 6 points apart, 8 points from the window's edge), as Rex stacks its
+  splits.
 - The window keeps a plain titled frame (macOS rounds toolbar windows more
   steeply) and seats the traffic lights at Rex's 25 × 25 points.
 - The canvas is tagged Display P3, so static-noir's P3 values render as Rex does:
@@ -50,17 +52,24 @@ takes values from those sources rather than approximating them.
 - Panes resize from the gaps between them, within Rex's measured range, and
   ease open and closed (240 ms, Core Animation's default curve) with a real
   layout every frame.
-- Files fold to their headers; reviewed files fold as they are marked. The file
-  being read pins its header at the top of the review, so it folds from anywhere.
+- Files fold to their headers, a short pane each; reviewed files fold as they
+  are marked. The file being read pins its header at the top of the review as
+  an opaque 24-point pill over the code, so it reads clearly and folds from
+  anywhere; the status is the same pill at the foot. A pane cut by either
+  edge runs to the pill's middle and no further, so the pill's round ends
+  become its corners and it still floats on the window.
 
 ## The diff
 
-Color belongs to change. File names sit on the ground above their hunks; each
-hunk pane is titled inside by its enclosing declaration. Changed lines tint
+Color belongs to change. Each file pane is titled by the file's name, as a Rex
+split is by its command; inside it, each hunk is headed by its enclosing
+declaration. Changed lines tint
 their gutter numbers, paired edits mark the changed run inside the line, and
 code uses the theme's ANSI palette with strings in straw so green only ever
-means "added". Long lines pan sideways together, and the footer reports the
-column the visible code starts at.
+means "added". Long lines pan sideways together, and the status pill reports
+the column the visible code starts at. The pill carries the cursor's line, the
+find field and its matches, a pending key, or a pan; with nothing to say it
+shows only while a pane runs past the foot, to close it.
 
 ## Notes
 

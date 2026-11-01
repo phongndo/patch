@@ -61,7 +61,6 @@ pub const Palette = struct {
     switch_off: canvas.Color,
     pane_edge: canvas.Color,
     hunk: canvas.Color,
-    gap: canvas.Color,
     menu: canvas.Color,
     note: canvas.Color,
     search_hit: canvas.Color,
@@ -129,8 +128,6 @@ pub const noir: Palette = .{
     .switch_off = canvas.Color.rgba8(237, 237, 237, 40),
     .pane_edge = canvas.Color.rgba8(0, 0, 0, 0),
     .hunk = canvas.Color.rgb8(20, 20, 20),
-    // The window ground the hunk panes sit on (Rex's sidebar, measured).
-    .gap = canvas.Color.rgb8(26, 26, 26),
     // Menus and notices: an opaque raised surface (a blur drew a square
     // backdrop behind their rounded corners).
     .menu = canvas.Color.rgb8(37, 37, 37),
@@ -200,7 +197,6 @@ pub var palette_hint: canvas.Color = noir.palette_hint;
 pub var switch_off: canvas.Color = noir.switch_off;
 pub var pane_edge: canvas.Color = noir.pane_edge;
 pub var hunk: canvas.Color = noir.hunk;
-pub var gap: canvas.Color = noir.gap;
 pub var menu: canvas.Color = noir.menu;
 pub var note: canvas.Color = noir.note;
 pub var search_hit: canvas.Color = noir.search_hit;
@@ -369,8 +365,6 @@ pub fn derive(scheme: Scheme, translucent: bool) Palette {
         .pane_edge = clear,
         // Each hunk is a bubble a step from the pane (Noir: 20 on 10).
         .hunk = k(scheme, if (light) 0.035 else 0.044),
-        // The ground around hunk panes: the rail's step, opaque.
-        .gap = k(scheme, if (light) 0.07 else 0.075),
         .menu = if (light) mix(bg, white, 0.75) else k(scheme, 0.12),
         .note = scheme.yellow,
         .search_hit = mix(bg, scheme.yellow, if (light) 0.35 else 0.4),
@@ -392,9 +386,6 @@ pub fn derive(scheme: Scheme, translucent: bool) Palette {
         result.window = alpha(k(scheme, if (light) 0.07 else 0.075), if (light) 120 else 105);
         result.pane_edge = over(fg, 26, lift);
         result.hunk = over(fg, 9, lift);
-        // The review's ground is the window itself, so the blur reads through
-        // around the hunk panes and through them.
-        result.gap = result.window;
         result.header = over(fg, 17, lift);
         result.header_current = over(fg, 27, lift);
         result.text_selection = over(fg, 46, lift);

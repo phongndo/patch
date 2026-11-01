@@ -54,10 +54,6 @@ const local = [
   "blank",
   "swap",
   "note",
-  "corner-tl",
-  "corner-tr",
-  "corner-bl",
-  "corner-br",
 ];
 const entries = [...Object.keys(icons), ...local]
   .map((name) => `    entry("${name}", "icons/${name}.svg"),`)

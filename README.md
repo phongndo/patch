@@ -18,10 +18,12 @@ it opens a picker for both sides (Base and Head, with a swap): type to filter,
 ↑↓ to choose, ⇥ to switch side, ↩ to compare. Drag the gap beside the rail or
 the notes to resize them; both ease open and closed.
 
-Each hunk is its own pane, titled by the declaration it sits in. Scroll sideways
-to pan every line of a long diff together; the footer shows the column the
-visible code starts at. The file being read pins its header at the top, so a
-long file can be folded from anywhere in it.
+Each file is its own pane, titled by its name, as Rex stacks its splits; hunks
+share the pane, each headed by the declaration it sits in. Scroll sideways
+to pan every line of a long diff together; the status pill at the foot shows
+the column the visible code starts at. The file being read pins its header
+at the top as a matching pill, so a long file can be folded from anywhere in
+it, and a pane cut by either edge still ends round.
 
 Click a line number to leave a note. Drag through line numbers to select a range,
 or drag through code for native character selection. Shift-click extends a range;

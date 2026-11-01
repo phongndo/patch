@@ -40,6 +40,7 @@ pub const Model = struct {
     hover: ?selection.Hit = null,
     selection_epoch: usize = 0,
     canvas_width: f32 = 1380,
+    canvas_height: f32 = 900,
     keys: keyboard.State = .{},
     focus: Focus = .review,
     focus_epoch: usize = 0,
@@ -282,6 +283,48 @@ pub fn canvasWidth() ?f32 {
     const runtime = session.runtime orelse return null;
     const frame = runtime.gpuSurfaceFrame(1, "main-canvas") catch return null;
     return if (frame.size.width > 0) frame.size.width else null;
+}
+fn canvasHeight() ?f32 {
+    const runtime = session.runtime orelse return null;
+    const frame = runtime.gpuSurfaceFrame(1, "main-canvas") catch return null;
+    return if (frame.size.height > 0) frame.size.height else null;
+}
+/// The review list's height: the window, less its insets, the review's
+/// title strip, and an error banner when one shows. The status pill floats
+/// over the list, so it takes no height.
+pub fn listHeight(model: *const Model) f32 {
+    const height = canvasHeight() orelse model.canvas_height;
+    return height - 2 * theme.pane_inset - theme.pane_header - (if (model.error_text.len > 0) @as(f32, 32) else 0);
+}
+/// The review's edges carry 24-point pills: the file being read pinned at
+/// the top once its header scrolls under it, and the status at the foot.
+pub const pill_height: f32 = 24;
+/// The file pinned at the review's top: an unfolded file whose header has
+/// begun to scroll away, until its pane's closing edge reaches the top (then
+/// the pane ends on its own, clear of the next file's header).
+pub fn pinnedFile(model: *const Model, offset: f32) ?usize {
+    if (model.display.len == 0 or offset <= 0) return null;
+    const top = @min(model.display.len - 1, @as(usize, @intFromFloat(offset / 24)));
+    if (model.display[top].spacer) return null;
+    const file = model.display[top].file;
+    if (file >= model.starts.len or model.files[file].collapsed) return null;
+    const start = model.starts[file];
+    if (start > top or (start == top and @mod(offset, 24) == 0)) return null;
+    return file;
+}
+/// Whether the status has something to say: where the cursor is, the find
+/// field or its matches, a pending key, or how far the code is panned.
+pub fn statusShown(model: *const Model) bool {
+    var buffer: [24]u8 = undefined;
+    const position = model.cursor_active and !onFoldedHeader(model);
+    return model.focus == .search or position or model.keys.hint(&buffer).len > 0 or model.scroll_x > 0 or model.search_query.len > 0;
+}
+/// The pill at the review's foot shows while the status has something to
+/// say or a pane runs past the bottom edge, so the cut pane still ends round.
+pub fn bottomPill(model: *const Model, offset: f32, height: f32) bool {
+    if (height < 4 * pill_height or model.display.len == 0) return false;
+    const end = @as(f32, @floatFromInt(model.display.len)) * 24 - 3 - offset;
+    return statusShown(model) or end > height - 2.5;
 }
 
 fn showError(model: *Model, err: anyerror) void {
@@ -634,7 +677,8 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         .expire_keys => model.keys.reset(),
         .viewport => |size| {
             model.canvas_width = size.width;
-            model.viewport_height = @max(100, size.height - 64);
+            model.canvas_height = size.height;
+            model.viewport_height = @max(100, listHeight(model));
         },
         // Splits report fractions; widths stay in points so a window resize
         // gives its space to the review rather than stretching the side panes.
@@ -1725,6 +1769,9 @@ fn mouseHit(model: *const Model, x: f32, y: f32) ?selection.Hit {
     const top = codeTop(model);
     const bottom = top + model.viewport_height;
     if (x < left or x >= right or ((!model.mouse.dragging) and (y < top or y >= bottom))) return null;
+    // The edge pills take their own clicks; nothing under them is picked.
+    if (!model.mouse.dragging and pinnedFile(model, model.scroll_offset) != null and y < top + pill_height) return null;
+    if (!model.mouse.dragging and bottomPill(model, model.scroll_offset, model.viewport_height) and y >= bottom - pill_height) return null;
     var index = @min(model.display.len - 1, @as(usize, @intFromFloat(@max(0, std.math.clamp(y, top, bottom - 1) - top + model.scroll_offset) / 24)));
     var old = x < left + (right - left) / 2;
     if (model.mouse.dragging) if (model.mouse.range) |range| {
