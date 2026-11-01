@@ -133,6 +133,37 @@ pub const Regex = struct {
             std.mem.swap([]u64, &current, &next);
         }
     }
+
+    /// Appends to `out` a string made by one random walk through the
+    /// program, ignoring assertions: text the expression likely matches, for
+    /// tests to try. Walks prefer to leave loops once `out` holds `limit`
+    /// bytes.
+    pub fn sample(self: *const Regex, alloc: std.mem.Allocator, random: std.Random, out: *std.ArrayList(u8), limit: usize) !void {
+        const start = out.items.len;
+        var pc: usize = 0;
+        var steps: usize = 0;
+        while (steps < 4 * max_program) : (steps += 1) switch (self.program[pc]) {
+            .byte => |c| {
+                try out.append(alloc, c);
+                pc += 1;
+            },
+            .set => |s| {
+                const set = self.sets[s];
+                var pick = random.uintLessThan(usize, @max(set.count(), 1));
+                var members = set.iterator(.{});
+                const c = while (members.next()) |c| {
+                    if (pick == 0) break c;
+                    pick -= 1;
+                } else 'x';
+                try out.append(alloc, @intCast(c));
+                pc += 1;
+            },
+            .split => |to| pc = if (out.items.len - start < limit and random.boolean()) to[0] else to[1],
+            .jump => |to| pc = to,
+            .assert => pc += 1,
+            .match => return,
+        };
+    }
 };
 
 /// One search's scratch state.

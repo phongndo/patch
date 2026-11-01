@@ -1658,6 +1658,208 @@ test "regex translation" {
     try testing.expect(!constant.search("Max"));
 }
 
+/// A translated `#match?` or `#lua-match?` expression.
+const Expression = struct { pattern: []const u8, ignore_case: bool, language: Language, source: []const u8 };
+
+/// Every `#match?` and `#lua-match?` pattern in the compiled-in queries that
+/// translates, once each, allocated in `arena`.
+fn queryExpressions(arena: std.mem.Allocator) ![]const Expression {
+    var seen: std.StringArrayHashMapUnmanaged(Expression) = .empty;
+    for (std.enums.values(Language)) |language| {
+        if (!available(language)) continue;
+        const grammar = grammarOf(language);
+        for ([_][]const u8{ grammar.highlights, grammar.injections }) |source| {
+            if (source.len == 0) continue;
+            var offset: u32 = 0;
+            var kind: c_uint = 0;
+            const query = ts.ts_query_new(tsLanguage(language), source.ptr, @intCast(source.len), &offset, &kind) orelse return error.TestQueryDidNotCompile;
+            defer ts.ts_query_delete(query);
+            for (0..ts.ts_query_pattern_count(query)) |pattern| {
+                var step_count: u32 = 0;
+                const steps = (ts.ts_query_predicates_for_pattern(query, @intCast(pattern), &step_count) orelse continue)[0..step_count];
+                var start: usize = 0;
+                while (start < steps.len) {
+                    var end = start;
+                    while (end < steps.len and steps[end].type != .done) end += 1;
+                    defer start = end + 1;
+                    if (end - start < 3 or steps[start].type != .string or steps[start + 2].type != .string) continue;
+                    var name = stringValue(query, steps[start].value_id);
+                    if (std.mem.startsWith(u8, name, "any-")) name = name[4..];
+                    if (std.mem.startsWith(u8, name, "not-")) name = name[4..];
+                    const lua = std.mem.eql(u8, name, "lua-match?");
+                    if (!lua and !std.mem.eql(u8, name, "match?")) continue;
+                    const text = try arena.dupe(u8, stringValue(query, steps[start + 2].value_id));
+                    var out: std.ArrayList(u8) = .empty;
+                    const translated = if (lua) translateLua(arena, &out, text) else translateRegex(arena, &out, text);
+                    const ignore_case = translated catch |err| switch (err) {
+                        // Disabled whichever engine runs it.
+                        error.Unsupported => continue,
+                        else => |e| return e,
+                    };
+                    const key = try std.fmt.allocPrint(arena, "{d}{s}", .{ @intFromBool(ignore_case), out.items });
+                    const slot = try seen.getOrPut(arena, key);
+                    if (!slot.found_existing) slot.value_ptr.* = .{ .pattern = out.items, .ignore_case = ignore_case, .language = language, .source = text };
+                }
+            }
+        }
+    }
+    return seen.values();
+}
+
+/// Strings to try expressions on: names and punctuation that node texts
+/// hold, every single byte, and for each expression its literal pieces,
+/// samples of what it matches, and their variations.
+fn regexCorpus(arena: std.mem.Allocator, expressions: []const Expression) ![]const []const u8 {
+    var corpus: std.StringArrayHashMapUnmanaged(void) = .empty;
+    const fixed = [_][]const u8{
+        "",                    "MAX_SIZE",            "Foo",           "_private",   "__init__",        "x1",         "ABC123",
+        "runCommandNoCCLocal", "writeShellScriptBin", ".PHONY",        "--flag",     "/** doc */",      "///",        "true",
+        "NotFound",            "0",                   "42",            "007",        "0x1F",            "3.14",       "1e10",
+        "1_000",               "mixedCase",           "MiXeD",         "snake_case", "SCREAMING_SNAKE", "A",          "AB",
+        "_",                   "__",                  "_A",            "A_",         "$",               "$var",       "@attr",
+        "#include",            "!",                   "?",             "...",        "->",              "::",         " ",
+        "\t",                  "\n",                  "a b",           "  lead",     "trail  ",         "//",         "/*",
+        "*/",                  "/* c */",             "// c",          "#",          "# c",             "--",         "-- c",
+        "-",                   "self",                "super",         "this",       "nil",             "null",       "NULL",
+        "None",                "TRUE",                "False",
+        "é",
+        "Ünïcødé",
+        "\xff\xfe",            "x\x00y",              "\x00",          "a\x00",      "\x00a",           "lang=js",    " lang = \"ts\"",
+        "<script>",            "text/javascript",     "Hello, World!", "C",          "CC",              "__builtin_", "@import",
+        "u8",                  "i32",                 "f64",           "usize",      "ID",              "IO",         "iOS",
+        "HTTPServer",          "getHTTP",             "T",             "TValue",     "I",               "IFoo",       "_0",
+        "a1b2",                "%d",                  "\\n",           "\\",         "\"",              "'",          "`",
+        "{}",                  "[]",                  "()",            "<>",         "=",               "==",         "!=",
+        "&&",                  "||",
+    };
+    for (fixed) |text| try corpus.put(arena, text, {});
+    for (0..256) |byte| try corpus.put(arena, try arena.dupe(u8, &.{@intCast(byte)}), {});
+
+    var prng: std.Random.DefaultPrng = .init(0x9e3779b97f4a7c15);
+    const random = prng.random();
+    for (expressions) |expression| {
+        var pieces: std.ArrayList([]const u8) = .empty;
+        try pieces.append(arena, expression.source);
+        try pieces.append(arena, expression.pattern);
+        // The literal runs between operators, whole and per alternative.
+        var literal: std.ArrayList(u8) = .empty;
+        for (expression.pattern) |c| if (std.mem.indexOfScalar(u8, "^$()[]*+?{}|\\.", c) == null) try literal.append(arena, c);
+        try pieces.append(arena, literal.items);
+        var alternatives = std.mem.tokenizeAny(u8, expression.pattern, "|()^$");
+        while (alternatives.next()) |alternative| try pieces.append(arena, alternative);
+        // What the expression matches, by random walks.
+        const compiled = regex.Regex.compile(arena, expression.pattern, expression.ignore_case) catch continue;
+        for (0..12) |round| {
+            var text: std.ArrayList(u8) = .empty;
+            try compiled.sample(arena, random, &text, if (round < 6) 4 else 24);
+            try pieces.append(arena, text.items);
+        }
+        for (pieces.items) |piece| {
+            try corpus.put(arena, piece, {});
+            const variants = [_][]const u8{
+                try std.ascii.allocUpperString(arena, piece),
+                try std.ascii.allocLowerString(arena, piece),
+                try std.mem.concat(arena, u8, &.{ "x", piece }),
+                try std.mem.concat(arena, u8, &.{ piece, "_" }),
+                try std.mem.concat(arena, u8, &.{ " ", piece, " " }),
+                piece[0 .. piece.len / 2],
+                piece[@min(piece.len, 1)..],
+            };
+            for (variants) |variant| try corpus.put(arena, variant, {});
+        }
+    }
+    return corpus.keys();
+}
+
+/// Runs `pattern` through both engines over `corpus`; prints disagreements
+/// and returns how many there were.
+fn compareEngines(pattern: []const u8, ignore_case: bool, corpus: []const []const u8, label: []const u8) !usize {
+    const portable = regex.Regex.compile(testing.allocator, pattern, ignore_case);
+    const libc = LibcRegex.compile(testing.allocator, pattern, ignore_case);
+    if (libc) |engine| {
+        defer engine.deinit();
+        const ours = portable catch |err| {
+            std.debug.print("{s}: /{s}/{s}: libc compiles it, regex.zig says {t}\n", .{ label, pattern, if (ignore_case) "i" else "", err });
+            return 1;
+        };
+        defer ours.deinit();
+        var disagreements: usize = 0;
+        for (corpus) |text| {
+            const want = engine.search(text);
+            if (ours.search(text) == want) continue;
+            // macOS's libc is the reference regex.zig follows. glibc puts
+            // `\b` and `\B` at the ends of the text and `$` before a NUL
+            // differently (see regex.zig), so those cases aren't compared
+            // anywhere else.
+            if (!builtin.os.tag.isDarwin() and (std.mem.indexOfScalar(u8, text, 0) != null or std.mem.indexOf(u8, pattern, "\\b") != null or std.mem.indexOf(u8, pattern, "\\B") != null)) continue;
+            if (disagreements < 5) std.debug.print("{s}: /{s}/{s} on \"{f}\": libc {}, regex.zig {}\n", .{ label, pattern, if (ignore_case) "i" else "", std.zig.fmtString(text), want, !want });
+            disagreements += 1;
+        }
+        return disagreements;
+    } else |_| {
+        const ours = portable catch return 0;
+        ours.deinit();
+        std.debug.print("{s}: /{s}/{s}: libc rejects it, regex.zig compiles it\n", .{ label, pattern, if (ignore_case) "i" else "" });
+        return 1;
+    }
+}
+
+test "regex.zig agrees with libc on every pattern the queries use" {
+    // libc is the oracle, and Windows has none.
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const expressions = try queryExpressions(arena);
+    const corpus = try regexCorpus(arena, expressions);
+    var disagreements: usize = 0;
+    for (expressions) |expression| {
+        const label = try std.fmt.allocPrint(arena, "{t} \"{f}\"", .{ expression.language, std.zig.fmtString(expression.source) });
+        disagreements += try compareEngines(expression.pattern, expression.ignore_case, corpus, label);
+    }
+    try testing.expectEqual(0, disagreements);
+    // The walk above found the queries' patterns at all.
+    var all = true;
+    for (std.enums.values(Language)) |language| all = all and available(language);
+    if (all) try testing.expect(expressions.len >= 40);
+}
+
+test "regex.zig agrees with libc on the edges of its subset" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const patterns = [_][]const u8{
+        "abc",          "^abc$",         "a.c",           "^$",                                       "x^",          "x$y",                "a}b)c",   ")",
+        "a{x}",         "a{,3}",         "a{ 1}",         "\\.\\*\\+\\?\\(\\)\\[\\{\\}\\|\\^\\$\\\\", "\\-\\/",      "[]a-]",              "[^]a]",   "[--/]",
+        "[%--]",        "[]-a]",         "[\\]",          "[\\d]",                                    "[a^]",        "[[]",                "[^a]",    "[[:space:]]",
+        "[[:alpha:]]+", "[[:alnum:]_]",  "[[:xdigit:]]",  "^[[:punct:]]+$",                           "[[:cntrl:]]", "^(self|super)\\.?$", "a|b|c",   "()",
+        "()*x",         "((a))",         "^a*$",          "^a+$",                                     "^ab?c$",      "^a{2}$",             "^a{2,}$", "^a{1,3}$",
+        "^a{0}b$",      "^a{0,0}$",      "^a{01}$",       "^(a{2}){2}$",                              "^(ab|cd)+$",  "^x*?$",              "^x{2}?$", "^(a*)*b$",
+        "^(^|x)a",      "a$|b",          "\\bfoo\\b",     "\\Bfoo",                                   "\\b",         "\\B",                "\\b\\.",  "\\B$",
+        "x\\B",         "x\\b",          "^\\b",          "\\b$",                                     "^\\B$",       "$^",                 "[a-c]x",  "",
+        "a|",           "|a",            "(|a)",          "(a|)",                                     "*a",          "(*a)",               "(+)",     "a|*b",
+        "a**",          "a+*",           "a?{2}",         "a{1}{2}",                                  "a{1,2}{2}",   "^*",                 "{1}",     "a{1",
+        "a{1,2",        "a{2,1}",        "a{256}",        "a{255}",                                   "(a",          "[]",                 "[a",      "[z-a]",
+        "[a-c-e]",      "[[:alpha:]-z]", "[a-[:alpha:]]", "[[:alpha]]",                               "a\\",
+    };
+    const corpus = [_][]const u8{
+        "",    "a",      "A",     "b",      "ab",             "abc",       "ABC",    "xxabcxx", "a\nc",   "a\x00c", "a\xffc",   "x^",        "x$y",    "a}b)c",
+        ")",   "a{x}",   "a{,3}", "a{ 1}",  ".*+?()[{}|^$\\", "-/",        "]",      "-",       ".",      "/",      "0",        ",",         "%",      "^",
+        "\\",  "d",      "[",     " ",      "\t",             "\x0b",      "\x00",   "\x1f",    "\x7f",   "\x80",   "\xc3\xa9", "!-/:@[`{~", "x1",     "_private",
+        "x-1", "09afAF", "self",  "super.", "super..",        "selfsuper", "c",      "xbx",     "x",      "aaaa",   "aa",       "aaa",       "Bx",     "bX",
+        "dx",  "cdabcd", "xx",    "y",      "aab",            "aac",       "xa",     "ya",      "foo",    "a foo",  "foo.bar",  "afoo",      "foobar", " foo",
+        "..",  ".x",     " .",    "a.",     "x.",             "xy",        "x\x00y", "a\x00",   "a\x00b", "\x00a",
+    };
+    var disagreements: usize = 0;
+    for (patterns) |pattern| {
+        for ([_]bool{ false, true }) |ignore_case| {
+            disagreements += try compareEngines(pattern, ignore_case, &corpus, try std.fmt.allocPrint(arena, "edge \"{f}\"", .{std.zig.fmtString(pattern)}));
+        }
+    }
+    try testing.expectEqual(0, disagreements);
+}
+
 test "two threads share the query cache" {
     try need(.rust);
     const Worker = struct {
