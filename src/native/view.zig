@@ -531,7 +531,7 @@ fn codeLine(ui: *AppUi, model: *const Model, source: []const u8, number: u32, ol
 /// noted line adds a short amber bar at the edge (the only extra widget, and
 /// only there: a row of extras per line overran the canvas's widget budget).
 fn gutter(ui: *AppUi, model: *const Model, file: usize, number: u32, old: bool, hovered: bool, current: bool, selected: bool, match: bool, wash: canvas.Color) AppUi.Node {
-    const color = if (current or selected or hovered) theme.ink else if (std.meta.eql(wash, theme.added)) theme.gutter_added else if (std.meta.eql(wash, theme.removed)) theme.gutter_removed else theme.line_number;
+    const color = if (current or selected or hovered) theme.ink else if (std.meta.eql(wash, theme.added)) theme.gutter_added else if (std.meta.eql(wash, theme.removed)) theme.gutter_removed else if (std.meta.eql(wash, theme.moved)) theme.moved_ink else theme.line_number;
     const digits = std.fmt.count("{d}", .{number});
     const pad = "\u{2007}\u{2007}\u{2007}";
     const text = if (hovered) "" else ui.fmt("{s}{d}", .{ pad[0 .. 3 * (4 -| digits)], number });
@@ -540,7 +540,22 @@ fn gutter(ui: *AppUi, model: *const Model, file: usize, number: u32, old: bool, 
     if (!noted) return button;
     return ui.row(.{ .width = 48, .height = 24, .padding = 0, .gap = 0, .cross = .center }, .{ ui.row(.{ .width = 2, .height = 16, .padding = 0, .style = .{ .background = theme.note, .radius = 1 } }, .{}), button });
 }
-fn codeCell(ui: *AppUi, model: *const Model, source: []const u8, number: u32, old: bool, file: usize, row_index: usize, offset: usize, wash: canvas.Color, language: canvas.code.Language, carry: u16, current: bool, match: bool, emphasis: Emphasis) AppUi.Node {
+/// Where a moved block went (or came from), on the block's first line: a
+/// quiet link in the move's ink that jumps there.
+fn moveLink(ui: *AppUi, model: *const Model, moved: u32, old: bool) AppUi.Node {
+    if (moved == 0 or moved > model.moves.len) return ui.spacer(0);
+    const move = model.moves[moved - 1];
+    const other: usize = if (old) move.to_file else move.from_file;
+    const line_number = if (old) move.to_line else move.from_line;
+    const same = other == (if (old) move.from_file else move.to_file);
+    const name = if (other < model.files.len) std.fs.path.basename(model.files[other].path) else "";
+    const text = if (same) ui.fmt("{s} line {d}", .{ if (old) "Moved to" else "Moved from", line_number }) else ui.fmt("{s} {s}:{d}", .{ if (old) "Moved to" else "Moved from", name, line_number });
+    return ui.row(.{ .height = 24, .padding = 0, .gap = 0, .cross = .center }, .{
+        ui.button(.{ .key = .{ .str = "move" }, .height = 20, .size = .sm, .variant = .ghost, .icon = if (old) "app:right" else "app:left", .on_press = .{ .goto_move = .{ .move = moved, .to = old } }, .semantics = .{ .label = text }, .style = .{ .foreground = theme.moved_ink, .background = theme.clear, .radius = 10, .quiet_hover = true } }, text),
+        space(ui, 6, 0),
+    });
+}
+fn codeCell(ui: *AppUi, model: *const Model, source: []const u8, number: u32, old: bool, file: usize, row_index: usize, offset: usize, wash: canvas.Color, language: canvas.code.Language, carry: u16, current: bool, match: bool, emphasis: Emphasis, moved_link: u32) AppUi.Node {
     const hovered = if (model.hover) |hit| hit.row == row_index and hit.old == old else false;
     const selected = model.mouse.active and model.mouse.range != null and model.mouse.range.?.contains(file, old, row_index);
     const fill = if (selected) theme.text_selection else wash;
@@ -552,6 +567,8 @@ fn codeCell(ui: *AppUi, model: *const Model, source: []const u8, number: u32, ol
     const menu_items = ui.arena.dupe(AppUi.ContextMenuItem, &.{
         .{ .label = if (selected) "Comment on selection" else "Add line comment", .msg = if (selected) Msg.comment_selection else .{ .anchor = .{ .file = file, .line = number, .old = old } }, .enabled = number > 0 },
         .{ .label = if (selected) "Copy selection" else "Copy line", .msg = .{ .copy_line = .{ .file = file, .row = row_index, .old = old, .line = number } }, .enabled = number > 0 },
+        .{ .label = "Blame line", .msg = .{ .blame_line = .{ .file = file, .row = row_index, .old = old, .line = number } }, .enabled = number > 0 and !model.imported },
+        .{ .label = "Find symbol", .msg = .{ .find_symbol_at = .{ .file = file, .row = row_index, .old = old, .line = number } }, .enabled = number > 0 and !model.imported },
     }) catch &.{};
     const source_node = if (number > 0) codeLine(ui, model, source, number, old, file, row_index, offset, language, carry, emphasis) else ui.spacer(1);
     return ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0, .cross = .center, .context_menu = menu_items, .style = .{ .background = background } }, .{
@@ -561,6 +578,7 @@ fn codeCell(ui: *AppUi, model: *const Model, source: []const u8, number: u32, ol
         // number, right-aligned in fixed-width digits, keeps the change's color.
         if (number > 0) gutter(ui, model, file, number, old, hovered, current, selected, match, wash) else space(ui, 48, 0),
         source_node,
+        if (moved_link != 0) moveLink(ui, model, moved_link, old) else ui.spacer(0),
     });
 }
 /// Actions for a mouse selection: a small raised capsule floating 6 points
@@ -608,7 +626,7 @@ fn headerRow(ui: *AppUi, model: *const Model, index: usize, current: bool, heigh
         notes += 1;
     };
     // What kind of change it is, or what an earlier review makes of it.
-    const label: []const u8 = if (file.whitespace_only) "Whitespace only" else if (file.generated) "Generated" else switch (file.prior) {
+    const label: []const u8 = if (file.reference) "Reference · unchanged" else if (file.whitespace_only) "Whitespace only" else if (file.generated) "Generated" else switch (file.prior) {
         .rebased => "Reviewed on another base",
         .changed => if (file.showing_since) (if (file.since.?.base_moved) "Since review · base moved too" else "Since review") else "Changed since review",
         .base => "Base changed since review",
@@ -633,7 +651,7 @@ fn headerRow(ui: *AppUi, model: *const Model, index: usize, current: bool, heigh
         if (file.deletions > 0) smallText(ui, ui.fmt("−{d}", .{file.deletions}), theme.red) else ui.spacer(0),
         space(ui, 8, 0),
         ui.button(.{ .key = .{ .str = "file-note" }, .width = 24, .height = height, .icon = "app:comment", .size = .icon, .variant = .ghost, .on_press = .{ .note_file = index }, .style = .{ .foreground = if (notes > 0) theme.note else theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Add note to {s}", .{file.path}) } }, ""),
-        ui.button(.{ .key = .{ .str = "file-reviewed" }, .width = 24, .height = height, .icon = if (file.reviewed) "app:check" else "app:checkbox", .size = .icon, .variant = .ghost, .on_press = .{ .reviewed_file = index }, .style = .{ .foreground = if (file.reviewed) theme.green else theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Mark {s} reviewed", .{file.path}) } }, ""),
+        if (file.reference) ui.button(.{ .key = .{ .str = "close-reference" }, .width = 24, .height = height, .icon = "app:close", .size = .icon, .variant = .ghost, .on_press = .{ .close_reference = index }, .style = .{ .foreground = theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Close {s}", .{file.path}) } }, "") else ui.button(.{ .key = .{ .str = "file-reviewed" }, .width = 24, .height = height, .icon = if (file.reviewed) "app:check" else "app:checkbox", .size = .icon, .variant = .ghost, .on_press = .{ .reviewed_file = index }, .style = .{ .foreground = if (file.reviewed) theme.green else theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Mark {s} reviewed", .{file.path}) } }, ""),
         space(ui, 7, 0),
     });
     header.widget.layout.clip_content = true;
@@ -651,6 +669,79 @@ fn hunkTitle(ui: *AppUi, header: []const u8) []const u8 {
     const start = std.fmt.parseInt(u32, parts.next() orelse "", 10) catch return header;
     const count = std.fmt.parseInt(u32, parts.next() orelse "1", 10) catch 1;
     return if (count <= 1) ui.fmt("Line {d}", .{start}) else ui.fmt("Lines {d}–{d}", .{ start, start + count - 1 });
+}
+/// A quiet 24-point icon button in a hunk header's gutter.
+fn gutterButton(ui: *AppUi, key: []const u8, icon: []const u8, label: []const u8, msg: Msg) AppUi.Node {
+    return ui.stack(.{ .key = .{ .str = key }, .width = 24, .height = 24, .padding = 0 }, .{
+        ui.button(.{ .key = .{ .str = "button" }, .icon = ui.fmt("app:{s}", .{icon}), .semantics = .{ .label = label }, .width = 24, .height = 24, .size = .icon, .variant = .ghost, .on_press = msg, .style = .{ .foreground = theme.secondary, .background = theme.clear, .radius = 6 } }, ""),
+        ui.el(.tooltip, .{ .text = label, .anchor = .above, .anchor_alignment = .start, .tooltip_delay = 500, .size = .sm }, .{}),
+    });
+}
+/// A hunk's header, between hunks: the declaration it sits in, the lines the
+/// diff left out above it with buttons in the gutter to show them (a step
+/// from either end, or all when they are few), and, when the file has more
+/// than one hunk, the hunk's own review. A tail header stands for the rest
+/// of the file. A reviewed hunk folds to this row, which then counts it.
+fn hunkHeader(ui: *AppUi, model: *const Model, file_index: usize, rows: []const patch.Row, code: usize, current: bool) AppUi.Node {
+    const file = model.files[file_index];
+    const row = rows[code];
+    const sides: ?patch.Text = if (file_index < model.sources.len and !file.showing_since) model.sources[file_index].new else null;
+    const gap: patch.Gap = if (sides) |text| patch.gapAt(rows, code, text.count()) orelse .{ .first = 1, .last = 0, .delta = 0 } else .{ .first = 1, .last = 0, .delta = 0 };
+    const hidden = if (file.oneSided() or file.binary) 0 else gap.size();
+    const step = app.expand_step;
+    const base: app.Expansion = .{ .file = file_index, .hunk = row.hunk, .tail = row.tail };
+    var up = base;
+    up.from_top = false;
+    var down = base;
+    down.from_top = true;
+    var all = base;
+    all.all = true;
+    all.from_top = true;
+    // The first header has nothing above its gap; a tail nothing below.
+    const first = gap.first <= 1;
+    const controls = if (hidden == 0) ui.row(.{ .width = 48, .height = 24, .padding = 0, .main = .center, .cross = .center }, .{smallText(ui, "⋯", theme.line_number)}) else if (hidden <= step) ui.row(.{ .width = 48, .height = 24, .padding = 0, .main = .center, .cross = .center }, .{
+        gutterButton(ui, "expand-all", "expand-all", ui.fmt("Show {d} hidden line{s}", .{ hidden, if (hidden == 1) "" else "s" }), .{ .expand = all }),
+    }) else if (row.tail) ui.row(.{ .width = 48, .height = 24, .padding = 0, .main = .center, .cross = .center }, .{
+        gutterButton(ui, "expand-down", "expand-down", ui.fmt("Show {d} more lines", .{step}), .{ .expand = down }),
+    }) else if (first) ui.row(.{ .width = 48, .height = 24, .padding = 0, .main = .center, .cross = .center }, .{
+        gutterButton(ui, "expand-up", "expand-up", ui.fmt("Show {d} lines above", .{step}), .{ .expand = up }),
+    }) else ui.row(.{ .width = 48, .height = 24, .padding = 0, .gap = 0, .cross = .center }, .{
+        gutterButton(ui, "expand-down", "expand-down", ui.fmt("Show {d} lines below the hunk above", .{step}), .{ .expand = down }),
+        gutterButton(ui, "expand-up", "expand-up", ui.fmt("Show {d} lines above this hunk", .{step}), .{ .expand = up }),
+    });
+    const hunk: ?patch.Hunk = if (!row.tail and !file.showing_since and file.hunks.len > 1 and row.hunk < file.hunks.len) file.hunks[row.hunk] else null;
+    const text = if (row.tail) (if (hidden == 1) "1 more line" else ui.fmt("{d} more lines", .{hidden})) else if (file.oneSided() and file.status == .added) "New file" else if (file.oneSided()) "Deleted file" else hunkTitle(ui, row.left);
+    const title = ui.arena.dupe(canvas.TextSpan, &.{.{ .text = text, .monospace = !row.tail }}) catch &.{};
+    var paragraph = ui.paragraph(.{ .height = 16, .size = .sm, .wrap = false, .overflow = .clip, .semantics = .{ .label = if (row.tail) text else row.left }, .style = .{ .foreground = theme.line_number } }, title);
+    paragraph.widget.layout.zero_intrinsic = true;
+    paragraph.widget.layout.grow = 1;
+    // A folded hunk counts what it holds.
+    var additions: u32 = 0;
+    var deletions: u32 = 0;
+    if (hunk != null and hunk.?.collapsed) for (rows[code + 1 ..]) |each| {
+        if (each.meta) break;
+        additions += @intFromBool(each.added);
+        deletions += @intFromBool(each.removed);
+    };
+    const folded = hunk != null and hunk.?.collapsed;
+    const reviewed = hunk != null and hunk.?.reviewed;
+    const at: app.HunkRef = .{ .file = file_index, .hunk = row.hunk };
+    var top = ui.row(.{ .key = .{ .str = ui.fmt("hunk-{d}-{d}-{any}", .{ file_index, row.hunk, row.tail }) }, .height = 24, .padding = 0, .gap = 0, .cross = .center, .style = .{ .background = if (current) theme.current_line else theme.pane } }, .{
+        controls,
+        ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0, .cross = .center, .on_press = if (hunk != null) Msg{ .collapse_hunk = at } else if (hidden > 0) Msg{ .expand = all } else null, .semantics = .{ .role = .button, .label = if (hunk != null) ui.fmt("{s} hunk {s}", .{ if (folded) "Unfold" else "Fold", text }) else text } }, .{
+            paragraph,
+            if (folded and additions > 0) smallText(ui, ui.fmt("+{d}", .{additions}), theme.gutter_added) else ui.spacer(0),
+            if (folded and additions > 0 and deletions > 0) space(ui, 6, 0) else ui.spacer(0),
+            if (folded and deletions > 0) smallText(ui, ui.fmt("−{d}", .{deletions}), theme.gutter_removed) else ui.spacer(0),
+            if (folded) space(ui, 10, 0) else ui.spacer(0),
+            if (hidden > 0 and !row.tail) smallText(ui, if (hidden == 1) "1 hidden line" else ui.fmt("{d} hidden lines", .{hidden}), theme.line_number) else ui.spacer(0),
+            if (hidden > 0 and !row.tail) space(ui, 8, 0) else ui.spacer(0),
+        }),
+        if (hunk != null) ui.button(.{ .key = .{ .str = "hunk-reviewed" }, .width = 24, .height = 24, .icon = if (reviewed) "app:check" else "app:checkbox", .size = .icon, .variant = .ghost, .on_press = .{ .reviewed_hunk = at }, .style = .{ .foreground = if (reviewed) theme.green else theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Mark hunk {s} · v", .{if (reviewed) "unreviewed" else "reviewed"}) } }, "") else ui.spacer(0),
+        space(ui, 7, 0),
+    });
+    top.widget.layout.clip_content = true;
+    return top;
 }
 /// A rounded end of a file pane, `height` points of pane color. The review
 /// is built from 24-point rows, so a pane is assembled from row slices: its
@@ -728,34 +819,34 @@ fn review(ui: *AppUi, model: *const Model) AppUi.Node {
             // code's own face: a quiet ellipsis in the gutter and the
             // enclosing declaration where the code begins. The full git
             // header stays as its label.
-            if (row.meta) {
-                const text = if (file.oneSided() and file.status == .added) "New file" else if (file.oneSided()) "Deleted file" else hunkTitle(ui, row.left);
-                const title = ui.arena.dupe(canvas.TextSpan, &.{.{ .text = text, .monospace = true }}) catch &.{};
-                var top = ui.row(.{ .height = 24, .padding = 0, .gap = 0, .cross = .center, .style = .{ .background = theme.pane } }, .{
-                    ui.row(.{ .width = 48, .height = 24, .padding = 0, .main = .center, .cross = .center }, .{smallText(ui, "⋯", theme.line_number)}),
-                    ui.paragraph(.{ .height = 16, .size = .sm, .wrap = false, .overflow = .clip, .semantics = .{ .label = row.left }, .style = .{ .foreground = theme.line_number } }, title),
-                });
-                top.widget.layout.clip_content = true;
-                break :blk top;
-            }
+            if (row.meta) break :blk hunkHeader(ui, model, entry.file, rows, code, model.cursor_active and model.cursor == index);
             const language = syntax.languageFor(file.path);
             const current = model.cursor_active and model.cursor == index;
             const match = app.isMatch(model, index);
             const old = (model.cursor_old and row.old > 0) or row.new == 0;
-            const pair = if (row.removed and row.added) intraline(row.left, row.right) else @TypeOf(intraline("", "")){};
+            const pair = if (row.removed and row.added and row.moved_old == 0 and row.moved_new == 0) intraline(row.left, row.right) else @TypeOf(intraline("", "")){};
+            // A moved block's first line on each side says where it went.
+            const above = if (code > 0) rows[code - 1] else patch.Row{};
+            const link_old = if (row.moved_old != 0 and above.moved_old != row.moved_old) row.moved_old else 0;
+            const link_new = if (row.moved_new != 0 and above.moved_new != row.moved_new) row.moved_new else 0;
+            const wash_old = if (row.base and row.removed) theme.hunk else if (row.moved_old != 0) theme.moved else if (row.removed) theme.removed else theme.background;
+            const wash_new = if (row.base and row.added) theme.hunk else if (row.moved_new != 0) theme.moved else if (row.added) theme.added else theme.background;
             const content = if (model.split and !file.oneSided()) ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0, .style = .{ .background = theme.pane } }, .{
-                codeCell(ui, model, row.left, row.old, true, entry.file, index, row.old_offset, if (row.base and row.removed) theme.hunk else if (row.removed) theme.removed else theme.background, language, row.old_carry, current and old, match, pair.old), line(ui, true),
-                codeCell(ui, model, row.right, row.new, false, entry.file, index, row.new_offset, if (row.base and row.added) theme.hunk else if (row.added) theme.added else theme.background, language, row.new_carry, current and !old, match, pair.new),
+                codeCell(ui, model, row.left, row.old, true, entry.file, index, row.old_offset, wash_old, language, row.old_carry, current and old, match, pair.old, link_old), line(ui, true),
+                codeCell(ui, model, row.right, row.new, false, entry.file, index, row.new_offset, wash_new, language, row.new_carry, current and !old, match, pair.new, link_new),
             }) else ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0, .style = .{ .background = theme.pane } }, .{
-                codeCell(ui, model, if (row.removed) row.left else row.right, if (row.removed) row.old else row.new, row.removed, entry.file, index, if (row.removed) row.old_offset else row.new_offset, if (row.base and (row.removed or row.added)) theme.hunk else if (row.removed) theme.removed else if (row.added) theme.added else theme.background, language, if (row.removed) row.old_carry else row.new_carry, current, match, .{}),
+                codeCell(ui, model, if (row.removed) row.left else row.right, if (row.removed) row.old else row.new, row.removed, entry.file, index, if (row.removed) row.old_offset else row.new_offset, if (row.removed) wash_old else wash_new, language, if (row.removed) row.old_carry else row.new_carry, current, match, .{}, if (row.removed) link_old else link_new),
             });
             break :blk content;
         } else fileHeader(ui, model, entry.file, model.cursor_active and model.cursor == index);
         const y = @as(f32, @floatFromInt(index)) * 24 - offset;
         nodes[count] = rowSlice(ui, nodes[count], top_edge - y, bottom_edge - y);
         const bar = model.mouse.active and !model.mouse.dragging and model.mouse.range != null and model.mouse.range.?.focus == index;
+        const blamed = model.blame != null and model.blame.?.row == index;
         if (bar) {
             nodes[count] = ui.stack(.{ .key = .{ .index = index }, .height = 24, .padding = 0 }, .{ nodes[count], selectionBar(ui, model) });
+        } else if (blamed) {
+            nodes[count] = ui.stack(.{ .key = .{ .index = index }, .height = 24, .padding = 0 }, .{ nodes[count], blameCard(ui, model) });
         } else {
             nodes[count].key = .{ .index = index };
             nodes[count].widget.layout.grow = 0;
@@ -994,10 +1085,57 @@ fn primaryShortcut(shortcut: []const u8) []const u8 {
     }
     return first;
 }
+/// One place a symbol appears: its line of code, then where it is, with
+/// definitions marked.
+fn symbolRow(ui: *AppUi, model: *const Model, index: usize, position: usize, active: bool) AppUi.Node {
+    const hit = model.symbol_hits[index];
+    const white = canvas.Color.rgb8(255, 255, 255);
+    const in_review = for (model.files) |file| {
+        if (!file.reference and std.mem.eql(u8, file.path, hit.path)) break true;
+    } else false;
+    const code = ui.arena.dupe(canvas.TextSpan, &.{.{ .text = std.mem.trim(u8, hit.text, " \t"), .monospace = true, .scale = 12.0 / 13.0 }}) catch &.{};
+    var text = ui.paragraph(.{ .height = 16, .wrap = false, .overflow = .clip, .style = .{ .foreground = if (active) white else theme.palette_ink } }, code);
+    text.widget.layout.grow = 1;
+    text.widget.layout.zero_intrinsic = true;
+    return ui.row(.{ .key = .{ .index = position }, .height = theme.palette_row, .padding = 0, .gap = 0, .cross = .center, .on_press = .{ .palette_choose = position }, .semantics = .{ .role = .listitem, .label = ui.fmt("{s}:{d} {s}", .{ hit.path, hit.line, hit.text }) }, .style = .{ .background = if (active) theme.palette_active else theme.clear, .quiet_hover = true, .radius = 11 } }, .{
+        space(ui, 11, 0),
+        ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = if (active) white else if (hit.definition) theme.syntax_function else theme.palette_hint } }, if (hit.definition) "symbol" else if (in_review) "modified" else "document"),
+        space(ui, 8, 0),
+        text,
+        space(ui, 10, 0),
+        smallText(ui, ui.fmt("{s}{s}:{d}", .{ if (hit.definition) "definition · " else "", std.fs.path.basename(hit.path), hit.line }), if (active) canvas.Color.rgba8(255, 255, 255, 200) else theme.palette_hint),
+        space(ui, 11, 0),
+    });
+}
+/// Who last changed a line and why, in a small card under it.
+fn blameCard(ui: *AppUi, model: *const Model) AppUi.Node {
+    const shown = model.blame.?;
+    const info = shown.info;
+    var age_buffer: [32]u8 = undefined;
+    const now = std.Io.Clock.real.now(app.ioHandle()).toSeconds();
+    const short = info.commit[0..@min(8, info.commit.len)];
+    const head = if (shown.loading) "Reading blame…" else if (shown.failed) "Git could not blame this line" else if (info.uncommitted) "Not committed yet" else ui.fmt("{s} · {s}", .{ info.author, @import("lookup.zig").ago(&age_buffer, info.time, now) });
+    const summary = if (shown.loading or shown.failed) "" else if (info.uncommitted) "This line is only in the working tree." else info.summary;
+    const commit = ui.arena.dupe(canvas.TextSpan, &.{.{ .text = short, .monospace = true }}) catch &.{};
+    const card_node = ui.el(.popover, .{ .width = 420, .padding = 10, .anchor = .below, .anchor_alignment = .start, .anchor_offset = 4, .on_dismiss = .close_blame, .semantics = .{ .role = .dialog, .label = ui.fmt("Blame for line {d}", .{shown.line}) }, .style = .{ .background = theme.menu, .border = theme.glass_edge, .stroke_width = 0.5, .radius = 12 } }, .{ui.column(.{ .padding = 0, .gap = 6 }, .{
+        ui.row(.{ .height = 20, .padding = 0, .gap = 0, .cross = .center }, .{
+            ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.secondary } }, "history"),
+            space(ui, 8, 0),
+            if (!shown.loading and !shown.failed and !info.uncommitted) ui.paragraph(.{ .height = 16, .size = .sm, .wrap = false, .style = .{ .foreground = theme.syntax_constant } }, commit) else ui.spacer(0),
+            if (!shown.loading and !shown.failed and !info.uncommitted) space(ui, 8, 0) else ui.spacer(0),
+            ui.text(.{ .grow = 1, .size = .sm, .style = .{ .foreground = theme.secondary } }, head),
+            if (!shown.loading and !shown.failed and !info.uncommitted) tinted(ui, "copy-commit", "copy", "Copy commit id", .{ .copy_text = info.commit }, theme.tertiary, false, 22) else ui.spacer(0),
+            tinted(ui, "close-blame", "close", "Close · esc", .close_blame, theme.tertiary, false, 22),
+        }),
+        if (summary.len > 0) ui.text(.{ .wrap = true, .style = .{ .foreground = theme.ink } }, summary) else ui.spacer(0),
+    })});
+    return ui.row(.{ .height = 24, .padding = 0, .gap = 0 }, .{ space(ui, if (shown.old or !model.split) 56 else model.canvas_width / 2 - 100, 0), ui.stack(.{ .width = 420, .height = 24, .padding = 0 }, .{card_node}), ui.spacer(1) });
+}
 /// Rex's palette: a frosted 330-point surface near the top of the window, a
 /// capsule search field, 28-point rows, and keycap hints at its foot.
 fn palette(ui: *AppUi, model: *const Model) AppUi.Node {
     const files = model.palette == .files;
+    const symbols = model.palette == .symbols;
     const row_h = theme.palette_row;
     const height = @min(theme.palette_rows * row_h, @as(f32, @floatFromInt(model.choice_count)) * row_h);
     const options = AppUi.VirtualListOptions{ .id = "palette-results", .item_count = model.choice_count, .item_extent = row_h, .height = height, .overscan = 1, .semantics = .{ .label = "Results" }, .on_scroll = AppUi.scrollMsg(.palette_scrolled) };
@@ -1007,10 +1145,15 @@ fn palette(ui: *AppUi, model: *const Model) AppUi.Node {
     for (window.start_index..window.end_index) |position| {
         if (count == rows.len) break;
         const item = model.choices[position];
+        const active = position == model.choice_selected;
+        if (symbols) {
+            rows[count] = symbolRow(ui, model, item.index, position, active);
+            count += 1;
+            continue;
+        }
         const command = if (!item.file) app.keyboard.commands[item.index] else null;
         const title = if (item.file) std.fs.path.basename(model.files[item.index].path) else command.?.title;
         const detail = if (item.file) std.fs.path.dirname(model.files[item.index].path) orelse "" else primaryShortcut(command.?.shortcut);
-        const active = position == model.choice_selected;
         rows[count] = ui.row(.{ .key = .{ .index = position }, .height = row_h, .padding = 0, .gap = 0, .cross = .center, .on_press = .{ .palette_choose = position }, .semantics = .{ .role = .listitem, .label = if (item.file) model.files[item.index].path else title }, .style = .{ .background = if (active) theme.palette_active else theme.clear, .quiet_hover = true, .radius = 11 } }, .{
             space(ui, 11.5, 0),
             ui.text(.{ .grow = 1, .style = .{ .foreground = if (active) canvas.Color.rgb8(255, 255, 255) else theme.palette_ink } }, title),
@@ -1020,23 +1163,23 @@ fn palette(ui: *AppUi, model: *const Model) AppUi.Node {
         count += 1;
     }
     // It fades in and settles a few points down as it opens.
-    const surface = ui.el(.popover, .{ .key = .{ .str = "command-palette" }, .opacity = model.palette_fade, .transform = if (model.palette_fade < 1) canvas.Affine.translate(0, -6 * (1 - model.palette_fade)) else .{}, .width = theme.palette_width, .anchor = .below, .anchor_alignment = .start, .anchor_offset = 0, .padding = 5, .backdrop_blur_token = .md, .on_dismiss = .close_palette, .semantics = .{ .role = .dialog, .label = if (files) "Go to file" else "Commands" }, .style = .{ .background = theme.palette_glass, .border = theme.glass_edge, .radius = 16 } }, .{ui.column(.{ .padding = 0, .gap = 0 }, .{
+    const surface = ui.el(.popover, .{ .key = .{ .str = "command-palette" }, .opacity = model.palette_fade, .transform = if (model.palette_fade < 1) canvas.Affine.translate(0, -6 * (1 - model.palette_fade)) else .{}, .width = if (symbols) 560 else theme.palette_width, .anchor = .below, .anchor_alignment = .start, .anchor_offset = 0, .padding = 5, .backdrop_blur_token = .md, .on_dismiss = .close_palette, .semantics = .{ .role = .dialog, .label = if (symbols) "Symbols" else if (files) "Go to file" else "Commands" }, .style = .{ .background = theme.palette_glass, .border = theme.glass_edge, .radius = 16 } }, .{ui.column(.{ .padding = 0, .gap = 0 }, .{
         ui.row(.{ .height = 30, .padding = 0, .gap = 0, .cross = .center, .style = .{ .background = theme.palette_field, .radius = 15 } }, .{
             space(ui, 11, 0),
             ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.secondary } }, "find"),
             space(ui, 1, 0),
-            ui.textField(.{ .key = .{ .str = "palette-query" }, .grow = 1, .height = 26, .text = model.palette_query.text(), .placeholder = if (files) "Search files…" else "Search commands and files…", .autofocus = true, .on_input = AppUi.inputMsg(.palette_edit), .on_submit = .palette_accept, .semantics = .{ .label = if (files) "File picker" else "Command search" }, .variant = .ghost, .style = .{ .background = theme.clear, .border = theme.clear, .focus_ring = theme.clear, .radius = 0 } }),
+            ui.textField(.{ .key = .{ .str = "palette-query" }, .grow = 1, .height = 26, .text = model.palette_query.text(), .placeholder = if (symbols) "Find a symbol…" else if (files) "Search files…" else "Search commands and files…", .autofocus = true, .on_input = AppUi.inputMsg(.palette_edit), .on_submit = .palette_accept, .semantics = .{ .label = if (symbols) "Symbol search" else if (files) "File picker" else "Command search" }, .variant = .ghost, .style = .{ .background = theme.clear, .border = theme.clear, .focus_ring = theme.clear, .radius = 0 } }),
             space(ui, 8, 0),
         }),
         space(ui, 0, 10),
-        if (count > 0) ui.virtualList(options, window, rows[0..count]) else ui.row(.{ .height = 56, .padding = 0, .main = .center, .cross = .center }, .{smallText(ui, "No matches", theme.secondary)}),
+        if (count > 0) ui.virtualList(options, window, rows[0..count]) else ui.row(.{ .height = 56, .padding = 0, .main = .center, .cross = .center }, .{smallText(ui, if (!symbols) "No matches" else if (model.symbol_busy) "Searching…" else if (std.mem.trim(u8, model.palette_query.text(), " ").len < 2) "Type a name to find where it is defined and used" else "No definitions or uses found", theme.secondary)}),
         space(ui, 0, 5),
         ui.row(.{ .height = 1, .padding = 0, .style = .{ .background = theme.hairline } }, .{}),
         ui.row(.{ .height = 28, .padding = 0, .gap = 0, .cross = .center, .semantics = .{ .label = "Palette hints", .role = .group } }, .{
             ui.spacer(1),
             keyHint(ui, "Close", "esc"),
             space(ui, 14, 0),
-            if (count > 0) keyHint(ui, if (files) "Open" else "Run", "↩") else ui.spacer(0),
+            if (count > 0) keyHint(ui, if (files or symbols) "Open" else "Run", "↩") else ui.spacer(0),
             space(ui, 9.5, 0),
         }),
     })});

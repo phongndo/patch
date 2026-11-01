@@ -16,6 +16,10 @@ pub const Record = struct {
     change: []const u8 = "",
     mode: []const u8 = "100644",
 };
+/// A hunk someone marked reviewed: its path and its change's hash
+/// (`patch.Hunk.change`, as hex). Content alone keys it, so the same hunk
+/// stays reviewed in any version of the file that still has it.
+pub const HunkRecord = struct { path: []const u8, change: []const u8 };
 pub const NoteState = enum { open, outdated, resolved };
 pub const Note = struct {
     path: []const u8,
@@ -54,6 +58,7 @@ pub const Store = struct {
     notes: []const Note = &.{},
     tips: []const Tip = &.{},
     commits: []const Mark = &.{},
+    hunks: []const HunkRecord = &.{},
     /// Saved reviews from before this store, already brought in.
     migrated: []const []const u8 = &.{},
 };
@@ -145,6 +150,38 @@ pub fn unmark(records: *std.ArrayList(Record), file: patch.File) void {
     while (index < records.items.len) {
         const record = records.items[index];
         if (exact(record, file) or (std.mem.eql(u8, record.path, file.path) and std.mem.eql(u8, record.change, &change))) {
+            _ = records.orderedRemove(index);
+        } else index += 1;
+    }
+}
+
+/// Whether this hunk of a file was reviewed on its own (or with its file).
+pub fn hunkReviewed(records: []const HunkRecord, path: []const u8, hunk: patch.Hunk) bool {
+    const change = std.fmt.bytesToHex(hunk.change, .lower);
+    for (records) |record| if (std.mem.eql(u8, record.path, path) and std.mem.eql(u8, record.change, &change)) return true;
+    return false;
+}
+/// Records a hunk as reviewed, keeping the newest few hundred of a path's.
+pub fn markHunk(gpa: std.mem.Allocator, records: *std.ArrayList(HunkRecord), path: []const u8, hunk: patch.Hunk) !void {
+    if (hunkReviewed(records.items, path, hunk)) return;
+    const change = std.fmt.bytesToHex(hunk.change, .lower);
+    try records.append(gpa, .{ .path = path, .change = try gpa.dupe(u8, &change) });
+    var kept: usize = 0;
+    var index = records.items.len;
+    while (index > 0) {
+        index -= 1;
+        if (!std.mem.eql(u8, records.items[index].path, path)) continue;
+        kept += 1;
+        if (kept > max_hunks) _ = records.orderedRemove(index);
+    }
+}
+const max_hunks = 512;
+pub fn unmarkHunk(records: *std.ArrayList(HunkRecord), path: []const u8, hunk: patch.Hunk) void {
+    const change = std.fmt.bytesToHex(hunk.change, .lower);
+    var index: usize = 0;
+    while (index < records.items.len) {
+        const record = records.items[index];
+        if (std.mem.eql(u8, record.path, path) and std.mem.eql(u8, record.change, &change)) {
             _ = records.orderedRemove(index);
         } else index += 1;
     }
@@ -263,4 +300,20 @@ test "notes follow untouched lines and become outdated on changed ones" {
     follow(&resolved, files[0].unified, "new");
     try std.testing.expectEqual(NoteState.resolved, resolved.state);
     try std.testing.expectEqualStrings("three", excerpt(arena.allocator(), files[0].unified, true, 3, 3));
+}
+test "hunks are reviewed by their content, path by path" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    var records: std.ArrayList(HunkRecord) = .empty;
+    const a = patch.Hunk{ .change = @splat(1) };
+    const b = patch.Hunk{ .change = @splat(2) };
+    try markHunk(alloc, &records, "x.c", a);
+    try markHunk(alloc, &records, "x.c", a);
+    try std.testing.expectEqual(@as(usize, 1), records.items.len);
+    try std.testing.expect(hunkReviewed(records.items, "x.c", a));
+    try std.testing.expect(!hunkReviewed(records.items, "y.c", a));
+    try std.testing.expect(!hunkReviewed(records.items, "x.c", b));
+    unmarkHunk(&records, "x.c", a);
+    try std.testing.expect(!hunkReviewed(records.items, "x.c", a));
 }

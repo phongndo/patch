@@ -72,6 +72,11 @@ pub const Palette = struct {
     syntax_constant: canvas.Color,
     word_added: canvas.Color,
     word_removed: canvas.Color,
+    /// Lines a diff moved rather than changed: a cool wash and its ink.
+    moved: canvas.Color,
+    moved_ink: canvas.Color,
+    /// Types, in highlighted code.
+    syntax_type: canvas.Color,
 };
 
 /// Rex static-noir, measured: the default theme, solid panes.
@@ -142,6 +147,9 @@ pub const noir: Palette = .{
     .syntax_constant = canvas.Color.rgb8(227, 194, 95),
     .word_added = canvas.Color.rgb8(52, 76, 40),
     .word_removed = canvas.Color.rgb8(96, 34, 28),
+    .moved = canvas.Color.rgb8(22, 28, 38),
+    .moved_ink = canvas.Color.rgb8(124, 160, 208),
+    .syntax_type = canvas.Color.rgb8(232, 160, 110),
 };
 
 // The palette in effect. Views read these; `apply` replaces them all.
@@ -208,6 +216,9 @@ pub var syntax_property: canvas.Color = noir.syntax_property;
 pub var syntax_constant: canvas.Color = noir.syntax_constant;
 pub var word_added: canvas.Color = noir.word_added;
 pub var word_removed: canvas.Color = noir.word_removed;
+pub var moved: canvas.Color = noir.moved;
+pub var moved_ink: canvas.Color = noir.moved_ink;
+pub var syntax_type: canvas.Color = noir.syntax_type;
 pub var dark: bool = true;
 
 pub fn apply(next: Palette) void {
@@ -376,6 +387,10 @@ pub fn derive(scheme: Scheme, translucent: bool) Palette {
         .syntax_constant = scheme.yellow,
         .word_added = mix(bg, scheme.green, if (light) 0.32 else 0.3),
         .word_removed = mix(bg, scheme.red, if (light) 0.3 else 0.35),
+        .moved = mix(bg, scheme.blue, if (light) 0.12 else 0.13),
+        .moved_ink = mix(bg, scheme.blue, 0.82),
+        // Types between the constants' yellow and the red, softened.
+        .syntax_type = mix(mix(scheme.yellow, scheme.red, 0.4), fg, 0.2),
     };
     if (translucent) {
         // Rex's Modern material: the pane is the theme ground at about half
@@ -391,6 +406,7 @@ pub fn derive(scheme: Scheme, translucent: bool) Palette {
         result.text_selection = over(fg, 46, lift);
         result.added = alpha(scheme.green, if (light) 46 else 38);
         result.removed = alpha(scheme.red, if (light) 40 else 38);
+        result.moved = alpha(scheme.blue, if (light) 40 else 36);
         result.background = over(fg, 28, lift);
     }
     return result;

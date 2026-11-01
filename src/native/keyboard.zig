@@ -57,6 +57,14 @@ pub const Action = enum {
     commit_next,
     commit_previous,
     all_changes,
+    expand_context,
+    whole_file,
+    hunk_reviewed,
+    hunk_review_next,
+    hunk_next,
+    hunk_previous,
+    blame,
+    find_symbol,
 };
 pub const Invocation = struct { action: Action, count: usize = 1 };
 pub const Key = union(enum) { character: u8, control: u8, escape, enter, up, down, page_up, page_down, home, end, other };
@@ -119,12 +127,18 @@ pub const State = struct {
         const action: ?Action = if (prefix != .none) blk: {
             if (key != .character) break :blk null;
             break :blk switch (prefix) {
-                .g => if (key.character == 'g') (if (explicit_count) .go_line else .first) else null,
+                .g => switch (key.character) {
+                    'g' => if (explicit_count) .go_line else .first,
+                    'b' => .blame,
+                    'd' => .find_symbol,
+                    else => null,
+                },
                 .next => switch (key.character) {
                     'C' => .commit_next,
                     'c' => .change_next,
                     'f' => .file_next,
                     'u' => .unreviewed_next,
+                    'h' => .hunk_next,
                     else => null,
                 },
                 .previous => switch (key.character) {
@@ -132,6 +146,7 @@ pub const State = struct {
                     'c' => .change_previous,
                     'f' => .file_previous,
                     'u' => .unreviewed_previous,
+                    'h' => .hunk_previous,
                     else => null,
                 },
                 .z => switch (key.character) {
@@ -163,6 +178,10 @@ pub const State = struct {
                 'N' => .match_previous,
                 'r' => .reviewed,
                 'R' => .review_next,
+                'v' => .hunk_reviewed,
+                'V' => .hunk_review_next,
+                'e' => .expand_context,
+                'E' => .whole_file,
                 'u' => .undo,
                 'c', 'i' => .comment_line,
                 'C' => .comment_file,
@@ -226,6 +245,14 @@ pub const commands = [_]Command{
     .{ .action = .unreviewed_previous, .id = "patch.unreviewed-previous", .title = "Previous unreviewed file", .shortcut = "[u", .icon = "checkbox" },
     .{ .action = .reviewed, .id = "patch.reviewed", .title = "Toggle reviewed", .shortcut = "r", .icon = "check" },
     .{ .action = .review_next, .id = "patch.review-next", .title = "Mark reviewed and advance", .shortcut = "R", .icon = "check" },
+    .{ .action = .hunk_reviewed, .id = "patch.hunk-reviewed", .title = "Toggle hunk reviewed", .shortcut = "v", .icon = "check" },
+    .{ .action = .hunk_review_next, .id = "patch.hunk-review-next", .title = "Mark hunk reviewed and advance", .shortcut = "V", .icon = "check" },
+    .{ .action = .hunk_next, .id = "patch.hunk-next", .title = "Next unreviewed hunk", .shortcut = "]h", .icon = "checkbox" },
+    .{ .action = .hunk_previous, .id = "patch.hunk-previous", .title = "Previous unreviewed hunk", .shortcut = "[h", .icon = "checkbox" },
+    .{ .action = .expand_context, .id = "patch.expand-context", .title = "Show more context around hunk", .shortcut = "e", .icon = "expand-all" },
+    .{ .action = .whole_file, .id = "patch.whole-file", .title = "Show whole file or changes only", .shortcut = "E", .icon = "expand-all" },
+    .{ .action = .find_symbol, .id = "patch.find-symbol", .title = "Find symbol definitions and uses", .shortcut = "gd", .icon = "symbol" },
+    .{ .action = .blame, .id = "patch.blame", .title = "Blame current line", .shortcut = "gb", .icon = "history" },
     .{ .action = .undo, .id = "patch.undo-review", .title = "Undo reviewed state", .shortcut = "u", .icon = "left" },
     .{ .action = .comment_line, .id = "patch.comment-line", .title = "Comment on current line", .shortcut = "c / i", .icon = "add" },
     .{ .action = .comment_file, .id = "patch.comment-file", .title = "Comment on file", .shortcut = "C", .icon = "comment" },

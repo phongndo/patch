@@ -625,6 +625,46 @@ pub fn copyBlobs(gpa: std.mem.Allocator, io: std.Io, root: []const u8, store: St
     try args.appendSlice(gpa, paths.items);
     gpa.free(try exec(gpa, io, root, args.items, .{ .store = store, .writes = true }));
 }
+/// The bytes of these blobs, by id, read from the store with the
+/// repository's objects behind it; blobs neither has are left out. Ids are
+/// asked in batches so no one answer runs past Git's output bound.
+pub fn readBlobs(gpa: std.mem.Allocator, io: std.Io, root: []const u8, store: Store, ids: []const []const u8) !std.StringHashMapUnmanaged([]const u8) {
+    var result: std.StringHashMapUnmanaged([]const u8) = .empty;
+    var start: usize = 0;
+    while (start < ids.len) {
+        const end = @min(ids.len, start + 256);
+        defer start = end;
+        var input: std.ArrayList(u8) = .empty;
+        defer input.deinit(gpa);
+        for (ids[start..end]) |id| if (id.len > 0) {
+            try input.appendSlice(gpa, id);
+            try input.append(gpa, '\n');
+        };
+        if (input.items.len == 0) continue;
+        const output = exec(gpa, io, root, &.{ "cat-file", "--batch" }, .{ .store = store, .input = input.items }) catch |err| switch (err) {
+            error.StreamTooLong => continue,
+            else => return err,
+        };
+        var at: usize = 0;
+        while (at < output.len) {
+            const line_end = std.mem.indexOfScalarPos(u8, output, at, '\n') orelse break;
+            var header = std.mem.tokenizeScalar(u8, output[at..line_end], ' ');
+            at = line_end + 1;
+            const id = header.next() orelse continue;
+            const kind = header.next() orelse continue;
+            const size = std.fmt.parseInt(usize, header.next() orelse continue, 10) catch break;
+            if (at + size > output.len) break;
+            if (std.mem.eql(u8, kind, "blob")) try result.put(gpa, id, output[at .. at + size]);
+            at += size + 1;
+        }
+    }
+    return result;
+}
+/// Runs a read-only Git command in the repository and returns its output.
+/// Exit status 1 is an answer, not a failure (`git grep` finding nothing).
+pub fn ask(gpa: std.mem.Allocator, io: std.Io, root: []const u8, args: []const []const u8) ![]u8 {
+    return exec(gpa, io, root, args, .{ .difference = true });
+}
 /// Which of these objects neither the store nor the repository has.
 pub fn missing(gpa: std.mem.Allocator, io: std.Io, root: []const u8, store: Store, ids: []const []const u8) !std.StringHashMapUnmanaged(void) {
     var result: std.StringHashMapUnmanaged(void) = .empty;

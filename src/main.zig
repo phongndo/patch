@@ -5,6 +5,7 @@ const git = @import("native/git.zig");
 const patch = @import("native/patch.zig");
 const syntax = @import("native/syntax.zig");
 const review = @import("native/review.zig");
+pub const lookup = @import("native/lookup.zig");
 pub const history = @import("native/history.zig");
 const canvas = sdk.canvas;
 pub const keyboard = @import("native/keyboard.zig");
@@ -23,14 +24,25 @@ const Anchor = struct { line: u32 = 0, line_end: u32 = 0, old: bool = false, fil
 pub const DisplayRow = struct { file: usize, code: ?usize = null, spacer: bool = false };
 pub const RailRow = struct { file: ?usize = null, directory: []const u8 = "" };
 pub const Focus = enum { review, note, file_filter, search, palette };
-pub const Palette = enum { closed, commands, files };
+pub const Palette = enum { closed, commands, files, symbols };
 pub const SettingsSection = enum { review, layout, appearance, keyboard, about };
 /// Preferences saved beside review progress, applied before the first load.
 const Settings = struct { collapse_reviewed: bool = true, split: bool = true, sidebar: bool = true, mode: git.Mode = .working, base: []const u8 = "main", sidebar_width: f32 = 219, notes_width: f32 = 300, theme: []const u8 = "noir", glass: bool = false, colors: [5][]const u8 = .{ "", "", "", "", "" }, ignore_whitespace: bool = false, algorithm: git.Algorithm = .default, fold_generated: bool = true };
 /// Colors a person can set over any theme, in Settings › Appearance.
 pub const color_roles = [_][]const u8{ "Background", "Text", "Accent", "Added", "Removed" };
 pub const Choice = struct { index: usize, score: u32, file: bool = false };
-const ReviewChange = struct { file: usize, reviewed: bool };
+/// A review state taken back by undo: a file's, or one of its hunks'.
+const ReviewChange = struct { file: usize, reviewed: bool, hunk: ?u16 = null };
+/// A hunk of a file, by its index in `patch.File.hunks`.
+pub const HunkRef = struct { file: usize, hunk: u16 };
+/// Lines to show of a gap the diff left out: above a hunk's header (or, for
+/// the tail, after the last hunk), from the gap's top or its bottom, a step
+/// of them or all.
+pub const Expansion = struct { file: usize, hunk: u16 = 0, tail: bool = false, from_top: bool = false, all: bool = false };
+/// What blame says about one line, shown beside it.
+pub const BlameView = struct { row: usize, old: bool, line: u32, loading: bool = true, failed: bool = false, info: lookup.Blame = .{} };
+/// Lines a step of expansion shows.
+pub const expand_step: u32 = 20;
 pub const Model = struct {
     /// One horizontal offset for every code line, so long lines scroll
     /// sideways together, and the widest line it may reach (in bytes).
@@ -66,6 +78,18 @@ pub const Model = struct {
     files: []patch.File = &.{},
     /// The highlighter states rows start in (`patch.Row.old_carry`).
     carries: []const syntax.State = &.{},
+    /// Both sides of each file, read whole once the review is up; empty until then.
+    sources: []const patch.Sides = &.{},
+    /// Blame for the line it was asked of, while its card is open.
+    blame: ?BlameView = null,
+    /// Where the name in the symbol palette is defined and used, and whether
+    /// a search for it is running.
+    symbol_hits: []const lookup.Hit = &.{},
+    symbol_busy: bool = false,
+    /// Blocks of lines the diff moved rather than changed.
+    moves: []const patch.Move = &.{},
+    /// Hunks reviewed on their own, by content.
+    hunk_records: std.ArrayList(review.HunkRecord) = .empty,
     selected: usize = 0,
     visible: []usize = &.{},
     rail_rows: []const RailRow = &.{},
@@ -182,6 +206,17 @@ pub const Msg = union(enum) {
     scrolled: canvas.ScrollState,
     reviewed_file: usize,
     collapse_file: usize,
+    reviewed_hunk: HunkRef,
+    collapse_hunk: HunkRef,
+    expand: Expansion,
+    goto_move: struct { move: u32, to: bool },
+    blame_line: selection.Hit,
+    find_symbol_at: selection.Hit,
+    close_blame,
+    copy_text: []const u8,
+    close_reference: usize,
+    lookup_tick: sdk.EffectTimer,
+    sources_tick: sdk.EffectTimer,
     open_settings,
     open_base,
     toggle_band_menu,
@@ -269,12 +304,14 @@ const Job = struct {
     data: []const u8 = "",
     result: ?git.Review = null,
     files: []patch.File = &.{},
+    moves: []const patch.Move = &.{},
     carries: []const syntax.State = &.{},
     /// What the store holds, split for the view: records; this view's notes
     /// (then those of dropped commits); every other note.
     store_dir: []const u8 = "",
     scope: []const u8 = "",
     records: std.ArrayList(review.Record) = .empty,
+    hunk_records: std.ArrayList(review.HunkRecord) = .empty,
     notes: std.ArrayList(Note) = .empty,
     hidden: std.ArrayList(Note) = .empty,
     tips: std.ArrayList(review.Tip) = .empty,
@@ -301,6 +338,15 @@ const Job = struct {
     failure: ?anyerror = null,
     done: std.atomic.Value(bool) = .init(false),
     thread: ?std.Thread = null,
+    /// Both sides of every file, read whole once the review is up (to show
+    /// more context, highlight whole files, and draw images), in an arena
+    /// of their own since the review's is the main thread's by then.
+    sources: []patch.Sides = &.{},
+    source_arena: std.heap.ArenaAllocator = .init(gpa),
+    source_requests: []const SourceRequest = &.{},
+    sourcer: ?std.Thread = null,
+    sources_done: std.atomic.Value(bool) = .init(false),
+    const SourceRequest = struct { path: []const u8, old: []const u8, new: []const u8, disk: bool };
     fn run(self: *Job) void {
         self.load() catch |err| {
             self.failure = err;
@@ -338,6 +384,7 @@ const Job = struct {
             self.files = files.items;
             break;
         };
+        self.moves = patch.findMoves(alloc, self.files) catch &.{};
         // Without the store read whole, nothing is saved over it.
         self.remember(alloc) catch {
             self.store_dir = "";
@@ -351,6 +398,57 @@ const Job = struct {
         if (self.store != null) {
             self.keeper = std.Thread.spawn(.{}, keepRest, .{self}) catch null;
             if (self.keeper == null) self.keeper_done.store(true, .release);
+        }
+        // What the sources thread reads, taken now: files change hands next.
+        if (self.store != null and result.root.len > 0) {
+            const requests = try alloc.alloc(SourceRequest, self.files.len);
+            for (self.files, requests) |file, *request| request.* = .{
+                .path = if (file.message or file.whitespace_only) "" else file.path,
+                .old = file.old_blob,
+                .new = file.new_blob,
+                .disk = self.mode == .working and file.status != .deleted,
+            };
+            self.source_requests = requests;
+            self.sourcer = std.Thread.spawn(.{}, readSources, .{self}) catch null;
+        }
+        if (self.sourcer == null) self.sources_done.store(true, .release);
+    }
+    /// Reads both sides of every file: the old from Git, the new from Git
+    /// too, or from the working tree when that is what is compared.
+    fn readSources(self: *Job) void {
+        defer self.sources_done.store(true, .release);
+        const alloc = self.source_arena.allocator();
+        const result = self.result.?;
+        const sources = alloc.alloc(patch.Sides, self.source_requests.len) catch return;
+        @memset(sources, .{});
+        var ids: std.ArrayList([]const u8) = .empty;
+        for (self.source_requests) |request| {
+            if (request.path.len == 0) continue;
+            if (request.old.len > 0) ids.append(alloc, request.old) catch return;
+            if (!request.disk and request.new.len > 0) ids.append(alloc, request.new) catch return;
+        }
+        var blobs = git.readBlobs(alloc, self.io, result.root, self.store.?, ids.items) catch std.StringHashMapUnmanaged([]const u8).empty;
+        const limit = 16 * 1024 * 1024;
+        for (self.source_requests, sources) |request, *sides| {
+            if (request.path.len == 0) continue;
+            if (blobs.get(request.old)) |bytes| setSide(alloc, sides, true, bytes);
+            if (request.disk) {
+                const path = std.fs.path.join(alloc, &.{ result.root, request.path }) catch continue;
+                const bytes = std.Io.Dir.cwd().readFileAlloc(self.io, path, alloc, .limited(limit)) catch continue;
+                setSide(alloc, sides, false, bytes);
+            } else if (blobs.get(request.new)) |bytes| setSide(alloc, sides, false, bytes);
+        }
+        self.sources = sources;
+    }
+    fn setSide(alloc: std.mem.Allocator, sides: *patch.Sides, old: bool, bytes: []const u8) void {
+        const binary = patch.looksBinary(bytes);
+        const text: patch.Text = if (binary) .{ .bytes = bytes, .starts = &.{} } else patch.textOf(alloc, bytes) catch return;
+        if (old) {
+            sides.old = text;
+            sides.old_binary = binary;
+        } else {
+            sides.new = text;
+            sides.new_binary = binary;
         }
     }
     /// Fills the store off the path to the first frame: the working tree's
@@ -380,6 +478,7 @@ const Job = struct {
         if (std.Io.Dir.cwd().readFileAlloc(self.io, store_path, alloc, .limited(32 * 1024 * 1024))) |bytes| {
             const stored = try std.json.parseFromSliceLeaky(review.Store, alloc, bytes, .{ .ignore_unknown_fields = true, .allocate = .alloc_always });
             try self.records.appendSlice(alloc, stored.records);
+            try self.hunk_records.appendSlice(alloc, stored.hunks);
             try self.hidden.appendSlice(alloc, stored.notes);
             try self.tips.appendSlice(alloc, stored.tips);
             try self.marks.appendSlice(alloc, stored.commits);
@@ -436,6 +535,21 @@ const Job = struct {
             file.reviewed = true;
             file.prior = .same;
         };
+        // Hunks reviewed on their own; a file whose every hunk was is reviewed.
+        for (self.files) |*file| {
+            if (file.hunks.len == 0) continue;
+            var all = true;
+            for (file.hunks) |*hunk| {
+                hunk.reviewed = file.reviewed or review.hunkReviewed(self.hunk_records.items, file.path, hunk.*);
+                all = all and hunk.reviewed;
+            }
+            if (all and !file.reviewed) {
+                file.reviewed = true;
+                file.prior = .same;
+                review.mark(alloc, &self.records, file.*) catch {};
+                self.dirty = true;
+            }
+        }
         if (self.mode == .branch) self.commit_states = @constCast(history.commitStates(alloc, result.commits, self.records.items, self.marks.items, pairs));
         if (store != null) {
             for (self.records.items) |reviewed| for ([_][]const u8{ reviewed.old, reviewed.new }) |id| try self.referenced.put(alloc, id, {});
@@ -563,6 +677,8 @@ const Job = struct {
     fn destroy(self: *Job) void {
         if (self.thread) |thread| thread.join();
         if (self.keeper) |thread| thread.join();
+        if (self.sourcer) |thread| thread.join();
+        self.source_arena.deinit();
         self.arena.deinit();
         gpa.destroy(self);
     }
@@ -586,9 +702,46 @@ const Session = struct {
     pointer_point: sdk.geometry.PointF = .{},
     /// A key event from the settings window is being delivered.
     settings_keys: bool = false,
+    /// A Git question asked off the main thread (blame, grep), and whether
+    /// the symbol search must run again for a query typed meanwhile.
+    lookup: ?*Lookup = null,
+    lookup_again: bool = false,
+    /// The output the shown blame and symbol hits point into, owned by `gpa`.
+    blame_output: []u8 = &.{},
+    symbol_output: []u8 = &.{},
+};
+/// One Git question, asked on a thread of its own.
+const Lookup = struct {
+    kind: enum { blame, grep },
+    io: std.Io,
+    arena: std.heap.ArenaAllocator = .init(gpa),
+    root: []const u8,
+    args: []const []const u8 = &.{},
+    output: []u8 = &.{},
+    failed: bool = false,
+    done: std.atomic.Value(bool) = .init(false),
+    thread: ?std.Thread = null,
+    /// A grep's revision prefix to strip and the name searched.
+    strip: []const u8 = "",
+    query: []const u8 = "",
+    fn work(self: *Lookup) void {
+        self.output = git.ask(gpa, self.io, self.root, self.args) catch blk: {
+            self.failed = true;
+            break :blk &.{};
+        };
+        self.done.store(true, .release);
+    }
+    fn destroy(self: *Lookup) void {
+        if (self.thread) |thread| thread.join();
+        self.arena.deinit();
+        gpa.destroy(self);
+    }
 };
 var session: Session = undefined;
 
+pub fn ioHandle() std.Io {
+    return session.io;
+}
 pub fn canvasWidth() ?f32 {
     const runtime = session.runtime orelse return null;
     const frame = runtime.gpuSurfaceFrame(1, "main-canvas") catch return null;
@@ -708,7 +861,14 @@ fn layoutRows(model: *Model) void {
         if (file.collapsed) continue;
         const source = if (model.split) file.split else file.unified;
         var in_change = false;
+        // Hunks folded away show only their headers (not while the rows are
+        // the changes since review, whose hunks are another diff's).
+        const hunks = if (file.showing_since) &[_]patch.Hunk{} else file.hunks;
+        var headed = false;
         for (source, 0..) |row, code| {
+            // Rows expanded above the first header belong to no hunk.
+            headed = headed or row.meta;
+            if (!row.meta and headed and row.hunk < hunks.len and hunks[row.hunk].collapsed) continue;
             cols = @max(cols, @max(row.left.len, row.right.len));
             const changed = row.added or row.removed;
             if (changed and !in_change) changes.append(alloc, rows.items.len) catch return;
@@ -866,7 +1026,7 @@ fn persist(model: *Model) void {
     var notes: std.ArrayList(Note) = .empty;
     notes.appendSlice(alloc, model.notes.items) catch return;
     notes.appendSlice(alloc, job.hidden.items) catch return;
-    const store = review.Store{ .records = model.records.items, .notes = notes.items, .tips = job.tips.items, .commits = job.marks.items, .migrated = job.migrated.items };
+    const store = review.Store{ .records = model.records.items, .notes = notes.items, .tips = job.tips.items, .commits = job.marks.items, .hunks = model.hunk_records.items, .migrated = job.migrated.items };
     const bytes = std.json.Stringify.valueAlloc(alloc, store, .{}) catch return;
     const path = std.fmt.allocPrint(alloc, "{s}/review.json", .{job.store_dir}) catch return;
     const temporary = std.fmt.allocPrint(alloc, "{s}/review.json.new", .{job.store_dir}) catch return;
@@ -920,6 +1080,7 @@ fn poll(model: *Model, fx: *Effects) void {
     const old_document = session.document;
     session.document = job;
     model.files = job.files;
+    model.moves = job.moves;
     model.carries = job.carries;
     model.selected = 0;
     model.cursor = 0;
@@ -937,6 +1098,8 @@ fn poll(model: *Model, fx: *Effects) void {
     focusReview(model);
     model.notes = job.notes;
     model.records = job.records;
+    model.hunk_records = job.hunk_records;
+    model.sources = &.{};
     model.commits = job.result.?.commits;
     model.commit_states = job.commit_states;
     model.commit = null;
@@ -952,7 +1115,10 @@ fn poll(model: *Model, fx: *Effects) void {
     model.draft.clear();
     model.generation += 1;
     model.scroll_x = 0;
-    for (model.files) |*file| file.collapsed = defaultFold(model, file.*);
+    for (model.files) |*file| {
+        file.collapsed = defaultFold(model, file.*);
+        for (file.hunks) |*hunk| hunk.collapsed = hunk.reviewed and model.collapse_reviewed;
+    }
     // Still reading what changed since review, if there is any.
     if (model.since_review) showSince(model, changedSince(model) > 0);
     reindex(model);
@@ -971,12 +1137,430 @@ fn poll(model: *Model, fx: *Effects) void {
     if (job.stale) notify(model, fx, "Files changed while loading · ⌘R reads them again");
     if (job.store_failed) model.error_text = "Saved review progress could not be read; this review will not be saved.";
     if (job.keeper != null) fx.startTimer(.{ .key = 10, .interval_ms = 150, .mode = .repeating, .on_fire = Effects.timerMsg(.keeper_tick) });
+    if (job.sources_done.load(.acquire)) adoptSources(model, fx) else fx.startTimer(.{ .key = 11, .interval_ms = 16, .mode = .repeating, .on_fire = Effects.timerMsg(.sources_tick) });
     if (session.imported == null) {
         const last_path = std.fmt.allocPrint(gpa, "{s}/repository", .{session.data_dir}) catch return;
         defer gpa.free(last_path);
         std.Io.Dir.cwd().writeFile(session.io, .{ .sub_path = last_path, .data = session.repo }) catch {};
     }
     if (session.measure_startup and model.generation == 1) std.debug.print("patch-perf: review_ready wall_ns={d}\n", .{std.Io.Clock.real.now(session.io).nanoseconds});
+}
+/// A place in the review that survives the rows changing around it: a
+/// file and the lines of its row (or its header), with how far into that row
+/// the view's top was.
+const Place = struct { file: usize, old: u32 = 0, new: u32 = 0, header: bool = false, hunk: u16 = 0, tail: bool = false, spacer: bool = false };
+fn placeOf(model: *const Model, index: usize) ?Place {
+    if (index >= model.display.len) return null;
+    const entry = model.display[index];
+    if (entry.spacer) return .{ .file = entry.file, .spacer = true };
+    const code = entry.code orelse return .{ .file = entry.file, .header = true };
+    const file = model.files[entry.file];
+    const rows = if (model.split) file.split else file.unified;
+    if (code >= rows.len) return .{ .file = entry.file, .header = true };
+    const row = rows[code];
+    if (row.meta) return .{ .file = entry.file, .hunk = row.hunk, .tail = row.tail, .old = std.math.maxInt(u32) };
+    return .{ .file = entry.file, .old = row.old, .new = row.new };
+}
+/// Where a place is now: its row, or the nearest row of its file before it.
+fn findPlace(model: *const Model, place: Place) usize {
+    if (place.file >= model.starts.len) return 0;
+    const start = model.starts[place.file];
+    if (place.header) return start;
+    const end = if (place.file + 1 < model.starts.len) model.starts[place.file + 1] else model.display.len;
+    var best = start;
+    for (start..end) |index| {
+        const entry = model.display[index];
+        if (entry.spacer) {
+            if (place.spacer) return index;
+            continue;
+        }
+        const code = entry.code orelse continue;
+        const file = model.files[entry.file];
+        const rows = if (model.split) file.split else file.unified;
+        const row = rows[code];
+        if (place.old == std.math.maxInt(u32)) {
+            if (row.meta and row.tail == place.tail and (place.tail or row.hunk == place.hunk)) return index;
+            continue;
+        }
+        if (row.meta) continue;
+        if ((place.new > 0 and row.new == place.new) or (place.new == 0 and row.old == place.old and row.new == 0)) return index;
+        if (place.new > 0 and row.new > 0 and row.new < place.new) best = index;
+    }
+    return best;
+}
+/// Lays the rows out again after a file's rows changed, keeping the view and
+/// the cursor where they were.
+fn relayout(model: *Model, fx: *Effects) void {
+    const top_index: usize = @intFromFloat(@max(0, model.scroll_offset) / 24);
+    const within = model.scroll_offset - @as(f32, @floatFromInt(top_index)) * 24;
+    const top = placeOf(model, top_index);
+    const cursor = if (model.cursor_active) placeOf(model, model.cursor) else null;
+    layoutRows(model);
+    findMatches(model);
+    clearSelection(model);
+    if (cursor) |place| model.cursor = findPlace(model, place) else model.cursor = @min(model.cursor, model.display.len -| 1);
+    if (top) |place| requestScroll(model, fx, @as(f32, @floatFromInt(findPlace(model, place))) * 24 + within);
+}
+/// Sets a file's full-diff rows, wherever they are kept while the changes
+/// since review are shown.
+fn setRows(alloc: std.mem.Allocator, file: *patch.File, rows: []patch.Row) void {
+    const split = patch.pairRows(alloc, rows) catch return;
+    if (file.showing_since) {
+        file.since.?.unified = rows;
+        file.since.?.split = split;
+    } else {
+        file.unified = rows;
+        file.split = split;
+    }
+}
+/// Takes in the files' sides once read: files whose diff stops before the
+/// file does gain a header for the rest, so every gap can be opened.
+fn adoptSources(model: *Model, fx: *Effects) void {
+    fx.cancelTimer(11);
+    const job = session.document orelse return;
+    if (job.sources.len != model.files.len) return;
+    model.sources = job.sources;
+    const alloc = job.arena.allocator();
+    var changed = false;
+    for (model.files, 0..) |*file, index| {
+        const text = model.sources[index].new orelse continue;
+        if (file.message or file.binary or model.sources[index].new_binary or file.status == .added or file.status == .deleted) continue;
+        const rows = file.fullRows();
+        const tailed = patch.withTail(alloc, @constCast(rows), text.count()) catch continue;
+        if (tailed.ptr == rows.ptr) continue;
+        if (file.compact.len == 0) file.compact = tailed;
+        setRows(alloc, file, tailed);
+        changed = true;
+    }
+    if (changed) relayout(model, fx);
+}
+/// Shows lines the diff left out of a file: a step of them, or all.
+fn expandGap(model: *Model, fx: *Effects, expansion: Expansion) void {
+    if (expansion.file >= model.files.len or expansion.file >= model.sources.len) return;
+    const file = &model.files[expansion.file];
+    if (file.showing_since) return notify(model, fx, "Context shows with all changes, not changes since review");
+    const text = model.sources[expansion.file].new orelse return;
+    const job = session.document orelse return;
+    const rows = file.unified;
+    const at = for (rows, 0..) |row, index| {
+        if (row.meta and row.tail == expansion.tail and (expansion.tail or row.hunk == expansion.hunk)) break index;
+    } else return;
+    if (file.compact.len == 0) file.compact = rows;
+    const expanded = (patch.expand(job.arena.allocator(), rows, at, text, if (expansion.all) std.math.maxInt(u32) else expand_step, expansion.from_top) catch return) orelse return;
+    setRows(job.arena.allocator(), file, expanded);
+    if (file.collapsed) file.collapsed = false;
+    relayout(model, fx);
+}
+/// Shows a file whole, its changes in place, or takes it back to its hunks.
+fn toggleWhole(model: *Model, fx: *Effects, index: usize) void {
+    if (index >= model.files.len or index >= model.sources.len) return;
+    const file = &model.files[index];
+    if (file.showing_since) return notify(model, fx, "Context shows with all changes, not changes since review");
+    const text = model.sources[index].new orelse return notify(model, fx, "This file has no lines to show");
+    const job = session.document orelse return;
+    const alloc = job.arena.allocator();
+    var expanded = false;
+    for (file.unified) |row| expanded = expanded or row.expanded;
+    if (expanded and file.compact.len > 0) {
+        setRows(alloc, file, @constCast(file.compact));
+        relayout(model, fx);
+        return notify(model, fx, "Showing changes only");
+    }
+    if (file.compact.len == 0) file.compact = file.unified;
+    var rows = file.unified;
+    var at: usize = 0;
+    while (at < rows.len) : (at += 1) {
+        if (!rows[at].meta) continue;
+        if (patch.expand(alloc, rows, at, text, std.math.maxInt(u32), true) catch null) |next| {
+            const tail = rows[at].tail;
+            rows = next;
+            // The shown lines now sit before the header (a tail is gone).
+            if (tail) break;
+            while (at < rows.len and !rows[at].meta) at += 1;
+        }
+    }
+    setRows(alloc, file, rows);
+    file.collapsed = false;
+    relayout(model, fx);
+    notify(model, fx, "Showing the whole file");
+}
+/// The hunk the cursor is in, if it is in one.
+fn cursorHunk(model: *const Model) ?HunkRef {
+    if (foldedHunk(model, model.cursor)) |at| return at;
+    if (model.cursor >= model.display.len) return null;
+    const entry = model.display[model.cursor];
+    const code = entry.code orelse return null;
+    const file = model.files[entry.file];
+    if (file.showing_since or file.hunks.len == 0) return null;
+    const rows = if (model.split) file.split else file.unified;
+    if (code >= rows.len) return null;
+    var headed = false;
+    for (rows[0 .. code + 1]) |row| headed = headed or row.meta;
+    if (!headed) return null;
+    const hunk = rows[code].hunk;
+    return if (hunk < file.hunks.len) .{ .file = entry.file, .hunk = hunk } else null;
+}
+/// Shows more context around the cursor's hunk: a step above and below.
+fn expandAround(model: *Model, fx: *Effects) void {
+    const at = cursorHunk(model) orelse return notify(model, fx, "Move into a hunk to show more around it");
+    if (model.sources.len == 0) return notify(model, fx, "Still reading files");
+    const file = model.files[at.file];
+    var below: Expansion = .{ .file = at.file, .tail = true, .from_top = true };
+    for (file.unified) |row| if (row.meta and !row.tail and row.hunk == at.hunk + 1) {
+        below = .{ .file = at.file, .hunk = at.hunk + 1, .from_top = true };
+    };
+    expandGap(model, fx, below);
+    expandGap(model, fx, .{ .file = at.file, .hunk = at.hunk });
+}
+/// Marks one hunk reviewed (or not). A file whose every hunk is reviewed is
+/// reviewed; taking one back takes back the file's review but keeps the rest.
+fn setHunkReviewed(model: *Model, fx: *Effects, at: HunkRef, value: bool) void {
+    if (at.file >= model.files.len) return;
+    const file = &model.files[at.file];
+    if (at.hunk >= file.hunks.len or file.hunks[at.hunk].reviewed == value) return;
+    const job = session.document orelse return;
+    const alloc = job.arena.allocator();
+    model.history.append(gpa, .{ .file = at.file, .reviewed = !value, .hunk = at.hunk }) catch {};
+    const hunk = &file.hunks[at.hunk];
+    hunk.reviewed = value;
+    if (value) review.markHunk(alloc, &model.hunk_records, file.path, hunk.*) catch {} else review.unmarkHunk(&model.hunk_records, file.path, hunk.*);
+    hunk.collapsed = value and model.collapse_reviewed;
+    var all = true;
+    for (file.hunks) |each| all = all and each.reviewed;
+    if (all and !file.reviewed) {
+        record(model, at.file, true);
+        if (model.collapse_reviewed) file.collapsed = true;
+    } else if (!value and file.reviewed) {
+        // The others stay reviewed, on their own now.
+        for (file.hunks) |each| if (each.reviewed) review.markHunk(alloc, &model.hunk_records, file.path, each) catch {};
+        recordFile(model, at.file, false);
+    }
+    relayout(model, fx);
+    persist(model);
+}
+/// Steps to the next (or previous) hunk not yet reviewed, across files.
+fn nextUnreviewedHunk(model: *Model, fx: *Effects, forward: bool) void {
+    if (model.display.len == 0) return;
+    const start = model.cursor;
+    var index = start;
+    var steps: usize = 0;
+    while (steps < model.display.len) : (steps += 1) {
+        index = if (forward) (index + 1) % model.display.len else (index + model.display.len - 1) % model.display.len;
+        const entry = model.display[index];
+        const code = entry.code orelse continue;
+        const file = model.files[entry.file];
+        if (file.showing_since or file.reviewed) continue;
+        const rows = if (model.split) file.split else file.unified;
+        const row = rows[code];
+        if (!row.meta or row.tail or row.hunk >= file.hunks.len or file.hunks[row.hunk].reviewed) continue;
+        // The hunk's first line, or its header if there is nothing under it.
+        moveTo(model, fx, seekCode(model, index + 1, true) orelse continue);
+        return;
+    }
+    notify(model, fx, "Every hunk reviewed");
+}
+/// The revisions the comparison's sides are read from, for questions Git
+/// answers about them: "" stands for the working tree.
+fn sideRevision(model: *const Model, alloc: std.mem.Allocator, old: bool) ?[]const u8 {
+    const job = session.document orelse return null;
+    const result = job.result orelse return null;
+    if (model.imported or result.root.len == 0) return null;
+    return switch (model.mode) {
+        .working, .staged => if (old) "HEAD" else "",
+        .branch => if (job.options.commit.len > 0)
+            (if (old) std.fmt.allocPrint(alloc, "{s}^", .{job.options.commit}) catch null else job.options.commit)
+        else if (old) result.merge_base else result.tip,
+    };
+}
+fn startLookup(model: *Model, fx: *Effects, lookup_job: *Lookup) void {
+    _ = model;
+    if (session.lookup) |running| {
+        // One question at a time: the newer one waits for the older to end.
+        if (!running.done.load(.acquire)) {
+            lookup_job.destroy();
+            return;
+        }
+        running.destroy();
+        session.lookup = null;
+    }
+    session.lookup = lookup_job;
+    lookup_job.thread = std.Thread.spawn(.{}, Lookup.work, .{lookup_job}) catch null;
+    if (lookup_job.thread == null) lookup_job.work();
+    fx.startTimer(.{ .key = 12, .interval_ms = 16, .mode = .repeating, .on_fire = Effects.timerMsg(.lookup_tick) });
+}
+/// Asks who last changed a line, and shows the answer beside it.
+fn blameRow(model: *Model, fx: *Effects, row: usize, old: bool) void {
+    const source = sourceRow(model, row) orelse return;
+    const file = model.files[model.display[row].file];
+    const side_old = (old and source.old > 0) or source.new == 0;
+    const line_number = if (side_old) source.old else source.new;
+    if (line_number == 0 or file.message) return;
+    if (session.lookup) |running| if (!running.done.load(.acquire)) return notify(model, fx, "Still looking something up");
+    const job = session.document orelse return;
+    const lookup_job = gpa.create(Lookup) catch return;
+    lookup_job.* = .{ .kind = .blame, .io = session.io, .root = job.result.?.root };
+    const alloc = lookup_job.arena.allocator();
+    const revision = if (file.reference) "" else sideRevision(model, alloc, side_old) orelse {
+        gpa.destroy(lookup_job);
+        return notify(model, fx, "Blame needs a repository");
+    };
+    const path = if (side_old and file.previous.len > 0) file.previous else file.path;
+    var args: std.ArrayList([]const u8) = .empty;
+    args.appendSlice(alloc, &.{ "blame", "--porcelain", "-L", std.fmt.allocPrint(alloc, "{d},{d}", .{ line_number, line_number }) catch return }) catch return;
+    if (revision.len > 0) args.append(alloc, revision) catch return;
+    args.appendSlice(alloc, &.{ "--", path }) catch return;
+    lookup_job.args = args.items;
+    model.blame = .{ .row = row, .old = side_old, .line = line_number };
+    startLookup(model, fx, lookup_job);
+}
+/// Looks a name up across the repository (at the comparison's new side):
+/// where it is defined, then where it is used.
+fn searchSymbol(model: *Model, fx: *Effects) void {
+    const query = std.mem.trim(u8, model.palette_query.text(), " ");
+    if (query.len < 2) {
+        model.symbol_hits = &.{};
+        matchChoices(model);
+        return;
+    }
+    if (session.lookup) |running| if (!running.done.load(.acquire)) {
+        session.lookup_again = true;
+        return;
+    };
+    const job = session.document orelse return;
+    if (model.imported or job.result.?.root.len == 0) return notify(model, fx, "Symbol search needs a repository");
+    const lookup_job = gpa.create(Lookup) catch return;
+    lookup_job.* = .{ .kind = .grep, .io = session.io, .root = job.result.?.root };
+    const alloc = lookup_job.arena.allocator();
+    lookup_job.query = alloc.dupe(u8, query) catch return;
+    var args: std.ArrayList([]const u8) = .empty;
+    args.appendSlice(alloc, &.{ "grep", "-n", "-I", "-w", "-F", "--max-count=40" }) catch return;
+    if (model.mode == .staged) args.append(alloc, "--cached") catch return;
+    args.appendSlice(alloc, &.{ "-e", lookup_job.query }) catch return;
+    if (model.mode == .branch) if (sideRevision(model, alloc, false)) |revision| if (revision.len > 0) {
+        args.append(alloc, revision) catch return;
+        lookup_job.strip = revision;
+    };
+    args.append(alloc, "--") catch return;
+    lookup_job.args = args.items;
+    model.symbol_busy = true;
+    startLookup(model, fx, lookup_job);
+}
+/// Takes in a finished lookup's answer.
+fn finishLookup(model: *Model, fx: *Effects) void {
+    const lookup_job = session.lookup orelse return fx.cancelTimer(12);
+    if (!lookup_job.done.load(.acquire)) return;
+    fx.cancelTimer(12);
+    session.lookup = null;
+    defer lookup_job.destroy();
+    switch (lookup_job.kind) {
+        .blame => if (model.blame) |*shown| {
+            gpa.free(session.blame_output);
+            session.blame_output = lookup_job.output;
+            shown.loading = false;
+            if (lookup.parseBlame(lookup_job.output)) |info| shown.info = info else shown.failed = true;
+        } else gpa.free(lookup_job.output),
+        .grep => {
+            model.symbol_busy = false;
+            const typed = std.mem.trim(u8, model.palette_query.text(), " ");
+            const again = session.lookup_again or !std.mem.eql(u8, typed, lookup_job.query);
+            session.lookup_again = false;
+            gpa.free(session.symbol_output);
+            session.symbol_output = lookup_job.output;
+            if (model.symbol_hits.len > 0) gpa.free(model.symbol_hits);
+            model.symbol_hits = lookup.parseGrep(gpa, lookup_job.output, lookup_job.strip, lookup_job.query, model.choices.len) catch &.{};
+            if (model.palette == .symbols) matchChoices(model);
+            if (again and model.palette == .symbols) searchSymbol(model, fx);
+        },
+    }
+}
+/// Opens the symbol palette on the name the cursor's line most likely
+/// means (or the selected text), and looks it up.
+fn openSymbols(model: *Model, fx: *Effects, row: ?usize, old: bool) void {
+    var name: []const u8 = "";
+    if (model.mouse.range) |range| if (range.bytes) |bytes| if (bytes.end > bytes.start) {
+        if (sourceRow(model, range.anchor)) |source| {
+            const offset = if (range.old) source.old_offset else source.new_offset;
+            const text = if (range.old) source.left else source.right;
+            if (bytes.start >= offset and bytes.end <= offset + text.len) name = std.mem.trim(u8, text[bytes.start - offset .. bytes.end - offset], " \t");
+        }
+    };
+    if (name.len == 0) if (row) |index| if (sourceRow(model, index)) |source| {
+        const side_old = (old and source.old > 0) or source.new == 0;
+        name = lookup.interestingName(if (side_old) source.left else source.right);
+    };
+    openPalette(model, fx, .symbols);
+    model.palette_query.set(name[0..@min(name.len, 200)]);
+    if (model.symbol_hits.len > 0) gpa.free(model.symbol_hits);
+    model.symbol_hits = &.{};
+    matchChoices(model);
+    searchSymbol(model, fx);
+}
+/// Goes to a line of a file by path: in the review when the change has the
+/// file (showing the lines around it if the diff left them out), else in a
+/// reference pane opened for it, read from the comparison's new side.
+fn openLocation(model: *Model, fx: *Effects, path: []const u8, line_number: u32) void {
+    for (model.files, 0..) |*file, index| {
+        if (file.message or !std.mem.eql(u8, file.path, path)) continue;
+        if (file.collapsed) {
+            file.collapsed = false;
+            layoutRows(model);
+        }
+        revealLine(model, fx, index, line_number);
+        jump(model, fx, index);
+        model.cursor_old = false;
+        goLine(model, fx, line_number);
+        model.cursor_active = true;
+        return;
+    }
+    const job = session.document orelse return;
+    const result = job.result orelse return;
+    const alloc = job.arena.allocator();
+    const text = switch (model.mode) {
+        .working => blk: {
+            const full = std.fs.path.join(alloc, &.{ result.root, path }) catch return;
+            break :blk std.Io.Dir.cwd().readFileAlloc(session.io, full, alloc, .limited(16 * 1024 * 1024)) catch return notify(model, fx, "Could not read that file");
+        },
+        else => blk: {
+            const revision = if (model.mode == .staged) "" else sideRevision(model, alloc, false) orelse return;
+            const spec = std.fmt.allocPrint(alloc, "{s}:{s}", .{ revision, path }) catch return;
+            break :blk git.ask(alloc, session.io, result.root, &.{ "show", spec }) catch return notify(model, fx, "Could not read that file");
+        },
+    };
+    if (patch.looksBinary(text)) return notify(model, fx, "That file is binary");
+    const reference = patch.referenceFile(alloc, path, text) catch return;
+    const files = alloc.alloc(patch.File, model.files.len + 1) catch return;
+    @memcpy(files[0..model.files.len], model.files);
+    files[model.files.len] = reference;
+    model.files = files;
+    job.files = files;
+    reindex(model);
+    layoutRows(model);
+    findMatches(model);
+    const index = files.len - 1;
+    jump(model, fx, index);
+    model.cursor_old = false;
+    goLine(model, fx, line_number);
+    model.cursor_active = true;
+    alignCursor(model, fx);
+}
+/// Puts the cursor's line a third of the way down, with context above it.
+fn alignCursor(model: *Model, fx: *Effects) void {
+    requestScroll(model, fx, @as(f32, @floatFromInt(model.cursor)) * 24 - model.viewport_height / 3);
+}
+/// Shows the lines around a new-side line the diff left out.
+fn revealLine(model: *Model, fx: *Effects, index: usize, line_number: u32) void {
+    if (index >= model.sources.len) return;
+    const file = &model.files[index];
+    if (file.showing_since) return;
+    const text = model.sources[index].new orelse return;
+    for (file.unified) |row| if (row.new == line_number) return;
+    for (file.unified, 0..) |row, at| {
+        if (!row.meta) continue;
+        const gap = patch.gapAt(file.unified, at, text.count()) orelse continue;
+        if (line_number < gap.first or line_number > gap.last) continue;
+        expandGap(model, fx, .{ .file = index, .hunk = row.hunk, .tail = row.tail, .from_top = true, .all = true });
+        return;
+    }
 }
 /// Reads a Git comparison again under new diff options, returning the
 /// reader to the file they were on. An imported patch is shown as written.
@@ -1320,6 +1904,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         },
         .palette_edit => |edit| {
             model.palette_query.apply(edit);
+            if (model.palette == .symbols) searchSymbol(model, fx);
             matchChoices(model);
         },
         .palette_move => |direction| {
@@ -1422,6 +2007,46 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             refold(model, fx, index);
         },
         .note_file => |index| beginNote(model, fx, index, .{}),
+        .reviewed_hunk => |at| if (at.file < model.files.len and at.hunk < model.files[at.file].hunks.len) {
+            setHunkReviewed(model, fx, at, !model.files[at.file].hunks[at.hunk].reviewed);
+        },
+        .collapse_hunk => |at| if (at.file < model.files.len and at.hunk < model.files[at.file].hunks.len) {
+            const hunk = &model.files[at.file].hunks[at.hunk];
+            hunk.collapsed = !hunk.collapsed;
+            relayout(model, fx);
+        },
+        .expand => |expansion| expandGap(model, fx, expansion),
+        .blame_line => |hit| blameRow(model, fx, hit.row, hit.old),
+        .find_symbol_at => |hit| openSymbols(model, fx, hit.row, hit.old),
+        .close_blame => model.blame = null,
+        .copy_text => |text| fx.writeClipboard(.{ .key = 3, .text = text, .on_result = Effects.clipboardMsg(.clipboard_result) }),
+        .close_reference => |index| if (index < model.files.len and model.files[index].reference) {
+            const job = session.document orelse return;
+            const files = job.arena.allocator().alloc(patch.File, model.files.len - 1) catch return;
+            @memcpy(files[0..index], model.files[0..index]);
+            @memcpy(files[index..], model.files[index + 1 ..]);
+            model.files = files;
+            job.files = files;
+            model.selected = @min(model.selected, files.len -| 1);
+            reindex(model);
+            layoutRows(model);
+            findMatches(model);
+            model.cursor = @min(model.cursor, model.display.len -| 1);
+        },
+        .lookup_tick => |timer| if (timer.outcome == .fired) finishLookup(model, fx),
+        .goto_move => |target| if (target.move > 0 and target.move <= model.moves.len) {
+            const move = model.moves[target.move - 1];
+            const index: usize = if (target.to) move.to_file else move.from_file;
+            if (index >= model.files.len) return;
+            if (model.files[index].collapsed) update(model, .{ .collapse_file = index }, fx);
+            jump(model, fx, index);
+            model.cursor_old = !target.to;
+            goLine(model, fx, if (target.to) move.to_line else move.from_line);
+        },
+        .sources_tick => |timer| if (timer.outcome == .fired) {
+            const job = session.document orelse return fx.cancelTimer(11);
+            if (job.sources_done.load(.acquire)) adoptSources(model, fx);
+        },
         .toggle_notes => {
             model.band_menu = false;
             defer movePanes(model, fx);
@@ -1819,11 +2444,24 @@ pub fn sourceRow(model: *const Model, index: usize) ?patch.Row {
     if (code >= rows.len or rows[code].meta) return null;
     return rows[code];
 }
+/// A folded hunk's header, where the cursor rests to reach the hunk.
+pub fn foldedHunk(model: *const Model, index: usize) ?HunkRef {
+    if (index >= model.display.len) return null;
+    const entry = model.display[index];
+    const code = entry.code orelse return null;
+    const file = model.files[entry.file];
+    if (file.showing_since) return null;
+    const rows = if (model.split) file.split else file.unified;
+    if (code >= rows.len) return null;
+    const row = rows[code];
+    if (!row.meta or row.tail or row.hunk >= file.hunks.len or !file.hunks[row.hunk].collapsed) return null;
+    return .{ .file = entry.file, .hunk = row.hunk };
+}
 fn seekCode(model: *const Model, start: usize, forward: bool) ?usize {
     if (model.display.len == 0) return null;
     var index = @min(start, model.display.len - 1);
     while (true) {
-        if (sourceRow(model, index) != null) return index;
+        if (sourceRow(model, index) != null or foldedHunk(model, index) != null) return index;
         if (forward) {
             if (index + 1 >= model.display.len) return null;
             index += 1;
@@ -1841,7 +2479,7 @@ pub fn onFoldedHeader(model: *const Model) bool {
 }
 fn ensureCursor(model: *Model) bool {
     if (model.display.len == 0) return false;
-    if (!model.cursor_active or (sourceRow(model, model.cursor) == null and !onFoldedHeader(model))) model.cursor = seekCode(model, model.starts[model.selected], true) orelse return false;
+    if (!model.cursor_active or (sourceRow(model, model.cursor) == null and !onFoldedHeader(model) and foldedHunk(model, model.cursor) == null)) model.cursor = seekCode(model, model.starts[model.selected], true) orelse return false;
     model.cursor_active = true;
     model.selected = model.display[model.cursor].file;
     return true;
@@ -1859,7 +2497,7 @@ fn reveal(model: *Model, fx: *Effects) void {
     if (position < model.scroll_offset + 24) requestScroll(model, fx, position - 24) else if (position + 48 > model.scroll_offset + model.viewport_height) requestScroll(model, fx, position + 48 - model.viewport_height);
 }
 fn moveTo(model: *Model, fx: *Effects, index: usize) void {
-    if (sourceRow(model, index) == null) return;
+    if (sourceRow(model, index) == null and foldedHunk(model, index) == null) return;
     model.cursor = index;
     model.cursor_active = true;
     model.selected = model.display[index].file;
@@ -1976,9 +2614,21 @@ fn setReviewed(model: *Model, index: usize, value: bool) void {
     model.history.append(gpa, .{ .file = index, .reviewed = model.files[index].reviewed }) catch {};
     record(model, index, value);
 }
+/// Marks a file's change reviewed (or not), and every hunk of it with it.
+fn record(model: *Model, index: usize, value: bool) void {
+    const job = session.document orelse return;
+    const alloc = job.arena.allocator();
+    const file = &model.files[index];
+    if (!file.showing_since) for (file.hunks) |*hunk| {
+        hunk.reviewed = value;
+        hunk.collapsed = value and model.collapse_reviewed;
+        if (value) review.markHunk(alloc, &model.hunk_records, file.path, hunk.*) catch {} else review.unmarkHunk(&model.hunk_records, file.path, hunk.*);
+    };
+    recordFile(model, index, value);
+}
 /// Marks a file's change reviewed (or not) in the records, which say so for
 /// any comparison that shows the same change, and in the commit's progress.
-fn record(model: *Model, index: usize, value: bool) void {
+fn recordFile(model: *Model, index: usize, value: bool) void {
     const job = session.document orelse return;
     const alloc = job.arena.allocator();
     const file = &model.files[index];
@@ -2040,6 +2690,14 @@ fn matchChoices(model: *Model) void {
     model.choice_count = 0;
     model.choice_selected = 0;
     model.palette_offset = 0;
+    if (model.palette == .symbols) {
+        for (model.symbol_hits, 0..) |_, index| {
+            if (index == model.choices.len) break;
+            model.choices[index] = .{ .index = index, .score = @intCast(index) };
+            model.choice_count = index + 1;
+        }
+        return;
+    }
     const query = std.mem.trim(u8, model.palette_query.text(), " :");
     const command_count = if (model.palette == .files) @as(usize, 0) else keyboard.commands.len;
     const length = command_count + (if (model.palette == .files or query.len > 0) model.files.len else 0);
@@ -2084,9 +2742,12 @@ fn acceptChoice(model: *Model, fx: *Effects) void {
     if (model.palette == .closed or model.choice_selected >= model.choice_count) return;
     const choice = model.choices[model.choice_selected];
     const index = choice.index;
+    const symbols = model.palette == .symbols;
     model.palette = .closed;
     focusReview(model);
-    if (choice.file) {
+    if (symbols) {
+        if (index < model.symbol_hits.len) openLocation(model, fx, model.symbol_hits[index].path, model.symbol_hits[index].line);
+    } else if (choice.file) {
         jump(model, fx, index);
         model.cursor_active = true;
     } else perform(model, fx, .{ .action = keyboard.commands[index].action });
@@ -2112,6 +2773,7 @@ fn perform(model: *Model, fx: *Effects, invocation: keyboard.Invocation) void {
         },
         .escape => {
             model.keys.reset();
+            model.blame = null;
             clearSelection(model);
             if (model.palette != .closed) model.palette = .closed else if (model.base_popover) {
                 model.base_popover = false;
@@ -2190,6 +2852,13 @@ fn perform(model: *Model, fx: *Effects, invocation: keyboard.Invocation) void {
         .undo => {
             for (0..count) |_| {
                 const change = model.history.pop() orelse break;
+                if (change.hunk) |hunk| {
+                    // Undoing is not itself undone.
+                    const kept = model.history.items.len;
+                    setHunkReviewed(model, fx, .{ .file = change.file, .hunk = hunk }, change.reviewed);
+                    model.history.shrinkRetainingCapacity(@min(kept, model.history.items.len));
+                    continue;
+                }
                 if (change.file < model.files.len) {
                     record(model, change.file, change.reviewed);
                     if (model.collapse_reviewed) model.files[change.file].collapsed = change.reviewed;
@@ -2205,7 +2874,7 @@ fn perform(model: *Model, fx: *Effects, invocation: keyboard.Invocation) void {
                 return;
             }
             if (!ensureCursor(model)) return;
-            const row = sourceRow(model, model.cursor).?;
+            const row = sourceRow(model, model.cursor) orelse return;
             const old = (model.cursor_old and row.old > 0) or row.new == 0;
             update(model, .{ .anchor = .{ .file = model.selected, .line = if (old) row.old else row.new, .old = old } }, fx);
         },
@@ -2234,6 +2903,30 @@ fn perform(model: *Model, fx: *Effects, invocation: keyboard.Invocation) void {
             update(model, .{ .select_commit = if (next == 0) null else next - 1 }, fx);
         },
         .all_changes => update(model, .{ .select_commit = null }, fx),
+        .expand_context => expandAround(model, fx),
+        .whole_file => if (model.selected < model.files.len) toggleWhole(model, fx, model.selected),
+        .hunk_reviewed, .hunk_review_next => {
+            if (!ensureCursor(model)) return;
+            const at = cursorHunk(model) orelse return notify(model, fx, "Move into a hunk to review it on its own");
+            const file = model.files[at.file];
+            if (invocation.action == .hunk_reviewed) setHunkReviewed(model, fx, at, !file.hunks[at.hunk].reviewed) else {
+                setHunkReviewed(model, fx, at, true);
+                nextUnreviewedHunk(model, fx, true);
+            }
+        },
+        .hunk_next, .hunk_previous => nextUnreviewedHunk(model, fx, invocation.action == .hunk_next),
+        .blame => {
+            if (!ensureCursor(model)) return;
+            blameRow(model, fx, model.cursor, model.cursor_old);
+        },
+        .find_symbol => {
+            if (model.palette == .symbols) {
+                model.palette = .closed;
+                focusReview(model);
+                return;
+            }
+            openSymbols(model, fx, if (ensureCursor(model)) model.cursor else null, model.cursor_old);
+        },
     }
 }
 
