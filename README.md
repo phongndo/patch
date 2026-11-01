@@ -33,10 +33,11 @@ function-header drivers to C, C++, Objective-C, Rust, Go, Python and other
 languages Git knows, plus its own for Zig, so a header names the function rather
 than a `goto` label, an access specifier, or the struct around a method; a
 repository's own `.gitattributes` and your global attributes still win. Code is
-highlighted for C-family languages (C, C++, CUDA, Objective-C, Java, Kotlin,
-Swift, C#, shaders, TableGen), Zig, Rust, Go, TypeScript and JavaScript, Python,
-shell, SQL, YAML, JSON, CSS, HTML and Markdown; a comment or string that spans
-lines keeps its color, including one a hunk opens inside. Scroll sideways
+highlighted with tree-sitter in 41 languages, each file parsed whole once its
+two sides are read, so a line is colored as its file reads (a comment or
+string a hunk opens inside included), and types take a color of their own.
+Until then, and for languages without a grammar, Patch's own lexers color the
+lines. Scroll sideways
 to pan every line of a long diff together; the status pill at the foot shows
 the column the visible code starts at. The file being read pins its header
 at the top as a matching pill, so a long file can be folded from anywhere in
@@ -188,6 +189,8 @@ to the current snapshot. Draft notes stay in memory until refresh or app exit.
 | `pnpm build`                | Compile to `zig-out/bin/patch`                              |
 | `pnpm package`              | Build an ad-hoc signed `zig-out/Patch.app`                  |
 | `pnpm test`                 | Keyboard/parser tests and native/Node Git integration tests |
+| `zig build test-highlight`  | Tree-sitter highlighting tests, one per language            |
+| `zig build bench-highlight` | Time highlighting of the files after `--` (`--dump` shows tokens) |
 | `pnpm test:ui`              | Native keyboard, mouse selection, and 50,000-line checks    |
 | `pnpm bench:native`         | Measure native startup and interaction latency              |
 | `pnpm check`                | tsrs, Oxlint, and Oxfmt                                     |
@@ -205,6 +208,8 @@ Xcode command-line tools. The web reviewer also runs on Linux.
 - `src/native/keyboard.zig`: Vim sequences, counts, commands, and allocation-free fuzzy matching.
 - `src/native/view.zig`: Native SDK canvas widgets and windowed file/diff lists.
 - `src/native/syntax.zig`: languages by extension and the lexer state each line starts in.
+- `src/native/highlight.zig`: tree-sitter highlighting of whole files, off the UI
+  thread, into per-line runs of a few colors; not yet drawn by the view.
 - `src/native/theme.zig`: the runtime palette, built-in schemes, and the Rex-style theme derivation.
 - `src/native/glass.m`: macOS window glass, tint and appearance, traffic lights, Display P3.
 - `src/native/motion.zig`: the pane easing curve.
@@ -236,3 +241,23 @@ The SDK's Zig source is pinned to the same revision as `@native-sdk/cli` 0.11.0
 because that npm release omits a file referenced by its Zig build. `build.zig.zon`
 fetches the complete, hash-verified source. TypeScript dependencies remain pinned
 in `pnpm-lock.yaml`, including Pierre Diffs, Trees, Highlights, and Icons.
+
+### Syntax highlighting
+
+`src/native/highlight.zig` highlights with [tree-sitter](https://tree-sitter.github.io)
+0.27 and 41 grammars compiled into the binary, each pinned by URL and hash in
+`build.zig.zon`: C, C++, Objective-C, Rust, Go, Python, JavaScript (with JSX),
+TypeScript, TSX, Zig, Java, Kotlin, Swift, C#, Ruby, PHP, Lua, Bash, Nix, JSON,
+YAML, TOML, CSS, SCSS, HTML, Markdown, SQL, Make, Dockerfile, CMake, Haskell,
+OCaml, Elixir, Scala, Dart, Protobuf, GraphQL, HCL/Terraform, Vue and Svelte.
+Each uses the highlight query its own repository ships, at the same revision.
+Markdown's inline text and fenced code, HTML's scripts and styles, Vue and
+Svelte blocks, and PHP's HTML are highlighted in their own languages.
+`src/native/queries/` holds a few local fixes, appended to those queries, and
+HCL's query, which its grammar does not ship: that one comes from
+[Helix](https://github.com/helix-editor/helix) under the Mozilla Public License
+2.0, noted at its top. The runtime and grammars are MIT-licensed, except
+Elixir's and HCL's grammars, which are Apache-2.0. The parsers build optimized
+in every mode. Their tables add about 53 MB to the binary once the module is
+used; `-Dhighlight-languages=NAME` (repeatable) keeps only the named grammars,
+and files in the others stay plain.

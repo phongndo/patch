@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "zig build run -Dautomation=true --",
     "review": "zig build run --",
-    "test": "zig build test-native-host && zig test src/native/selection.zig && zig test src/native/keyboard.zig && zig test src/native/patch.zig && zig test src/native/git.zig && zig test src/native/review.zig && zig test src/native/motion.zig && zig test src/native/lookup.zig && zig test src/native/words.zig && pnpm test:native && pnpm test:web",
+    "test": "zig build test-native-host && zig build test-highlight && zig test src/native/selection.zig && zig test src/native/keyboard.zig && zig test src/native/patch.zig && zig test src/native/git.zig && zig test src/native/review.zig && zig test src/native/motion.zig && zig test src/native/lookup.zig && zig test src/native/words.zig && pnpm test:native && pnpm test:web",
     "build": "zig build",
     "preview": "zig-out/bin/patch",
     "routes:generate": "tsr generate",
