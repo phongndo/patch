@@ -66,7 +66,41 @@ Rosé Pine and Dawn, Solarized Dark and Light, Dracula, Paper), solid or glass
 panes, and your own Background, Text, Accent, Added and Removed colors over any
 theme. The theme palettes come from those open-source projects (MIT).
 
+## Reading around a change
+
+Each hunk's header says how many lines the diff left out above it. The
+buttons in its gutter show them twenty at a time, from either end of the gap,
+or all at once when there are few; a header after the last hunk stands for
+the rest of the file. **e** shows more around the hunk you are in, and **E**
+shows the whole file with its changes in place (or takes it back to its
+hunks).
+
+A block of lines removed in one place and added in another, within a file or
+between files, is a move rather than a change: it keeps a cool wash instead of
+red and green, and its first line links to the other end. A replacement in
+place stays an edit, and indentation alone does not stop a block counting as
+moved.
+
+**gb** blames the line you are on: who last changed it, when, and the commit's
+subject, in a card under the line (the old side is blamed at the base, the new
+side at the head or in the working tree). **gd** finds where the name on the
+line (or the text you selected) is defined and used across the repository,
+definitions first. Choosing a result in a changed file goes there, showing
+the lines around it if the diff left them out; a file outside the change opens
+at the foot of the review for reference, read-only, and closes from its
+header. Both are in each line's context menu too.
+
+Image files show their two versions side by side, each with its size in
+pixels and bytes; other binary files say how their size changed.
+
 ## Reviewing again
+
+Large files can be reviewed a hunk at a time: each hunk's header has its own
+check (**v**, or **V** to mark it and go to the next), and **]h** / **[h** step
+between hunks not yet reviewed. A reviewed hunk folds to its header; when
+every hunk of a file is reviewed, so is the file. Hunks are remembered by
+their content too, so after an agent edits a file you reviewed hunk by hunk,
+only the hunks it changed open again.
 
 Patch remembers what you reviewed by content: a file's change, its blobs on
 both sides and the change itself (its removed and added lines, whitespace
@@ -116,6 +150,11 @@ you navigate. The × button explicitly discards a draft.
 | `]C` / `[C`            | Next / previous commit of a branch                  |
 | `r`                    | Toggle reviewed                                     |
 | `R`                    | Mark reviewed and move to the next unreviewed file  |
+| `v` / `V`              | Toggle hunk reviewed / mark it and go to the next   |
+| `]h` / `[h`            | Next / previous unreviewed hunk                     |
+| `e` / `E`              | More context around the hunk / whole file           |
+| `gb`                   | Blame the current line                              |
+| `gd`                   | Find where the line's name is defined and used      |
 | `u`                    | Undo reviewed state                                 |
 | `c` / `i`, `C`         | Comment on the current line / file                  |
 | `/`, `⌘F`              | Find in diff                                        |

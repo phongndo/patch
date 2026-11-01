@@ -83,6 +83,16 @@ the column the visible code starts at. The pill carries the cursor's line, the
 find field and its matches, a pending key, or a pan; with nothing to say it
 shows only while a pane runs past the foot, to close it.
 
+Hunk headers carry the diff's gaps quietly: the hidden count in the line
+numbers' ink at the right, and in the gutter where the numbers stand, small
+up and down arrows that open the gap from either end. A hunk's own check sits
+where the file's does, one level down. Moved lines take the scheme's blue
+mixed into the ground, a wash as quiet as the red and green, so a move reads
+as neither a removal nor an addition; its link is the only text in that ink.
+Pictures sit centered in their half of the pane on a card a step from it,
+captioned with a dot in the side's color, so an image change reads like a
+split diff.
+
 ## Notes
 
 The notes pane lists every note in the review, grouped by file in review order;

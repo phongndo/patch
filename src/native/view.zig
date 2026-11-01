@@ -99,6 +99,12 @@ fn bandIcons(ui: *AppUi, model: *const Model) AppUi.Node {
     }
     return ui.row(.{ .height = 28, .padding = 0, .gap = 2, .cross = .center }, ui.arena.dupe(AppUi.Node, nodes[0..count]) catch &.{});
 }
+/// Files the change touches, leaving out those opened for reference.
+fn changedFiles(model: *const Model) usize {
+    var count: usize = 0;
+    for (model.files) |file| count += @intFromBool(!file.reference);
+    return count;
+}
 fn band(ui: *AppUi) AppUi.Node {
     return ui.row(.{ .height = theme.band_height, .padding = 0, .gap = 0, .window_drag = true }, .{});
 }
@@ -135,7 +141,7 @@ fn headerLayer(ui: *AppUi, model: *const Model) AppUi.Node {
                 space(ui, 8, 0),
                 ui.text(.{ .style = .{ .foreground = if (model.active) theme.ink else theme.inactive_ink } }, reviewTitle(ui, model)),
                 space(ui, 8, 0),
-                ui.text(.{ .style = .{ .foreground = theme.tertiary } }, if (model.files.len == 1) "1 file" else ui.fmt("{d} files", .{model.files.len})),
+                ui.text(.{ .style = .{ .foreground = theme.tertiary } }, if (changedFiles(model) == 1) "1 file" else ui.fmt("{d} files", .{changedFiles(model)})),
                 space(ui, 10, 0),
                 if (model.files.len > 0) smallText(ui, ui.fmt("+{d}", .{totals.additions}), theme.green) else ui.spacer(0),
                 space(ui, 4, 0),
@@ -389,7 +395,7 @@ fn fileRail(ui: *AppUi, model: *const Model) AppUi.Node {
             const active = index == model.selected;
             // Reviewed files are checked; those reviewed in another version are marked changed.
             const changed = !file.reviewed and (file.prior == .changed or file.prior == .base);
-            const icon = if (file.reviewed) "check" else if (changed) "modified" else if (file.message) "note" else "document";
+            const icon = if (file.reviewed) "check" else if (changed) "modified" else if (file.message) "note" else if (file.reference) "symbol" else if (file.binary and app.isImage(file.path)) "image" else "document";
             const tint = if (file.reviewed) theme.green else if (changed) theme.note else theme.sidebar_ink;
             // Rex's selection: a quiet capsule with a hairline edge, inset from the sidebar.
             const item = ui.row(.{ .key = .{ .str = "file" }, .grow = 1, .height = theme.row_height, .padding = 0, .gap = 0, .cross = .center, .on_press = .{ .select = index }, .semantics = .{ .label = file.path, .role = .listitem }, .style = .{ .background = if (active) theme.selected else theme.clear, .border = if (active) theme.selected_edge else theme.clear, .stroke_width = 0.5, .radius = theme.row_height / 2, .quiet_hover = active } }, .{
@@ -743,6 +749,80 @@ fn hunkHeader(ui: *AppUi, model: *const Model, file_index: usize, rows: []const 
     top.widget.layout.clip_content = true;
     return top;
 }
+/// Bytes as a person reads them: "812 B", "14.2 KB", "3.1 MB".
+fn byteSize(ui: *AppUi, bytes: usize) []const u8 {
+    const value: f64 = @floatFromInt(bytes);
+    if (bytes < 1024) return ui.fmt("{d} B", .{bytes});
+    if (bytes < 1024 * 1024) return ui.fmt("{d:.1} KB", .{value / 1024});
+    return ui.fmt("{d:.1} MB", .{value / (1024 * 1024)});
+}
+/// One side of an image change: a caption (which side, its size in pixels
+/// and bytes) over the picture on a quiet card, centered in its column.
+fn pictureSide(ui: *AppUi, picture: ?app.Picture, bytes: usize, label: []const u8, ink: canvas.Color) AppUi.Node {
+    const shown = picture orelse return ui.column(.{ .grow = 1, .padding = 0, .gap = 0, .cross = .center }, .{
+        space(ui, 0, 14),
+        smallText(ui, ui.fmt("{s} · could not be drawn", .{label}), theme.secondary),
+    });
+    const size = app.fitted(shown);
+    return ui.column(.{ .grow = 1, .padding = 0, .gap = 0, .cross = .center }, .{
+        space(ui, 0, 14),
+        ui.row(.{ .height = 18, .padding = 0, .gap = 0, .cross = .center }, .{
+            ui.row(.{ .width = 6, .height = 6, .padding = 0, .style = .{ .background = ink, .radius = 3 } }, .{}),
+            space(ui, 7, 0),
+            smallText(ui, label, theme.ink),
+            space(ui, 8, 0),
+            smallText(ui, ui.fmt("{d} × {d} · {s}", .{ shown.width, shown.height, byteSize(ui, bytes) }), theme.secondary),
+        }),
+        space(ui, 0, 8),
+        ui.column(.{ .width = size.width + 16, .height = size.height + 16, .padding = 8, .gap = 0, .style = .{ .background = theme.hunk, .border = theme.hairline, .stroke_width = 1, .radius = 8 } }, .{
+            ui.image(.{ .width = size.width, .height = size.height, .image = shown.id }),
+        }),
+    });
+}
+/// What a binary file's pane shows: the picture before and after, side by
+/// side (one side for an image added or deleted), or, for other binary
+/// files, a line saying how their size changed.
+fn mediaBlock(ui: *AppUi, model: *const Model, index: usize, height: f32) AppUi.Node {
+    const file = model.files[index];
+    const sides: patch.Sides = if (index < model.sources.len) model.sources[index] else .{};
+    const old_bytes = if (sides.old) |text| text.bytes.len else 0;
+    const new_bytes = if (sides.new) |text| text.bytes.len else 0;
+    const images: app.ImageView = if (index < model.images.len) model.images[index] else .{};
+    if (images.old == null and images.new == null) {
+        const text = if (model.sources.len == 0) "Binary file" else switch (file.status) {
+            .added => ui.fmt("Binary file added · {s}", .{byteSize(ui, new_bytes)}),
+            .deleted => ui.fmt("Binary file deleted · {s}", .{byteSize(ui, old_bytes)}),
+            else => if (sides.old != null and sides.new != null) ui.fmt("Binary file changed · {s} → {s}", .{ byteSize(ui, old_bytes), byteSize(ui, new_bytes) }) else "Binary file changed",
+        };
+        return ui.row(.{ .height = height, .padding = 0, .gap = 0, .cross = .center, .style = .{ .background = theme.pane } }, .{
+            ui.row(.{ .width = 48, .height = 24, .padding = 0, .main = .center, .cross = .center }, .{ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.line_number } }, if (app.isImage(file.path)) "image" else "document")}),
+            smallText(ui, text, theme.secondary),
+        });
+    }
+    const before = file.status != .added and (images.old != null or sides.old != null);
+    const after = file.status != .deleted and (images.new != null or sides.new != null);
+    return ui.row(.{ .height = height, .padding = 0, .gap = 16, .style = .{ .background = theme.pane } }, .{
+        space(ui, 0, 0),
+        if (before) pictureSide(ui, images.old, old_bytes, "Before", theme.red) else ui.spacer(0),
+        if (before and after) ui.row(.{ .width = 1, .height = height - 24, .padding = 0, .style = .{ .background = theme.split_rule } }, .{}) else ui.spacer(0),
+        if (after) pictureSide(ui, images.new, new_bytes, if (before) "After" else "Added", theme.green) else ui.spacer(0),
+        space(ui, 0, 0),
+    });
+}
+/// One 24-point slice of a binary file's block: the whole block, shifted up
+/// by the slices above it and clipped, so a tall picture scrolls a row at a
+/// time like code does.
+fn mediaSlice(ui: *AppUi, model: *const Model, index: usize, slice: u16) AppUi.Node {
+    const rows = app.mediaRows(model, index);
+    const height = @as(f32, @floatFromInt(rows)) * 24;
+    var block = mediaBlock(ui, model, index, height);
+    block.widget.layout.grow = 0;
+    block.key = .{ .str = ui.fmt("media-{d}-{d}", .{ index, slice }) };
+    block.widget.transform = canvas.Affine.translate(0, -@as(f32, @floatFromInt(slice)) * 24);
+    var clip = ui.column(.{ .height = 24, .padding = 0, .gap = 0 }, .{block});
+    clip.widget.layout.clip_content = true;
+    return clip;
+}
 /// A rounded end of a file pane, `height` points of pane color. The review
 /// is built from 24-point rows, so a pane is assembled from row slices: its
 /// header's top, the code rows, and its closing row's bottom. A one-sided end
@@ -813,7 +893,7 @@ fn review(ui: *AppUi, model: *const Model) AppUi.Node {
         const rows = if (model.split) file.split else file.unified;
         // A file's closing row ends its pane: the rounded bottom, then 3
         // points of ground before the next file's header.
-        nodes[count] = if (entry.spacer) ui.column(.{ .height = 24, .padding = 0, .gap = 0 }, .{ paneEdge(ui, 21, false, true), space(ui, 0, 3) }) else if (entry.code) |code| blk: {
+        nodes[count] = if (entry.media > 0) mediaSlice(ui, model, entry.file, entry.media - 1) else if (entry.spacer) ui.column(.{ .height = 24, .padding = 0, .gap = 0 }, .{ paneEdge(ui, 21, false, true), space(ui, 0, 3) }) else if (entry.code) |code| blk: {
             const row = rows[code];
             // Hunks share their file's pane, parted by their headers, in the
             // code's own face: a quiet ellipsis in the gutter and the
@@ -1027,8 +1107,10 @@ fn reviewTitle(ui: *AppUi, model: *const Model) []const u8 {
 }
 /// The pane is titled by the comparison under review, with its totals and progress.
 fn paneHeader(ui: *AppUi, model: *const Model) AppUi.Node {
-    var totals: struct { reviewed: usize = 0, additions: u32 = 0, deletions: u32 = 0 } = .{};
+    var totals: struct { reviewed: usize = 0, additions: u32 = 0, deletions: u32 = 0, files: usize = 0 } = .{};
     for (model.files) |file| {
+        if (file.reference) continue;
+        totals.files += 1;
         totals.reviewed += @intFromBool(file.reviewed);
         totals.additions += file.additions;
         totals.deletions += file.deletions;
@@ -1042,8 +1124,8 @@ fn paneHeader(ui: *AppUi, model: *const Model) AppUi.Node {
         space(ui, 12, 0),
         // Review progress: the check brightens once every file is done.
         if (model.files.len > 0) ui.row(.{ .padding = 0, .gap = 5, .cross = .center, .semantics = .{ .label = "Review progress" } }, .{
-            ui.appIcon(.{ .width = 13, .height = 13, .style = .{ .foreground = if (totals.reviewed == model.files.len) theme.green else theme.tertiary } }, "check"),
-            smallText(ui, ui.fmt("{d}/{d}", .{ totals.reviewed, model.files.len }), theme.secondary),
+            ui.appIcon(.{ .width = 13, .height = 13, .style = .{ .foreground = if (totals.reviewed == totals.files) theme.green else theme.tertiary } }, "check"),
+            smallText(ui, ui.fmt("{d}/{d}", .{ totals.reviewed, totals.files }), theme.secondary),
         }) else ui.spacer(0),
         space(ui, 14, 0),
     });

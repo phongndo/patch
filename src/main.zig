@@ -21,7 +21,40 @@ pub const Note = review.Note;
 /// Progress as Patch saved it before the review store: one file per snapshot.
 const Legacy = struct { reviewed: []const []const u8 = &.{}, notes: []const Note = &.{} };
 const Anchor = struct { line: u32 = 0, line_end: u32 = 0, old: bool = false, file: ?usize = null };
-pub const DisplayRow = struct { file: usize, code: ?usize = null, spacer: bool = false };
+/// A row of the review: a file's header (no code), one of its rows, its
+/// closing spacer, or a slice (from 1) of a picture block a binary file shows.
+pub const DisplayRow = struct { file: usize, code: ?usize = null, spacer: bool = false, media: u16 = 0 };
+/// An image Patch registered for drawing, with its size in pixels.
+pub const Picture = struct { id: canvas.ImageId, width: usize, height: usize };
+/// The two sides of an image file, once decoded.
+pub const ImageView = struct { old: ?Picture = null, new: ?Picture = null, failed: bool = false };
+const image_base: canvas.ImageId = 0x1a6e0000;
+const image_extensions = [_][]const u8{ ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".ico", ".heic", ".avif", ".icns" };
+pub fn isImage(path: []const u8) bool {
+    const ext = std.fs.path.extension(path);
+    for (image_extensions) |known| if (std.ascii.eqlIgnoreCase(ext, known)) return true;
+    return false;
+}
+/// The box a picture is drawn in: its pixels as points, scaled down to fit
+/// a 420-point column and 360 points of height.
+pub fn fitted(picture: Picture) struct { width: f32, height: f32 } {
+    const w: f32 = @floatFromInt(@max(1, picture.width));
+    const h: f32 = @floatFromInt(@max(1, picture.height));
+    const scale = @min(1, @min(420 / w, 360 / h));
+    return .{ .width = @max(1, w * scale), .height = @max(1, h * scale) };
+}
+/// A binary file's block: its pictures' tallest box with a caption above,
+/// or one row saying what changed.
+pub fn mediaRows(model: *const Model, index: usize) u16 {
+    if (index >= model.images.len) return 1;
+    const view_of = model.images[index];
+    var tallest: f32 = 0;
+    for ([_]?Picture{ view_of.old, view_of.new }) |side| if (side) |picture| {
+        tallest = @max(tallest, fitted(picture).height);
+    };
+    if (tallest == 0) return 1;
+    return @intFromFloat(@ceil((14 + 18 + 8 + 16 + tallest + 16 + 14) / 24));
+}
 pub const RailRow = struct { file: ?usize = null, directory: []const u8 = "" };
 pub const Focus = enum { review, note, file_filter, search, palette };
 pub const Palette = enum { closed, commands, files, symbols };
@@ -80,6 +113,8 @@ pub const Model = struct {
     carries: []const syntax.State = &.{},
     /// Both sides of each file, read whole once the review is up; empty until then.
     sources: []const patch.Sides = &.{},
+    /// Each file's decoded images, when it is an image file.
+    images: []const ImageView = &.{},
     /// Blame for the line it was asked of, while its card is open.
     blame: ?BlameView = null,
     /// Where the name in the symbol palette is defined and used, and whether
@@ -706,6 +741,8 @@ const Session = struct {
     /// the symbol search must run again for a query typed meanwhile.
     lookup: ?*Lookup = null,
     lookup_again: bool = false,
+    /// Images registered for the review shown, to let go of on the next.
+    registered: std.ArrayList(canvas.ImageId) = .empty,
     /// The output the shown blame and symbol hits point into, owned by `gpa`.
     blame_output: []u8 = &.{},
     symbol_output: []u8 = &.{},
@@ -859,6 +896,11 @@ fn layoutRows(model: *Model) void {
         starts.append(alloc, rows.items.len) catch return;
         rows.append(alloc, .{ .file = index }) catch return;
         if (file.collapsed) continue;
+        if (file.binary) {
+            for (0..mediaRows(model, index)) |slice| rows.append(alloc, .{ .file = index, .media = @intCast(slice + 1) }) catch return;
+            rows.append(alloc, .{ .file = index, .spacer = true }) catch return;
+            continue;
+        }
         const source = if (model.split) file.split else file.unified;
         var in_change = false;
         // Hunks folded away show only their headers (not while the rows are
@@ -1100,6 +1142,9 @@ fn poll(model: *Model, fx: *Effects) void {
     model.records = job.records;
     model.hunk_records = job.hunk_records;
     model.sources = &.{};
+    if (model.images.len > 0) gpa.free(model.images);
+    model.images = &.{};
+    model.blame = null;
     model.commits = job.result.?.commits;
     model.commit_states = job.commit_states;
     model.commit = null;
@@ -1221,7 +1266,7 @@ fn adoptSources(model: *Model, fx: *Effects) void {
     if (job.sources.len != model.files.len) return;
     model.sources = job.sources;
     const alloc = job.arena.allocator();
-    var changed = false;
+    var changed = registerImages(model, fx);
     for (model.files, 0..) |*file, index| {
         const text = model.sources[index].new orelse continue;
         if (file.message or file.binary or model.sources[index].new_binary or file.status == .added or file.status == .deleted) continue;
@@ -1233,6 +1278,35 @@ fn adoptSources(model: *Model, fx: *Effects) void {
         changed = true;
     }
     if (changed) relayout(model, fx);
+}
+/// Decodes the image files' sides for drawing, letting go of the last
+/// review's. Returns whether any file now has pictures.
+fn registerImages(model: *Model, fx: *Effects) bool {
+    for (session.registered.items) |id| _ = fx.unregisterImage(id);
+    session.registered.clearRetainingCapacity();
+    if (model.images.len > 0) gpa.free(model.images);
+    model.images = &.{};
+    const views = gpa.alloc(ImageView, model.files.len) catch return false;
+    @memset(views, .{});
+    var any = false;
+    for (model.files, 0..) |file, index| {
+        if (!file.binary or !isImage(file.path) or index >= model.sources.len) continue;
+        const sides = model.sources[index];
+        for ([_]bool{ true, false }) |old| {
+            const text = sides.side(old) orelse continue;
+            const id = image_base + index * 2 + @intFromBool(!old);
+            const registered = fx.registerImageBytes(id, text.bytes) catch {
+                views[index].failed = true;
+                continue;
+            };
+            session.registered.append(gpa, id) catch {};
+            const picture = Picture{ .id = id, .width = registered.width, .height = registered.height };
+            if (old) views[index].old = picture else views[index].new = picture;
+            any = true;
+        }
+    }
+    model.images = views;
+    return any;
 }
 /// Shows lines the diff left out of a file: a step of them, or all.
 fn expandGap(model: *Model, fx: *Effects, expansion: Expansion) void {
@@ -1632,6 +1706,7 @@ fn exportMarkdown(alloc: std.mem.Allocator, model: *const Model) ![]const u8 {
     if (model.commit != null) try writer.print("\nCommit {s}\n", .{commitTitle(model, currentCommit(model), &title)});
     try writer.writeAll("\n");
     for (model.files) |file| {
+        if (file.reference) continue;
         const state = if (!file.reviewed and (file.prior == .changed or file.prior == .base)) " · changed since review" else "";
         try writer.print("- [{s}] `{s}` (+{d} −{d}){s}\n", .{ if (file.reviewed) "x" else " ", file.path, file.additions, file.deletions, state });
     }
@@ -2610,7 +2685,7 @@ fn refold(model: *Model, fx: *Effects, index: usize) void {
     requestScroll(model, fx, @as(f32, @floatFromInt(model.starts[file])) * 24 - screen);
 }
 fn setReviewed(model: *Model, index: usize, value: bool) void {
-    if (index >= model.files.len or model.files[index].reviewed == value) return;
+    if (index >= model.files.len or model.files[index].reviewed == value or model.files[index].reference) return;
     model.history.append(gpa, .{ .file = index, .reviewed = model.files[index].reviewed }) catch {};
     record(model, index, value);
 }
@@ -2672,7 +2747,7 @@ fn nextUnreviewed(model: *Model, fx: *Effects, forward: bool, count: usize) void
         var found = false;
         for (1..model.files.len + 1) |offset| {
             const index = if (forward) (target + offset) % model.files.len else (target + model.files.len - offset) % model.files.len;
-            if (!model.files[index].reviewed) {
+            if (!model.files[index].reviewed and !model.files[index].reference) {
                 target = index;
                 found = true;
                 moved = true;
