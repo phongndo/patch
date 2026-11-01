@@ -72,7 +72,7 @@ async function drag(label, x1, x2, y1, y2) {
   );
 }
 // Read the system clipboard the app wrote to: pbpaste on macOS, and the X11
-// or Wayland clipboard elsewhere (the Linux dev shell provides xclip).
+// or Wayland clipboard elsewhere (the Linux dev shell provides both tools).
 const paste =
   process.platform === "darwin"
     ? ["/usr/bin/pbpaste", []]

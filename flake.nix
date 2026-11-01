@@ -40,8 +40,9 @@
               pkgs.xvfb-run
               pkgs.xorg-server
               pkgs.xdpyinfo
-              # Reads the clipboard in scripts/mouse-smoke.mjs.
+              # Read the clipboard in scripts/mouse-smoke.mjs (X11, Wayland).
               pkgs.xclip
+              pkgs.wl-clipboard
             ];
 
             buildInputs = lib.optionals isLinux gtk;
