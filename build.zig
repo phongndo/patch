@@ -65,6 +65,8 @@ fn patchMacHost(b: *std.Build, dependency: *std.Build.Dependency, module: *std.B
     var patched: []const u8 = source;
     if (canonical) patched = replaceOnce(b, patched, "        command[@\"transform\"] = transform;", replacement);
     if (opaque_blur) patched = replaceOnce(b, patched, "    for (NSUInteger y = minY; y < maxY; y++) {", opaque_blur_copy ++ "\n    for (NSUInteger y = minY; y < maxY; y++) {");
+    // Float noise that vanishes in decoding would otherwise rebuild hundreds
+    // of unchanged text rasters; every field takes part in the comparison.
     if (retain_identical) patched = replaceOnce(b, patched, "            self.canvasRetainedCommands[key] = command;", "            if ([self.canvasRetainedCommands[key] isEqualToDictionary:command]) continue;\n            self.canvasRetainedCommands[key] = command;");
     patched = b.fmt("#include \"packet_transform.h\"\n{s}", .{patched});
     if (coretext) {
@@ -128,7 +130,11 @@ const blur_damage_anchor =
 // Inside the widened scissor the list replays in draw order onto cleared
 // pixels, so each blur samples the backdrop a full repaint would give it, and
 // nothing outside the scissor changed. Past half the surface a scissored
-// replay saves little, so that case keeps the full repaint.
+// replay saves little, so that case keeps the full repaint. The limit also
+// avoids a known mismatch: an oversized fill drawn directly under the scissor
+// (not blitted from the raster cache) differs from a full redraw by one alpha
+// level where a scissor edge crosses a rounded corner. The same risk applies
+// to the SDK's own incremental updates.
 const blur_damage_replacement =
     \\                // footprint; damage elsewhere remains incremental.
     \\                const patch_widened: ?geometry.RectF = widen: {

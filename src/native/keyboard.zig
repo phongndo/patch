@@ -1,3 +1,6 @@
+//! Keyboard review: Vim key sequences and counts, the commands they run,
+//! and allocation-free fuzzy matching for the pickers.
+
 const std = @import("std");
 
 pub const Action = enum {

@@ -1,3 +1,5 @@
+//! Line-range selection in the gutter and copying what is selected.
+
 const std = @import("std");
 const patch = @import("patch.zig");
 

@@ -1,3 +1,5 @@
+//! The easing curve panes open and close with.
+
 const std = @import("std");
 
 /// Core Animation's default timing, cubic-bezier(0.25, 0.1, 0.25, 1): the

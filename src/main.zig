@@ -1,3 +1,6 @@
+//! The application: its state, loading Git off the UI thread, notes, and
+//! saving progress. Views are in native/view.zig.
+
 const std = @import("std");
 const sdk = @import("native_sdk");
 const runner = @import("runner");

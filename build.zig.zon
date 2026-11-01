@@ -4,6 +4,8 @@
     .version = "0.1.0",
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
+        // The same revision as @native-sdk/cli 0.11.0, whose npm release omits
+        // a file its Zig build needs.
         .native_sdk = .{
             .url = "https://github.com/vercel-labs/native/archive/16f29572307c2cc133907537c4dfd98046d4e0f4.tar.gz",
             .hash = "native_sdk-0.1.0-hzDzQtsrRQOMvQE7lICRQ4Fe7VUxGuW2F9qteYlssJic",

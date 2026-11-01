@@ -1,3 +1,7 @@
+//! Read-only Git subprocesses: diffs and their options, attributes and
+//! `linguist-generated`, commits and `range-diff`, and Patch's own object
+//! store for versions the repository may never have committed.
+
 const std = @import("std");
 
 pub const max_patch_bytes = 64 * 1024 * 1024;

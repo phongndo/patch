@@ -1,3 +1,6 @@
+//! Unified patch parsing: files, hunks, aligned split rows, blob ids, change
+//! hashes, and mapping lines across a diff.
+
 const std = @import("std");
 
 pub const Row = struct {

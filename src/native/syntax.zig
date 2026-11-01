@@ -1,3 +1,7 @@
+//! The SDK's line lexers: which suits a file, and the state each row starts
+//! in. They color lines until tree-sitter (highlight.zig) has read the file,
+//! and for languages it has no grammar for.
+
 const std = @import("std");
 const canvas = @import("native_sdk").canvas;
 const patch = @import("patch.zig");

@@ -1,3 +1,6 @@
+// macOS window chrome: the glass material and tint, appearance, traffic
+// lights, and tagging the canvas Display P3.
+
 #import <AppKit/AppKit.h>
 #import <objc/runtime.h>
 #import <QuartzCore/CAMetalLayer.h>

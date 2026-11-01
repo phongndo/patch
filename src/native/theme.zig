@@ -1,3 +1,6 @@
+//! The runtime palette: the built-in themes, and deriving every surface and
+//! text tier from a theme's few colors.
+
 const std = @import("std");
 const canvas = @import("native_sdk").canvas;
 pub const body_size: f32 = 13;

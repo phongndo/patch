@@ -1,3 +1,6 @@
+//! Every surface drawn with Native SDK canvas widgets, including the
+//! windowed file and diff lists that build only what is visible.
+
 const std = @import("std");
 const canvas = @import("native_sdk").canvas;
 const app = @import("../main.zig");
