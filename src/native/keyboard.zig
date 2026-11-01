@@ -51,6 +51,7 @@ pub const Action = enum {
     working,
     staged,
     branch,
+    all_files,
     settings,
     whitespace,
     since_review,
@@ -295,6 +296,7 @@ pub const commands = [_]Command{
     .{ .action = .working, .id = "patch.working", .title = "Review working changes", .icon = "branch", .document = false },
     .{ .action = .staged, .id = "patch.staged", .title = "Review staged changes", .icon = "branch", .document = false },
     .{ .action = .branch, .id = "patch.branch", .title = "Compare branch", .icon = "branch", .document = false },
+    .{ .action = .all_files, .id = "patch.all-files", .title = "Browse all files", .icon = "folder", .document = false },
 };
 pub fn byId(name: []const u8) ?Action {
     if (std.mem.eql(u8, name, "patch.commands") or std.mem.eql(u8, name, "patch.help")) return .commands;
