@@ -169,6 +169,12 @@ pub const Model = struct {
     band_menu: bool = false,
     /// The narrow rail's scope menu (Working, Staged, the branch) is open.
     scope_menu: bool = false,
+    /// The comparison control's highlight slides between its segments: from
+    /// a position (a segment's index, or between two mid-slide) toward the
+    /// segment shown, `scope_slide` of the way there, eased.
+    scope_from: f32 = 0,
+    scope_slide: f32 = 1,
+    scope_slide_start: u64 = 0,
     /// Rex steps its content back while the app is in the background.
     active: bool = false,
     /// A closed pane keeps its content only while it eases shut, then leaves the
@@ -330,6 +336,7 @@ pub const Msg = union(enum) {
     clear_notice: sdk.EffectTimer,
     pane_tick: sdk.EffectTimer,
     palette_tick: sdk.EffectTimer,
+    scope_tick: sdk.EffectTimer,
     clipboard_result: sdk.EffectClipboardResult,
 };
 pub const AppUi = canvas.Ui(Msg);
@@ -971,6 +978,20 @@ fn reindex(model: *Model) void {
         previous_dir = directory;
     }
     model.rail_rows = rail_rows.toOwnedSlice(gpa) catch &.{};
+}
+/// The comparison control's segment a mode lights: Files, Changes (all of
+/// them or the staged ones), or the branch.
+pub fn scopeSlot(mode: git.Mode) f32 {
+    return switch (mode) {
+        .files => 0,
+        .working, .staged => 1,
+        .branch => 2,
+    };
+}
+/// Where the control's highlight is: a segment's index, or between two
+/// while it slides.
+pub fn scopePosition(model: *const Model) f32 {
+    return std.math.lerp(model.scope_from, scopeSlot(model.mode), model.scope_slide);
 }
 /// Reads the listed files that have opened since the rows were last laid
 /// out, from the working tree, and starts highlighting them.
@@ -2027,7 +2048,7 @@ fn handle(model: *Model, msg: Msg, fx: *Effects) void {
                 }
             };
         },
-        .open_base => {
+        .open_base => if (!model.busy) {
             model.scope_menu = false;
             openBranchPicker(model, .base);
         },
@@ -2261,13 +2282,24 @@ fn handle(model: *Model, msg: Msg, fx: *Effects) void {
         .refresh => load(model, fx),
         .mode => |mode| if (!model.busy) {
             model.scope_menu = false;
+            model.base_popover = false;
+            // The highlight slides over from wherever it is now.
+            if (scopeSlot(mode) != scopeSlot(model.mode)) {
+                model.scope_from = scopePosition(model);
+                model.scope_slide = 0;
+                model.scope_slide_start = sdk.monotonicMs();
+                fx.startTimer(.{ .key = 14, .interval_ms = 8, .mode = .repeating, .on_fire = Effects.timerMsg(.scope_tick) });
+            }
             model.mode = mode;
             model.commit = null;
-            if (mode == .branch) openBranchPicker(model, .base) else {
-                model.base_popover = false;
-            }
             session.imported = null;
             load(model, fx);
+        },
+        .scope_tick => |timer| if (timer.outcome == .fired) {
+            const elapsed: f32 = @floatFromInt(sdk.monotonicMs() -| model.scope_slide_start);
+            const t = std.math.clamp(elapsed / @as(f32, @floatFromInt(theme.motion_ms)), 0, 1);
+            model.scope_slide = easing.ease(t);
+            if (t >= 1) fx.cancelTimer(14);
         },
         .poll => |timer| if (timer.outcome == .fired) {
             poll(model, fx);
@@ -3268,6 +3300,7 @@ fn perform(model: *Model, fx: *Effects, invocation: keyboard.Invocation) void {
         .staged => update(model, .{ .mode = .staged }, fx),
         .branch => update(model, .{ .mode = .branch }, fx),
         .all_files => update(model, .{ .mode = .files }, fx),
+        .change_branches => update(model, .open_base, fx),
         .settings => update(model, .open_settings, fx),
         .shortcuts => {
             model.settings_section = .keyboard;
