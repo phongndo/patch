@@ -8,6 +8,7 @@
 //! own parser and query cursor.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const grammars = @import("highlight_grammars");
 
 pub const Kind = enum(u8) { plain = 0, comment, keyword, string, function, property, constant, type };
@@ -367,13 +368,34 @@ const Entry = struct {
 
 const language_count = @typeInfo(Language).@"enum".fields.len;
 var entries: [language_count]Entry = @splat(.{});
-var entries_lock: std.c.pthread_mutex_t = std.c.PTHREAD_MUTEX_INITIALIZER;
+var entries_lock: Lock = .{};
+
+/// A process-wide lock without an `Io`: pthreads, or an SRW lock on Windows,
+/// which has no pthreads in its libc.
+const Lock = if (builtin.os.tag == .windows) struct {
+    const windows = std.os.windows;
+    inner: windows.SRWLOCK = windows.SRWLOCK_INIT,
+    fn lock(self: *Lock) void {
+        windows.ntdll.RtlAcquireSRWLockExclusive(&self.inner);
+    }
+    fn unlock(self: *Lock) void {
+        windows.ntdll.RtlReleaseSRWLockExclusive(&self.inner);
+    }
+} else struct {
+    inner: std.c.pthread_mutex_t = std.c.PTHREAD_MUTEX_INITIALIZER,
+    fn lock(self: *Lock) void {
+        _ = std.c.pthread_mutex_lock(&self.inner);
+    }
+    fn unlock(self: *Lock) void {
+        _ = std.c.pthread_mutex_unlock(&self.inner);
+    }
+};
 
 /// The language's compiled queries, compiled on first use; null when its
 /// highlight query does not compile against its grammar.
 fn entryFor(language: Language) ?*const Entry {
-    _ = std.c.pthread_mutex_lock(&entries_lock);
-    defer _ = std.c.pthread_mutex_unlock(&entries_lock);
+    entries_lock.lock();
+    defer entries_lock.unlock();
     const entry = &entries[@intFromEnum(language)];
     if (entry.state == .unloaded and !available(language)) entry.state = .failed;
     if (entry.state == .unloaded) {

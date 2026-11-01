@@ -1,11 +1,30 @@
 // libc pieces highlight.zig needs without depending on each platform's
 // regex_t layout: POSIX extended regular expressions for the #match?
 // predicates in highlight queries, and a monotonic clock for time budgets.
+// Windows has no <regex.h>; there highlight.zig matches with regex.zig.
 
-#include <regex.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
+
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+uint64_t patch_monotonic_ns(void) {
+    static LARGE_INTEGER frequency;
+    if (frequency.QuadPart == 0) QueryPerformanceFrequency(&frequency);
+    LARGE_INTEGER now;
+    QueryPerformanceCounter(&now);
+    uint64_t seconds = (uint64_t)now.QuadPart / (uint64_t)frequency.QuadPart;
+    uint64_t rest = (uint64_t)now.QuadPart % (uint64_t)frequency.QuadPart;
+    return seconds * 1000000000u + rest * 1000000000u / (uint64_t)frequency.QuadPart;
+}
+
+#else
+
+#include <regex.h>
 #include <time.h>
 
 // Compiles `pattern` (not NUL-terminated) as an extended regular expression;
@@ -48,3 +67,5 @@ uint64_t patch_monotonic_ns(void) {
     clock_gettime(CLOCK_MONOTONIC, &now);
     return (uint64_t)now.tv_sec * 1000000000u + (uint64_t)now.tv_nsec;
 }
+
+#endif
