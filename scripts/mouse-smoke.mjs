@@ -71,8 +71,16 @@ async function drag(label, x1, x2, y1, y2) {
     ...[x1, x2, y1, y2].map(String),
   );
 }
+// Read the system clipboard the app wrote to: pbpaste on macOS, and the X11
+// or Wayland clipboard elsewhere (the Linux dev shell provides xclip).
+const paste =
+  process.platform === "darwin"
+    ? ["/usr/bin/pbpaste", []]
+    : process.env.WAYLAND_DISPLAY
+      ? ["wl-paste", ["--no-newline"]]
+      : ["xclip", ["-selection", "clipboard", "-out"]];
 async function clipboard() {
-  return (await exec("/usr/bin/pbpaste")).stdout;
+  return (await exec(...paste)).stdout;
 }
 try {
   await waitFor('role=list name="Changes"');
