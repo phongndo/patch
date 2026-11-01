@@ -73,7 +73,9 @@ buttons in its gutter show them twenty at a time, from either end of the gap,
 or all at once when there are few; a header after the last hunk stands for
 the rest of the file. **e** shows more around the hunk you are in, and **E**
 shows the whole file with its changes in place (or takes it back to its
-hunks).
+hunks). Inside an edited line, only the words that changed are marked: the
+two versions are compared token by token, so an argument added mid-call
+lights up alone.
 
 A block of lines removed in one place and added in another, within a file or
 between files, is a move rather than a change: it keeps a cool wash instead of
@@ -88,7 +90,8 @@ line (or the text you selected) is defined and used across the repository,
 definitions first. Choosing a result in a changed file goes there, showing
 the lines around it if the diff left them out; a file outside the change opens
 at the foot of the review for reference, read-only, and closes from its
-header. Both are in each line's context menu too.
+header. Blame is in each line's context menu, and the actions that float over
+a selection look up the selected text.
 
 Image files show their two versions side by side, each with its size in
 pixels and bytes; other binary files say how their size changed.

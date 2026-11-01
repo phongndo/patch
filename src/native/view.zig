@@ -450,51 +450,39 @@ fn groupedCode(ui: *AppUi, node: AppUi.Node, group: u64, offset: usize) AppUi.No
     }
     return result;
 }
-/// The changed run inside a line: byte range [start, end) of its source.
-const Emphasis = struct { start: usize = 0, end: usize = 0 };
-fn utf8Start(text: []const u8, index: usize) usize {
-    var i = @min(index, text.len);
-    while (i > 0 and i < text.len and (text[i] & 0xC0) == 0x80) i -= 1;
-    return i;
-}
-/// Word-level highlights for a paired change: what lies between the common
-/// prefix and suffix. A side that was mostly rewritten keeps only its wash.
-fn intraline(old: []const u8, new: []const u8) struct { old: Emphasis = .{}, new: Emphasis = .{} } {
-    var p: usize = 0;
-    while (p < old.len and p < new.len and old[p] == new[p]) p += 1;
-    p = @min(utf8Start(old, p), utf8Start(new, p));
-    var s: usize = 0;
-    while (s < old.len - p and s < new.len - p and old[old.len - 1 - s] == new[new.len - 1 - s]) s += 1;
-    while (s > 0 and ((old.len - s < old.len and (old[old.len - s] & 0xC0) == 0x80) or (new.len - s < new.len and (new[new.len - s] & 0xC0) == 0x80))) s -= 1;
-    const side = struct {
-        fn pick(text: []const u8, start: usize, end: usize) Emphasis {
-            const span = end - start;
-            if (span == 0 or text.len < 4 or span * 10 > text.len * 7) return .{};
-            return .{ .start = start, .end = end };
-        }
-    };
-    return .{ .old = side.pick(old, p, old.len - s), .new = side.pick(new, p, new.len - s) };
-}
-/// Lays a background over [start, end) of `text`, splitting highlighted spans
+const words = @import("words.zig");
+/// The changed runs inside a line: byte ranges of its source.
+const Emphasis = []const words.Range;
+/// Lays a background over each range of `text`, splitting highlighted spans
 /// at the edges. Falls back to the plain spans if the split would not fit.
-fn emphasize(spans: []const canvas.TextSpan, text: []const u8, range: Emphasis, color: canvas.TextSpanColor, out: []canvas.TextSpan) []const canvas.TextSpan {
-    if (range.end <= range.start) return spans;
-    var count: usize = 0;
-    for (spans) |span| {
-        const begin = @intFromPtr(span.text.ptr) - @intFromPtr(text.ptr);
-        const finish = begin + span.text.len;
-        const cuts = [_]usize{ begin, std.math.clamp(range.start, begin, finish), std.math.clamp(range.end, begin, finish), finish };
-        for (0..3) |part| {
-            if (cuts[part + 1] <= cuts[part]) continue;
-            if (count == out.len) return spans;
-            var piece = span;
-            piece.text = text[cuts[part]..cuts[part + 1]];
-            if (part == 1) piece.background = color;
-            out[count] = piece;
-            count += 1;
+fn emphasize(spans: []const canvas.TextSpan, text: []const u8, ranges: Emphasis, color: canvas.TextSpanColor, out: []canvas.TextSpan) []const canvas.TextSpan {
+    var current = spans;
+    var scratch: [2][canvas.max_text_spans_per_paragraph]canvas.TextSpan = undefined;
+    for (ranges, 0..) |range, which| {
+        if (range.end <= range.start) continue;
+        const target: []canvas.TextSpan = if (which + 1 == ranges.len) out else &scratch[which % 2];
+        var count: usize = 0;
+        for (current) |span| {
+            const begin = @intFromPtr(span.text.ptr) - @intFromPtr(text.ptr);
+            const finish = begin + span.text.len;
+            const cuts = [_]usize{ begin, std.math.clamp(range.start, begin, finish), std.math.clamp(range.end, begin, finish), finish };
+            for (0..3) |part| {
+                if (cuts[part + 1] <= cuts[part]) continue;
+                if (count == target.len) return spans;
+                var piece = span;
+                piece.text = text[cuts[part]..cuts[part + 1]];
+                if (part == 1) piece.background = color;
+                target[count] = piece;
+                count += 1;
+            }
         }
+        current = target[0..count];
     }
-    return out[0..count];
+    if (current.ptr != out.ptr and current.ptr != spans.ptr) {
+        @memcpy(out[0..current.len], current);
+        return out[0..current.len];
+    }
+    return current;
 }
 fn codeLine(ui: *AppUi, model: *const Model, source: []const u8, number: u32, old: bool, file: usize, row_index: usize, offset: usize, language: canvas.code.Language, carry: u16, emphasis: Emphasis) AppUi.Node {
     const group = app.selection.groupId(file, old, model.selection_epoch, model.generation);
@@ -516,7 +504,7 @@ fn codeLine(ui: *AppUi, model: *const Model, source: []const u8, number: u32, ol
     // The first search hit on the line is marked in amber, as the search counts it.
     const query = model.search_query.text();
     var hits: [canvas.max_text_spans_per_paragraph]canvas.TextSpan = undefined;
-    const spans = if (query.len > 0) if (std.ascii.indexOfIgnoreCase(source, query)) |at| emphasize(changed, text, .{ .start = at, .end = at + query.len }, .warning, &hits) else changed else changed;
+    const spans = if (query.len > 0) if (std.ascii.indexOfIgnoreCase(source, query)) |at| emphasize(changed, text, &.{.{ .start = at, .end = at + query.len }}, .warning, &hits) else changed else changed;
     // One clipped line of text, shifted by the review's shared horizontal
     // offset so every line pans together; the cell does the clipping. The
     // 17-point line box sits on the line numbers' baseline.
@@ -574,7 +562,6 @@ fn codeCell(ui: *AppUi, model: *const Model, source: []const u8, number: u32, ol
         .{ .label = if (selected) "Comment on selection" else "Add line comment", .msg = if (selected) Msg.comment_selection else .{ .anchor = .{ .file = file, .line = number, .old = old } }, .enabled = number > 0 },
         .{ .label = if (selected) "Copy selection" else "Copy line", .msg = .{ .copy_line = .{ .file = file, .row = row_index, .old = old, .line = number } }, .enabled = number > 0 },
         .{ .label = "Blame line", .msg = .{ .blame_line = .{ .file = file, .row = row_index, .old = old, .line = number } }, .enabled = number > 0 and !model.imported },
-        .{ .label = "Find symbol", .msg = .{ .find_symbol_at = .{ .file = file, .row = row_index, .old = old, .line = number } }, .enabled = number > 0 and !model.imported },
     }) catch &.{};
     const source_node = if (number > 0) codeLine(ui, model, source, number, old, file, row_index, offset, language, carry, emphasis) else ui.spacer(1);
     return ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0, .cross = .center, .context_menu = menu_items, .style = .{ .background = background } }, .{
@@ -595,7 +582,7 @@ fn selectionBar(ui: *AppUi, model: *const Model) AppUi.Node {
     const label = if (range.last_line > range.first_line) ui.fmt("{d}–{d}", .{ range.first_line, range.last_line }) else ui.fmt("{d}", .{range.first_line});
     // Figures run about 6.7 points apiece at the small size, the dash about 7.
     const text_width = @as(f32, @floatFromInt(std.unicode.utf8CountCodepoints(label) catch label.len)) * 6.8;
-    const width = 12 + text_width + 6 + 28 + 28 + 2 * 2;
+    const width = 12 + text_width + 6 + 28 + 28 + 28 + 2 * 2;
     const bar = ui.el(.popover, .{ .width = width, .height = 32, .padding = 2, .anchor = .below, .anchor_alignment = .end, .anchor_offset = 6, .on_dismiss = .clear_selection, .semantics = .{ .label = "Selection actions" }, .style = .{ .background = theme.menu, .border = theme.glass_edge, .stroke_width = 0.5, .radius = 16 } }, .{
         ui.row(.{ .height = 28, .padding = 0, .gap = 0, .cross = .center }, .{
             space(ui, 10, 0),
@@ -603,6 +590,7 @@ fn selectionBar(ui: *AppUi, model: *const Model) AppUi.Node {
             space(ui, 6, 0),
             tinted(ui, "comment-selection", "comment", "Comment on selected lines", .comment_selection, theme.sidebar_ink, false, 28),
             tinted(ui, "copy-selection", "copy", "Copy selected code", .copy_selection, theme.sidebar_ink, false, 28),
+            tinted(ui, "find-selection", "symbol", "Find where this is defined and used · gd", .{ .find_symbol_at = .{ .file = range.file, .row = range.focus, .old = range.old, .line = range.last_line } }, theme.sidebar_ink, model.imported, 28),
         }),
     });
     // The bar anchors to a marker of its width at the row's right, 12 points in.
@@ -904,7 +892,7 @@ fn review(ui: *AppUi, model: *const Model) AppUi.Node {
             const current = model.cursor_active and model.cursor == index;
             const match = app.isMatch(model, index);
             const old = (model.cursor_old and row.old > 0) or row.new == 0;
-            const pair = if (row.removed and row.added and row.moved_old == 0 and row.moved_new == 0) intraline(row.left, row.right) else @TypeOf(intraline("", "")){};
+            const pair = if (row.removed and row.added and row.moved_old == 0 and row.moved_new == 0) words.diff(row.left, row.right) else words.Pair{};
             // A moved block's first line on each side says where it went.
             const above = if (code > 0) rows[code - 1] else patch.Row{};
             const link_old = if (row.moved_old != 0 and above.moved_old != row.moved_old) row.moved_old else 0;
@@ -912,10 +900,10 @@ fn review(ui: *AppUi, model: *const Model) AppUi.Node {
             const wash_old = if (row.base and row.removed) theme.hunk else if (row.moved_old != 0) theme.moved else if (row.removed) theme.removed else theme.background;
             const wash_new = if (row.base and row.added) theme.hunk else if (row.moved_new != 0) theme.moved else if (row.added) theme.added else theme.background;
             const content = if (model.split and !file.oneSided()) ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0, .style = .{ .background = theme.pane } }, .{
-                codeCell(ui, model, row.left, row.old, true, entry.file, index, row.old_offset, wash_old, language, row.old_carry, current and old, match, pair.old, link_old), line(ui, true),
-                codeCell(ui, model, row.right, row.new, false, entry.file, index, row.new_offset, wash_new, language, row.new_carry, current and !old, match, pair.new, link_new),
+                codeCell(ui, model, row.left, row.old, true, entry.file, index, row.old_offset, wash_old, language, row.old_carry, current and old, match, pair.old.slice(), link_old), line(ui, true),
+                codeCell(ui, model, row.right, row.new, false, entry.file, index, row.new_offset, wash_new, language, row.new_carry, current and !old, match, pair.new.slice(), link_new),
             }) else ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0, .style = .{ .background = theme.pane } }, .{
-                codeCell(ui, model, if (row.removed) row.left else row.right, if (row.removed) row.old else row.new, row.removed, entry.file, index, if (row.removed) row.old_offset else row.new_offset, if (row.removed) wash_old else wash_new, language, if (row.removed) row.old_carry else row.new_carry, current, match, .{}, if (row.removed) link_old else link_new),
+                codeCell(ui, model, if (row.removed) row.left else row.right, if (row.removed) row.old else row.new, row.removed, entry.file, index, if (row.removed) row.old_offset else row.new_offset, if (row.removed) wash_old else wash_new, language, if (row.removed) row.old_carry else row.new_carry, current, match, &.{}, if (row.removed) link_old else link_new),
             });
             break :blk content;
         } else fileHeader(ui, model, entry.file, model.cursor_active and model.cursor == index);
