@@ -5,7 +5,9 @@ pub fn build(b: *std.Build) void {
     const dependency = b.dependency("native_sdk", .{});
     const app = sdk.addAppArtifacts(b, dependency, .{ .name = "patch" });
     const host_tests = b.step("test-native-host", "Check native text pixels and transform roundoff bounds");
-    if (app.exe.root_module.resolved_target.?.result.os.tag == .macos) {
+    const macos = app.exe.root_module.resolved_target.?.result.os.tag == .macos;
+    if (!macos) opaqueStartupWindow(b, app.exe.root_module);
+    if (macos) {
         const flags: []const []const u8 = if (b.sysroot) |sdk_path| &.{ "-fobjc-arc", "-fno-sanitize=builtin", "-isysroot", sdk_path, b.fmt("-I{s}/usr/include", .{sdk_path}) } else &.{ "-fobjc-arc", "-fno-sanitize=builtin" };
         app.exe.root_module.addCSourceFile(.{ .file = b.path("src/native/glass.m"), .flags = flags });
         const canonical = b.option(bool, "canonical-transforms", "Remove subpixel icon-transform roundoff in the pinned macOS host") orelse true;
@@ -13,6 +15,11 @@ pub fn build(b: *std.Build) void {
         const coretext = b.option(bool, "coretext-lines", "Draw complete printable ASCII packet lines through CoreText") orelse true;
         const retain_identical = b.option(bool, "retain-identical-commands", "Preserve native rasters when a decoded command is unchanged") orelse true;
         if (canonical or opaque_blur or coretext or retain_identical) patchMacHost(b, dependency, app.exe.root_module, canonical, opaque_blur, coretext, retain_identical);
+    }
+    // The AppKit text test runs on the build machine, so it needs a Mac
+    // there as well as a macOS target.
+    if (macos and b.graph.host.result.os.tag == .macos) {
+        const flags: []const []const u8 = if (b.sysroot) |sdk_path| &.{ "-fobjc-arc", "-fno-sanitize=builtin", "-isysroot", sdk_path, b.fmt("-I{s}/usr/include", .{sdk_path}) } else &.{ "-fobjc-arc", "-fno-sanitize=builtin" };
         const text_test = b.addExecutable(.{ .name = "packet-text-test", .root_module = b.createModule(.{ .target = b.graph.host, .optimize = .ReleaseSafe, .link_libc = true }) });
         text_test.root_module.addCSourceFile(.{ .file = b.path("src/native/packet_text_test.m"), .flags = flags });
         if (b.sysroot) |sysroot| text_test.root_module.addSystemFrameworkPath(.{ .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{sysroot}) });
@@ -46,6 +53,29 @@ pub fn build(b: *std.Build) void {
     const host_test = b.addExecutable(.{ .name = "packet-transform-test", .root_module = b.createModule(.{ .target = b.graph.host, .optimize = .ReleaseSafe, .link_libc = true }) });
     host_test.root_module.addCSourceFile(.{ .file = b.path("src/native/packet_transform_test.c") });
     host_tests.dependOn(&b.addRunArtifact(host_test).step);
+}
+
+// Only macOS puts a native blur behind the canvas (glass.m), which is what
+// app.json's transparent window is for. Elsewhere it would show the desktop
+// through the window on Linux, and Windows refuses to create a layered
+// window that keeps its titlebar. Off macOS the startup window is opaque;
+// the canvas paints the window color itself (see view.zig).
+fn opaqueStartupWindow(b: *std.Build, root: *std.Build.Module) void {
+    const runner = root.import_table.get("runner") orelse @panic("runner module was not imported");
+    const manifest = runner.import_table.get("app_manifest_zon") orelse @panic("app manifest module was not imported");
+    const generated = switch (manifest.root_source_file orelse @panic("app manifest has no source")) {
+        .generated => |value| value,
+        else => @panic("app manifest is no longer generated from app.json; review this overlay"),
+    };
+    const files: *std.Build.Step.WriteFile = @fieldParentPtr("step", generated.file.step);
+    for (files.files.items) |*file| if (std.mem.eql(u8, file.sub_path, "app_manifest.zon")) switch (file.contents) {
+        .bytes => |bytes| {
+            file.contents = .{ .bytes = replaceOnce(b, bytes, ".transparent = true,", ".transparent = false,") };
+            return;
+        },
+        else => break,
+    };
+    @panic("generated app manifest was not found; review this overlay for the SDK pin");
 }
 
 // Generate a build-local overlay; never mutate the fetched SDK. Fail closed
