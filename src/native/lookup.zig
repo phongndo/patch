@@ -62,6 +62,7 @@ pub const Hit = struct {
 /// that look like definitions of `name`. Slices point into `output`.
 pub fn parseGrep(gpa: std.mem.Allocator, output: []const u8, strip: []const u8, name: []const u8, limit: usize) ![]Hit {
     var hits: std.ArrayList(Hit) = .empty;
+    errdefer hits.deinit(gpa);
     var lines = std.mem.splitScalar(u8, output, '\n');
     while (lines.next()) |raw| {
         if (hits.items.len >= limit) break;
@@ -86,7 +87,7 @@ pub fn parseGrep(gpa: std.mem.Allocator, output: []const u8, strip: []const u8, 
             return a.definition and !b.definition;
         }
     }.less);
-    return hits.items;
+    return hits.toOwnedSlice(gpa);
 }
 const introducers = [_][]const u8{ "fn", "def", "function", "func", "class", "struct", "enum", "union", "interface", "type", "trait", "impl", "module", "mod", "const", "let", "var", "val", "macro", "#define", "protocol", "extension", "record", "object", "typedef", "using", "namespace", "package", "alias" };
 /// Whether a line seems to define `name`: a keyword that introduces a

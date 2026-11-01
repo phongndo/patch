@@ -1617,6 +1617,7 @@ fn blameRow(model: *Model, fx: *Effects, row: usize, old: bool) void {
 fn searchSymbol(model: *Model, fx: *Effects) void {
     const query = std.mem.trim(u8, model.palette_query.text(), " ");
     if (query.len < 2) {
+        if (model.symbol_hits.len > 0) gpa.free(model.symbol_hits);
         model.symbol_hits = &.{};
         matchChoices(model);
         return;
