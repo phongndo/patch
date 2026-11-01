@@ -238,6 +238,14 @@ pub fn windowFill() canvas.Color {
     return mix(backdrop, window, window.a);
 }
 
+/// The frosted palettes' surface: translucent over a backdrop blur on macOS.
+/// Elsewhere the reference renderer's blur costs a whole frame (about 200 ms
+/// in the CPU renderer on Linux), so they go without it, and opaque.
+pub fn paletteFill() canvas.Color {
+    if (native_blur) return palette_glass;
+    return mix(windowFill(), palette_glass, palette_glass.a);
+}
+
 pub fn apply(next: Palette) void {
     dark = next.dark;
     inline for (@typeInfo(Palette).@"struct".fields) |member| {

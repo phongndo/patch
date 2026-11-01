@@ -222,7 +222,7 @@ fn branchPicker(ui: *AppUi, model: *const Model) AppUi.Node {
     }
     const typed = std.mem.trim(u8, model.branch_query.text(), " ");
     const role = if (model.branch_slot == .base) "base" else "head";
-    return ui.el(.popover, .{ .key = .{ .str = "branch-picker" }, .width = 300, .anchor = .above, .anchor_alignment = .start, .anchor_offset = 8, .padding = 5, .backdrop_blur_token = .md, .on_dismiss = .close_base, .semantics = .{ .role = .dialog, .label = "Compare branches" }, .style = .{ .background = theme.palette_glass, .border = theme.glass_edge, .radius = 16 } }, .{ui.column(.{ .padding = 0, .gap = 0 }, .{
+    return ui.el(.popover, .{ .key = .{ .str = "branch-picker" }, .width = 300, .anchor = .above, .anchor_alignment = .start, .anchor_offset = 8, .padding = 5, .backdrop_blur_token = if (theme.native_blur) .md else null, .on_dismiss = .close_base, .semantics = .{ .role = .dialog, .label = "Compare branches" }, .style = .{ .background = theme.paletteFill(), .border = theme.glass_edge, .radius = 16 } }, .{ui.column(.{ .padding = 0, .gap = 0 }, .{
         ui.row(.{ .height = 28, .padding = 0, .gap = 2, .cross = .center }, .{
             branchSide(ui, model, .base, model.base.text()),
             tinted(ui, "swap", "swap", "Swap base and head", .branch_swap, theme.palette_hint, false, 26),
@@ -384,7 +384,7 @@ fn commitMenu(ui: *AppUi, model: *const Model) AppUi.Node {
         });
         n += 1;
     }
-    return ui.el(.popover, .{ .key = .{ .str = "commit-menu" }, .width = 340, .anchor = .below, .anchor_alignment = .start, .anchor_offset = 6, .padding = 5, .backdrop_blur_token = .md, .on_dismiss = .close_commit_menu, .semantics = .{ .role = .dialog, .label = "Commits" }, .style = .{ .background = theme.palette_glass, .border = theme.glass_edge, .radius = 16 } }, .{ui.virtualList(options, window, rows[0..n])});
+    return ui.el(.popover, .{ .key = .{ .str = "commit-menu" }, .width = 340, .anchor = .below, .anchor_alignment = .start, .anchor_offset = 6, .padding = 5, .backdrop_blur_token = if (theme.native_blur) .md else null, .on_dismiss = .close_commit_menu, .semantics = .{ .role = .dialog, .label = "Commits" }, .style = .{ .background = theme.paletteFill(), .border = theme.glass_edge, .radius = 16 } }, .{ui.virtualList(options, window, rows[0..n])});
 }
 fn fileRail(ui: *AppUi, model: *const Model) AppUi.Node {
     const options = AppUi.VirtualListOptions{ .id = "files", .item_count = model.rail_rows.len, .item_extent = theme.row_pitch, .overscan = 1, .grow = 1 };
@@ -1271,7 +1271,7 @@ fn palette(ui: *AppUi, model: *const Model) AppUi.Node {
         count += 1;
     }
     // It fades in and settles a few points down as it opens.
-    const surface = ui.el(.popover, .{ .key = .{ .str = "command-palette" }, .opacity = model.palette_fade, .transform = if (model.palette_fade < 1) canvas.Affine.translate(0, -6 * (1 - model.palette_fade)) else .{}, .width = if (symbols) 560 else theme.palette_width, .anchor = .below, .anchor_alignment = .start, .anchor_offset = 0, .padding = 5, .backdrop_blur_token = .md, .on_dismiss = .close_palette, .semantics = .{ .role = .dialog, .label = if (symbols) "Symbols" else if (files) "Go to file" else "Commands" }, .style = .{ .background = theme.palette_glass, .border = theme.glass_edge, .radius = 16 } }, .{ui.column(.{ .padding = 0, .gap = 0 }, .{
+    const surface = ui.el(.popover, .{ .key = .{ .str = "command-palette" }, .opacity = model.palette_fade, .transform = if (model.palette_fade < 1) canvas.Affine.translate(0, -6 * (1 - model.palette_fade)) else .{}, .width = if (symbols) 560 else theme.palette_width, .anchor = .below, .anchor_alignment = .start, .anchor_offset = 0, .padding = 5, .backdrop_blur_token = if (theme.native_blur) .md else null, .on_dismiss = .close_palette, .semantics = .{ .role = .dialog, .label = if (symbols) "Symbols" else if (files) "Go to file" else "Commands" }, .style = .{ .background = theme.paletteFill(), .border = theme.glass_edge, .radius = 16 } }, .{ui.column(.{ .padding = 0, .gap = 0 }, .{
         ui.row(.{ .height = 30, .padding = 0, .gap = 0, .cross = .center, .style = .{ .background = theme.palette_field, .radius = 15 } }, .{
             space(ui, 11, 0),
             ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.secondary } }, "find"),
