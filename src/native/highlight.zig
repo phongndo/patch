@@ -10,6 +10,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const grammars = @import("highlight_grammars");
+const regex = @import("regex.zig");
 
 pub const Kind = enum(u8) { plain = 0, comment, keyword, string, function, property, constant, type };
 
@@ -303,9 +304,6 @@ const ts = struct {
     extern fn ts_query_cursor_exec_with_options(*QueryCursor, *const Query, Node, *const QueryCursorOptions) void;
     extern fn ts_query_cursor_next_match(*QueryCursor, *QueryMatch) bool;
 
-    extern fn patch_regex_new([*]const u8, usize, c_int) ?*anyopaque;
-    extern fn patch_regex_search(*const anyopaque, [*]const u8, usize) c_int;
-    extern fn patch_regex_free(?*anyopaque) void;
     extern fn patch_monotonic_ns() u64;
 };
 
@@ -335,7 +333,7 @@ const Predicate = struct {
     text: []const u8 = "",
     /// `#any-of?` strings, or node types for the tree predicates.
     values: []const []const u8 = &.{},
-    regex: ?*anyopaque = null,
+    regex: ?Regex = null,
 };
 
 /// An injection pattern's `#set!` properties.
@@ -586,7 +584,7 @@ fn parsePredicate(alloc: std.mem.Allocator, full_name: []const u8, args: []const
             var buffer: std.ArrayList(u8) = .empty;
             defer buffer.deinit(alloc);
             const ignore_case = if (known == .@"lua-match?") try translateLua(alloc, &buffer, args[1].string) else try translateRegex(alloc, &buffer, args[1].string);
-            predicate.regex = ts.patch_regex_new(buffer.items.ptr, buffer.items.len, @intFromBool(ignore_case)) orelse return error.Unsupported;
+            predicate.regex = try Regex.compile(alloc, buffer.items, ignore_case);
         },
         .@"any-of?", .@"has-ancestor?", .@"has-parent?", .@"kind-eq?" => {
             predicate.op = switch (known) {
@@ -611,6 +609,51 @@ fn parsePredicate(alloc: std.mem.Allocator, full_name: []const u8, args: []const
 // or Lua patterns (`#lua-match?`); both become POSIX extended expressions.
 
 const ere_special = ".[]()*+?{}|^$\\";
+
+/// What runs the translated expressions: the C library's POSIX regex, or
+/// regex.zig on Windows, whose C library has none. regex.zig takes the subset
+/// the translation produces and answers as macOS's libc does; the test
+/// "regex.zig agrees with libc" holds it to that.
+const Regex = if (builtin.os.tag == .windows) PortableRegex else LibcRegex;
+
+/// `REG_EXTENDED | REG_NOSUB` through highlight_support.c.
+const LibcRegex = struct {
+    handle: *anyopaque,
+
+    extern fn patch_regex_new([*]const u8, usize, c_int) ?*anyopaque;
+    extern fn patch_regex_search(*const anyopaque, [*]const u8, usize) c_int;
+    extern fn patch_regex_free(?*anyopaque) void;
+
+    /// error.Unsupported when regcomp rejects the pattern.
+    fn compile(alloc: std.mem.Allocator, pattern: []const u8, ignore_case: bool) !LibcRegex {
+        _ = alloc;
+        return .{ .handle = patch_regex_new(pattern.ptr, pattern.len, @intFromBool(ignore_case)) orelse return error.Unsupported };
+    }
+
+    fn search(self: LibcRegex, text: []const u8) bool {
+        return patch_regex_search(self.handle, text.ptr, text.len) != 0;
+    }
+
+    fn deinit(self: LibcRegex) void {
+        patch_regex_free(self.handle);
+    }
+};
+
+const PortableRegex = struct {
+    inner: *regex.Regex,
+
+    fn compile(alloc: std.mem.Allocator, pattern: []const u8, ignore_case: bool) !PortableRegex {
+        return .{ .inner = try regex.Regex.compile(alloc, pattern, ignore_case) };
+    }
+
+    fn search(self: PortableRegex, text: []const u8) bool {
+        return self.inner.search(text);
+    }
+
+    fn deinit(self: PortableRegex) void {
+        self.inner.deinit();
+    }
+};
 
 /// Rewrites a Rust regex as a POSIX extended one; returns whether it asked to
 /// ignore case. Constructs POSIX has no counterpart for are Unsupported.
@@ -847,7 +890,7 @@ fn test_(predicate: *const Predicate, node: ts.Node, captures: []const ts.QueryC
             }
             return std.mem.eql(u8, text, predicate.text);
         },
-        .match => return ts.patch_regex_search(predicate.regex.?, text.ptr, text.len) != 0,
+        .match => return predicate.regex.?.search(text),
         .any_of => {
             for (predicate.values) |value| if (std.mem.eql(u8, text, value)) return true;
             return false;
@@ -1608,11 +1651,11 @@ test "regex translation" {
     out.clearRetainingCapacity();
     try testing.expectError(error.Unsupported, translateRegex(testing.allocator, &out, "\\p{Lu}"));
 
-    const regex = ts.patch_regex_new("^[A-Z][A-Z0-9_]*$", 17, 0).?;
-    defer ts.patch_regex_free(regex);
-    try testing.expect(ts.patch_regex_search(regex, "MAX_SIZE", 8) != 0);
-    try testing.expect(ts.patch_regex_search(regex, "MAX_SIZE and more", 8) != 0);
-    try testing.expect(ts.patch_regex_search(regex, "Max", 3) == 0);
+    const constant = try Regex.compile(testing.allocator, "^[A-Z][A-Z0-9_]*$", false);
+    defer constant.deinit();
+    try testing.expect(constant.search("MAX_SIZE"));
+    try testing.expect(constant.search("MAX_SIZE and more"[0..8]));
+    try testing.expect(!constant.search("Max"));
 }
 
 test "two threads share the query cache" {
