@@ -1825,7 +1825,11 @@ test "regex.zig agrees with libc on every pattern the queries use" {
 }
 
 test "regex.zig agrees with libc on the edges of its subset" {
-    if (builtin.os.tag == .windows) return error.SkipZigTest;
+    // These edges are where POSIX leaves room, and glibc fills it differently
+    // (it takes `a{,3}`, `a**`, empty alternatives, …); regex.zig follows
+    // macOS, so only macOS's libc is the reference. The query patterns
+    // themselves are compared on every POSIX host by the test above.
+    if (builtin.os.tag != .macos) return error.SkipZigTest;
     var arena_state: std.heap.ArenaAllocator = .init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
