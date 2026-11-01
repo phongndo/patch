@@ -18,6 +18,14 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
+          inherit (pkgs) lib;
+          isLinux = pkgs.stdenv.hostPlatform.isLinux;
+          # The SDK's GTK4 host links gtk4 (and libdl from glibc) and finds it
+          # through pkg-config; the GSettings schemas back GtkFileDialog.
+          gtk = [
+            pkgs.gtk4
+            pkgs.gsettings-desktop-schemas
+          ];
         in
         {
           default = pkgs.mkShell {
@@ -25,16 +33,30 @@
               pkgs.nodejs_24
               pkgs.pnpm
               pkgs.zig_0_16
+            ]
+            ++ lib.optionals isLinux [
+              pkgs.pkg-config
+              # Headless display for `pnpm test:ui` and `pnpm bench:native`.
+              pkgs.xvfb-run
+              pkgs.xorg-server
+              pkgs.xdpyinfo
+              # Reads the clipboard in scripts/mouse-smoke.mjs.
+              pkgs.xclip
             ];
+
+            buildInputs = lib.optionals isLinux gtk;
 
             shellHook = ''
               export PATH="$PWD/node_modules/.bin:$PATH"
             ''
-            + pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+            + lib.optionalString isLinux ''
               # Native Node addons need the C++ runtime on NixOS.
               export LD_LIBRARY_PATH="${
-                pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]
+                lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]
               }''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+              export XDG_DATA_DIRS="${
+                lib.concatMapStringsSep ":" (p: "${p}/share/gsettings-schemas/${p.name}") gtk
+              }''${XDG_DATA_DIRS:+:$XDG_DATA_DIRS}"
             '';
           };
         }
