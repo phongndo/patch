@@ -484,6 +484,53 @@ fn emphasize(spans: []const canvas.TextSpan, text: []const u8, ranges: Emphasis,
     }
     return current;
 }
+/// The color each kind of token takes.
+fn tokenColor(kind: app.highlight.Kind) canvas.TextSpanColor {
+    return switch (kind) {
+        .plain => .syntax_plain,
+        .comment => .syntax_comment,
+        .keyword => .syntax_keyword,
+        .string => .syntax_literal,
+        .function => .syntax_function,
+        .property => .syntax_property,
+        .constant => .syntax_constant,
+        .type => .info,
+    };
+}
+/// A line's spans from its file's whole-file highlighting, when the file was
+/// highlighted and the row's text is that line of it (rows of the changes
+/// since review, whose old side is another version, are left to the lexer).
+fn wholeFileSpans(model: *const Model, file: usize, old: bool, number: u32, source: []const u8, text: []const u8, out: []canvas.TextSpan) ?[]const canvas.TextSpan {
+    if (file >= model.marks.len or number == 0) return null;
+    const entry = model.files[file];
+    if (entry.showing_since and old) return null;
+    const marks = (if (old) model.marks[file].old else model.marks[file].new) orelse return null;
+    // The row's text must be the file's line, or the offsets mean nothing.
+    if (!entry.reference) {
+        if (file >= model.sources.len) return null;
+        const sides = model.sources[file].side(old) orelse return null;
+        if (!std.mem.eql(u8, sides.line(number), source)) return null;
+    }
+    const tokens = marks.line(number - 1);
+    var count: usize = 0;
+    var at: usize = 0;
+    for (tokens) |token| {
+        const start = @min(token.start, source.len);
+        const end = @min(token.end, source.len);
+        if (end <= start or start < at) continue;
+        if (count + 2 >= out.len) break;
+        if (start > at) {
+            out[count] = .{ .text = text[at..start], .monospace = true, .color = .syntax_plain };
+            count += 1;
+        }
+        out[count] = .{ .text = text[start..end], .monospace = true, .color = tokenColor(token.kind) };
+        count += 1;
+        at = end;
+    }
+    if (count >= out.len) return null;
+    out[count] = .{ .text = text[at..], .monospace = true, .color = .syntax_plain };
+    return out[0 .. count + 1];
+}
 fn codeLine(ui: *AppUi, model: *const Model, source: []const u8, number: u32, old: bool, file: usize, row_index: usize, offset: usize, language: canvas.code.Language, carry: u16, emphasis: Emphasis) AppUi.Node {
     const group = app.selection.groupId(file, old, model.selection_epoch, model.generation);
     const key = ui.fmt("source-{d}-{d}-{any}", .{ model.generation, row_index, old });
@@ -495,10 +542,13 @@ fn codeLine(ui: *AppUi, model: *const Model, source: []const u8, number: u32, ol
     // unusually long lines.
     if (source.len > 4096) return groupedCode(ui, ui.code(.{ .global_key = .{ .str = key }, .language = language, .wrap = false, .height = 24, .grow = 1, .semantics = .{ .label = label } }, text), group, offset);
     var storage: [canvas.max_text_spans_per_paragraph]canvas.TextSpan = undefined;
-    // The line starts in the state the lines above it left (a comment or
-    // string still open), as worked out once when the patch was read.
-    var state: canvas.code.HighlightState = if (carry < model.carries.len) model.carries[carry] else .{};
-    const highlighted = canvas.CodeContentPolicy.highlight(ui.code_content_policy, text, language, &storage, &state);
+    // The file's own highlighting, read whole, when this line is the file's;
+    // else the line lexed from the state the lines above it left (a comment
+    // or string still open), as worked out once when the patch was read.
+    const highlighted = wholeFileSpans(model, file, old, number, source, text, &storage) orelse blk: {
+        var state: canvas.code.HighlightState = if (carry < model.carries.len) model.carries[carry] else .{};
+        break :blk canvas.CodeContentPolicy.highlight(ui.code_content_policy, text, language, &storage, &state);
+    };
     var split: [canvas.max_text_spans_per_paragraph]canvas.TextSpan = undefined;
     const changed = emphasize(highlighted, text, emphasis, if (old) .destructive else .success, &split);
     // The first search hit on the line is marked in amber, as the search counts it.

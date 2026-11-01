@@ -6,6 +6,9 @@ const patch = @import("native/patch.zig");
 const syntax = @import("native/syntax.zig");
 const review = @import("native/review.zig");
 pub const lookup = @import("native/lookup.zig");
+pub const highlight = @import("native/highlight.zig");
+/// Both sides of a file highlighted whole, when its language is known.
+pub const Marks = struct { old: ?highlight.Highlights = null, new: ?highlight.Highlights = null };
 pub const history = @import("native/history.zig");
 const canvas = sdk.canvas;
 pub const keyboard = @import("native/keyboard.zig");
@@ -113,6 +116,9 @@ pub const Model = struct {
     carries: []const syntax.State = &.{},
     /// Both sides of each file, read whole once the review is up; empty until then.
     sources: []const patch.Sides = &.{},
+    /// Each file's sides highlighted whole (owned by `gpa`, as long as
+    /// `files`, references included); empty until highlighted.
+    marks: []Marks = &.{},
     /// Each file's decoded images, when it is an image file.
     images: []const ImageView = &.{},
     /// Blame for the line it was asked of, while its card is open.
@@ -381,6 +387,9 @@ const Job = struct {
     source_requests: []const SourceRequest = &.{},
     sourcer: ?std.Thread = null,
     sources_done: std.atomic.Value(bool) = .init(false),
+    /// Each file's sides highlighted whole, after the sources are read.
+    highlights: []Marks = &.{},
+    highlights_done: std.atomic.Value(bool) = .init(false),
     const SourceRequest = struct { path: []const u8, old: []const u8, new: []const u8, disk: bool };
     fn run(self: *Job) void {
         self.load() catch |err| {
@@ -446,12 +455,34 @@ const Job = struct {
             self.source_requests = requests;
             self.sourcer = std.Thread.spawn(.{}, readSources, .{self}) catch null;
         }
-        if (self.sourcer == null) self.sources_done.store(true, .release);
+        if (self.sourcer == null) {
+            self.sources_done.store(true, .release);
+            self.highlights_done.store(true, .release);
+        }
     }
     /// Reads both sides of every file: the old from Git, the new from Git
     /// too, or from the working tree when that is what is compared.
     fn readSources(self: *Job) void {
-        defer self.sources_done.store(true, .release);
+        defer self.highlights_done.store(true, .release);
+        self.loadSides();
+        self.sources_done.store(true, .release);
+        // Then highlight each file whole, so every line is colored as the
+        // file reads, not as a hunk cut from it.
+        const alloc = self.source_arena.allocator();
+        const marks = alloc.alloc(Marks, self.sources.len) catch return;
+        @memset(marks, .{});
+        for (self.source_requests, self.sources, marks) |request, sides, *mark| {
+            const language = highlight.languageFor(request.path) orelse continue;
+            if (sides.old) |text| if (!sides.old_binary) {
+                mark.old = highlight.highlight(alloc, language, text.bytes) catch null;
+            };
+            if (sides.new) |text| if (!sides.new_binary) {
+                mark.new = highlight.highlight(alloc, language, text.bytes) catch null;
+            };
+        }
+        self.highlights = marks;
+    }
+    fn loadSides(self: *Job) void {
         const alloc = self.source_arena.allocator();
         const result = self.result.?;
         const sources = alloc.alloc(patch.Sides, self.source_requests.len) catch return;
@@ -1142,6 +1173,8 @@ fn poll(model: *Model, fx: *Effects) void {
     model.records = job.records;
     model.hunk_records = job.hunk_records;
     model.sources = &.{};
+    if (model.marks.len > 0) gpa.free(model.marks);
+    model.marks = &.{};
     if (model.images.len > 0) gpa.free(model.images);
     model.images = &.{};
     model.blame = null;
@@ -1261,8 +1294,11 @@ fn setRows(alloc: std.mem.Allocator, file: *patch.File, rows: []patch.Row) void 
 /// Takes in the files' sides once read: files whose diff stops before the
 /// file does gain a header for the rest, so every gap can be opened.
 fn adoptSources(model: *Model, fx: *Effects) void {
-    fx.cancelTimer(11);
     const job = session.document orelse return;
+    if (job.highlights_done.load(.acquire)) {
+        adoptMarks(model, job);
+        fx.cancelTimer(11);
+    }
     if (job.sources.len != model.files.len) return;
     model.sources = job.sources;
     const alloc = job.arena.allocator();
@@ -1278,6 +1314,18 @@ fn adoptSources(model: *Model, fx: *Effects) void {
         changed = true;
     }
     if (changed) relayout(model, fx);
+}
+/// Takes in the files' highlights, keeping a slot for each file (files
+/// opened for reference are highlighted as they open).
+fn adoptMarks(model: *Model, job: *Job) void {
+    if (model.marks.len > 0) gpa.free(model.marks);
+    model.marks = &.{};
+    const marks = gpa.alloc(Marks, model.files.len) catch return;
+    @memset(marks, .{});
+    for (job.highlights, 0..) |mark, index| if (index < marks.len) {
+        marks[index] = mark;
+    };
+    model.marks = marks;
 }
 /// Decodes the image files' sides for drawing, letting go of the last
 /// review's. Returns whether any file now has pictures.
@@ -1607,6 +1655,13 @@ fn openLocation(model: *Model, fx: *Effects, path: []const u8, line_number: u32)
     files[model.files.len] = reference;
     model.files = files;
     job.files = files;
+    if (gpa.alloc(Marks, files.len)) |marks| {
+        @memset(marks, .{});
+        @memcpy(marks[0..@min(model.marks.len, marks.len)], model.marks[0..@min(model.marks.len, marks.len)]);
+        if (highlight.languageFor(path)) |language| marks[files.len - 1].new = highlight.highlight(alloc, language, text) catch null;
+        if (model.marks.len > 0) gpa.free(model.marks);
+        model.marks = marks;
+    } else |_| {}
     reindex(model);
     layoutRows(model);
     findMatches(model);
@@ -2102,6 +2157,12 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             @memcpy(files[index..], model.files[index + 1 ..]);
             model.files = files;
             job.files = files;
+            if (index < model.marks.len) if (gpa.alloc(Marks, model.marks.len - 1)) |marks| {
+                @memcpy(marks[0..index], model.marks[0..index]);
+                @memcpy(marks[index..], model.marks[index + 1 ..]);
+                gpa.free(model.marks);
+                model.marks = marks;
+            } else |_| {};
             model.selected = @min(model.selected, files.len -| 1);
             reindex(model);
             layoutRows(model);
@@ -2120,7 +2181,11 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         },
         .sources_tick => |timer| if (timer.outcome == .fired) {
             const job = session.document orelse return fx.cancelTimer(11);
-            if (job.sources_done.load(.acquire)) adoptSources(model, fx);
+            if (model.sources.len == 0 and job.sources_done.load(.acquire)) adoptSources(model, fx);
+            if (model.sources.len > 0 and job.highlights_done.load(.acquire)) {
+                adoptMarks(model, job);
+                fx.cancelTimer(11);
+            }
         },
         .toggle_notes => {
             model.band_menu = false;
@@ -2439,6 +2504,8 @@ fn designTokens(_: *const Model) canvas.DesignTokens {
     tokens.colors.syntax_function = theme.syntax_function;
     tokens.colors.syntax_property = theme.syntax_property;
     tokens.colors.syntax_constant = theme.syntax_constant;
+    // Types, which the stock syntax tokens have no slot for, borrow `info`.
+    tokens.colors.info = theme.syntax_type;
     return tokens;
 }
 pub fn main(init: std.process.Init) !void {
