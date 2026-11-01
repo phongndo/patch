@@ -68,7 +68,9 @@ const Settings = struct { collapse_reviewed: bool = true, split: bool = true, si
 pub const color_roles = [_][]const u8{ "Background", "Text", "Accent", "Added", "Removed" };
 pub const Choice = struct { index: usize, score: u32, file: bool = false };
 /// A review state taken back by undo: a file's, or one of its hunks'.
-const ReviewChange = struct { file: usize, reviewed: bool, hunk: ?u16 = null };
+/// A review step to undo. A file's step keeps which of its hunks were
+/// reviewed before it (in the review's arena), to give them back.
+const ReviewChange = struct { file: usize, reviewed: bool, hunk: ?u16 = null, hunks: []const bool = &.{} };
 /// A hunk of a file, by its index in `patch.File.hunks`.
 pub const HunkRef = struct { file: usize, hunk: u16 };
 /// Lines to show of a gap the diff left out: above a hunk's header (or, for
@@ -2840,8 +2842,25 @@ fn refold(model: *Model, fx: *Effects, index: usize) void {
 }
 fn setReviewed(model: *Model, index: usize, value: bool) void {
     if (index >= model.files.len or model.files[index].reviewed == value or model.files[index].reference) return;
-    model.history.append(gpa, .{ .file = index, .reviewed = model.files[index].reviewed }) catch {};
+    var hunks: []bool = &.{};
+    if (session.document) |job| if (job.arena.allocator().alloc(bool, model.files[index].hunks.len)) |states| {
+        for (model.files[index].hunks, states) |hunk, *state| state.* = hunk.reviewed;
+        hunks = states;
+    } else |_| {};
+    model.history.append(gpa, .{ .file = index, .reviewed = model.files[index].reviewed, .hunks = hunks }) catch {};
     record(model, index, value);
+}
+/// Gives back the hunks reviewed on their own before a file's review that
+/// undoing it took back.
+fn restoreHunks(model: *Model, change: ReviewChange) void {
+    const job = session.document orelse return;
+    const file = &model.files[change.file];
+    if (change.reviewed or file.showing_since or change.hunks.len != file.hunks.len) return;
+    for (file.hunks, change.hunks) |*hunk, was| if (was and !hunk.reviewed) {
+        hunk.reviewed = true;
+        hunk.collapsed = model.collapse_reviewed;
+        review.markHunk(job.arena.allocator(), &model.hunk_records, file.path, hunk.*) catch {};
+    };
 }
 /// Marks a file's change reviewed (or not), and every hunk of it with it.
 fn record(model: *Model, index: usize, value: bool) void {
@@ -3090,6 +3109,7 @@ fn perform(model: *Model, fx: *Effects, invocation: keyboard.Invocation) void {
                 }
                 if (change.file < model.files.len) {
                     record(model, change.file, change.reviewed);
+                    restoreHunks(model, change);
                     if (model.collapse_reviewed) model.files[change.file].collapsed = change.reviewed;
                     refold(model, fx, change.file);
                     model.cursor_active = true;
