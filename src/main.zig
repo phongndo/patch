@@ -823,12 +823,23 @@ const Lookup = struct {
     /// A grep's revision prefix to strip and the name searched.
     strip: []const u8 = "",
     query: []const u8 = "",
+    /// A path whose staged version (the index's) a blame reads as the
+    /// file's contents (`--contents -`), with the store that passes it in.
+    staged_path: []const u8 = "",
+    store: ?git.Store = null,
     fn work(self: *Lookup) void {
-        self.output = git.ask(gpa, self.io, self.root, self.args) catch blk: {
+        self.output = self.answer() catch blk: {
             self.failed = true;
             break :blk &.{};
         };
         self.done.store(true, .release);
+    }
+    fn answer(self: *Lookup) ![]u8 {
+        if (self.staged_path.len == 0) return git.ask(gpa, self.io, self.root, self.args);
+        const spec = try std.fmt.allocPrint(self.arena.allocator(), ":{s}", .{self.staged_path});
+        const contents = try git.ask(gpa, self.io, self.root, &.{ "show", spec });
+        defer gpa.free(contents);
+        return git.askWith(gpa, self.io, self.root, self.store orelse return error.GitCommandFailed, self.args, contents);
     }
     fn destroy(self: *Lookup) void {
         if (self.thread) |thread| thread.join();
@@ -1554,17 +1565,30 @@ fn blameRow(model: *Model, fx: *Effects, row: usize, old: bool) void {
     if (session.lookup) |running| if (!running.done.load(.acquire)) return notify(model, fx, "Still looking something up");
     const job = session.document orelse return;
     const lookup_job = gpa.create(Lookup) catch return;
-    lookup_job.* = .{ .kind = .blame, .io = session.io, .root = job.result.?.root };
+    lookup_job.* = .{ .kind = .blame, .io = session.io, .root = "" };
     const alloc = lookup_job.arena.allocator();
-    const revision = if (file.reference) "" else sideRevision(model, alloc, side_old) orelse {
-        gpa.destroy(lookup_job);
+    // A reference file is read from the comparison's new side, like the
+    // review's new lines.
+    const revision = sideRevision(model, alloc, side_old) orelse {
+        lookup_job.destroy();
         return notify(model, fx, "Blame needs a repository");
     };
-    const path = if (side_old and file.previous.len > 0) file.previous else file.path;
+    // The lookup may outlive the review it was asked from.
+    lookup_job.root = alloc.dupe(u8, job.result.?.root) catch return lookup_job.destroy();
+    const path = alloc.dupe(u8, if (side_old and file.previous.len > 0) file.previous else file.path) catch return lookup_job.destroy();
     var args: std.ArrayList([]const u8) = .empty;
-    args.appendSlice(alloc, &.{ "blame", "--porcelain", "-L", std.fmt.allocPrint(alloc, "{d},{d}", .{ line_number, line_number }) catch return }) catch return;
-    if (revision.len > 0) args.append(alloc, revision) catch return;
-    args.appendSlice(alloc, &.{ "--", path }) catch return;
+    args.appendSlice(alloc, &.{ "blame", "--porcelain", "-L", std.fmt.allocPrint(alloc, "{d},{d}", .{ line_number, line_number }) catch return lookup_job.destroy() }) catch return lookup_job.destroy();
+    // Staged lines are the index's: blame reads them as the file's contents.
+    if (model.mode == .staged and !side_old) {
+        const store = job.store orelse {
+            lookup_job.destroy();
+            return notify(model, fx, "Blame needs a repository");
+        };
+        lookup_job.store = .{ .objects = alloc.dupe(u8, store.objects) catch return lookup_job.destroy(), .repository = alloc.dupe(u8, store.repository) catch return lookup_job.destroy() };
+        lookup_job.staged_path = path;
+        args.appendSlice(alloc, &.{ "--contents", "-" }) catch return lookup_job.destroy();
+    } else if (revision.len > 0) args.append(alloc, alloc.dupe(u8, revision) catch return lookup_job.destroy()) catch return lookup_job.destroy();
+    args.appendSlice(alloc, &.{ "--", path }) catch return lookup_job.destroy();
     lookup_job.args = args.items;
     model.blame = .{ .row = row, .old = side_old, .line = line_number };
     startLookup(model, fx, lookup_job);
@@ -1585,16 +1609,18 @@ fn searchSymbol(model: *Model, fx: *Effects) void {
     const job = session.document orelse return;
     if (model.imported or job.result.?.root.len == 0) return notify(model, fx, "Symbol search needs a repository");
     const lookup_job = gpa.create(Lookup) catch return;
-    lookup_job.* = .{ .kind = .grep, .io = session.io, .root = job.result.?.root };
+    lookup_job.* = .{ .kind = .grep, .io = session.io, .root = "" };
     const alloc = lookup_job.arena.allocator();
+    lookup_job.root = alloc.dupe(u8, job.result.?.root) catch return lookup_job.destroy();
     lookup_job.query = alloc.dupe(u8, query) catch return;
     var args: std.ArrayList([]const u8) = .empty;
     args.appendSlice(alloc, &.{ "grep", "-n", "-I", "-w", "-F", "--max-count=40" }) catch return;
     if (model.mode == .staged) args.append(alloc, "--cached") catch return;
     args.appendSlice(alloc, &.{ "-e", lookup_job.query }) catch return;
     if (model.mode == .branch) if (sideRevision(model, alloc, false)) |revision| if (revision.len > 0) {
-        args.append(alloc, revision) catch return;
-        lookup_job.strip = revision;
+        const owned = alloc.dupe(u8, revision) catch return lookup_job.destroy();
+        args.append(alloc, owned) catch return lookup_job.destroy();
+        lookup_job.strip = owned;
     };
     args.append(alloc, "--") catch return;
     lookup_job.args = args.items;

@@ -675,6 +675,11 @@ fn readBatch(gpa: std.mem.Allocator, io: std.Io, root: []const u8, store: Store,
 pub fn ask(gpa: std.mem.Allocator, io: std.Io, root: []const u8, args: []const []const u8) ![]u8 {
     return exec(gpa, io, root, args, .{ .difference = true });
 }
+/// `ask`, with bytes for the command to read on its standard input (kept
+/// in a temporary file beside the store, which also answers for objects).
+pub fn askWith(gpa: std.mem.Allocator, io: std.Io, root: []const u8, store: Store, args: []const []const u8, input: []const u8) ![]u8 {
+    return exec(gpa, io, root, args, .{ .difference = true, .store = store, .input = input });
+}
 /// Which of these objects neither the store nor the repository has.
 pub fn missing(gpa: std.mem.Allocator, io: std.Io, root: []const u8, store: Store, ids: []const []const u8) !std.StringHashMapUnmanaged(void) {
     var result: std.StringHashMapUnmanaged(void) = .empty;
