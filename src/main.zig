@@ -1539,8 +1539,8 @@ fn nextUnreviewedHunk(model: *Model, fx: *Effects, forward: bool) void {
         const rows = if (model.split) file.split else file.unified;
         const row = rows[code];
         if (!row.meta or row.tail or row.hunk >= file.hunks.len or file.hunks[row.hunk].reviewed) continue;
-        // The hunk's first line, or its header if there is nothing under it.
-        moveTo(model, fx, seekCode(model, index + 1, true) orelse continue);
+        // The hunk's first line, or its header when the hunk is folded.
+        moveTo(model, fx, if (file.hunks[row.hunk].collapsed) index else seekCode(model, index + 1, true) orelse continue);
         return;
     }
     notify(model, fx, "Every hunk reviewed");
