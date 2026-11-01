@@ -182,21 +182,21 @@ to the current snapshot. Draft notes stay in memory until refresh or app exit.
 
 ## Commands
 
-| Command                     | Purpose                                                     |
-| --------------------------- | ----------------------------------------------------------- |
-| `pnpm dev [--repo path]`    | Build and run with native UI automation enabled             |
-| `pnpm review [--repo path]` | Build and open the native reviewer                          |
-| `pnpm build`                | Compile to `zig-out/bin/patch`                              |
-| `pnpm package`              | Build an ad-hoc signed `zig-out/Patch.app`                  |
-| `pnpm test`                 | Keyboard/parser tests and native/Node Git integration tests |
-| `zig build test-highlight`  | Tree-sitter highlighting tests, one per language            |
+| Command                     | Purpose                                                           |
+| --------------------------- | ----------------------------------------------------------------- |
+| `pnpm dev [--repo path]`    | Build and run with native UI automation enabled                   |
+| `pnpm review [--repo path]` | Build and open the native reviewer                                |
+| `pnpm build`                | Compile to `zig-out/bin/patch`                                    |
+| `pnpm package`              | Build an ad-hoc signed `zig-out/Patch.app`                        |
+| `pnpm test`                 | Keyboard/parser tests and native/Node Git integration tests       |
+| `zig build test-highlight`  | Tree-sitter highlighting tests, one per language                  |
 | `zig build bench-highlight` | Time highlighting of the files after `--` (`--dump` shows tokens) |
-| `pnpm test:ui`              | Native keyboard, mouse selection, and 50,000-line checks    |
-| `pnpm bench:native`         | Measure native startup and interaction latency              |
-| `pnpm check`                | tsrs, Oxlint, and Oxfmt                                     |
-| `pnpm icons:sync`           | Refresh the embedded Pierre SVG icons                       |
-| `pnpm dev:web`              | Run the original React/Vite reviewer                        |
-| `pnpm build:web`            | Build the React reviewer                                    |
+| `pnpm test:ui`              | Native keyboard, mouse selection, and 50,000-line checks          |
+| `pnpm bench:native`         | Measure native startup and interaction latency                    |
+| `pnpm check`                | tsrs, Oxlint, and Oxfmt                                           |
+| `pnpm icons:sync`           | Refresh the embedded Pierre SVG icons                             |
+| `pnpm dev:web`              | Run the original React/Vite reviewer                              |
+| `pnpm build:web`            | Build the React reviewer                                          |
 
 Prefix commands with `nix develop -c` when outside the development shell. The
 flake pins Node 24, pnpm, and Zig 0.16. Building the native macOS target requires
