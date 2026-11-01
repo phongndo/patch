@@ -78,7 +78,7 @@ pub const HunkRef = struct { file: usize, hunk: u16 };
 /// of them or all.
 pub const Expansion = struct { file: usize, hunk: u16 = 0, tail: bool = false, from_top: bool = false, all: bool = false };
 /// What blame says about one line, shown beside it.
-pub const BlameView = struct { row: usize, old: bool, line: u32, loading: bool = true, failed: bool = false, info: lookup.Blame = .{} };
+pub const BlameView = struct { row: usize, file: usize, old: bool, line: u32, loading: bool = true, failed: bool = false, info: lookup.Blame = .{} };
 /// Lines a step of expansion shows.
 pub const expand_step: u32 = 20;
 pub const Model = struct {
@@ -997,6 +997,23 @@ fn layoutRows(model: *Model) void {
     model.changes = changes.toOwnedSlice(gpa) catch &.{};
     model.display = rows.toOwnedSlice(gpa) catch &.{};
     model.starts = starts.toOwnedSlice(gpa) catch &.{};
+    anchorBlame(model);
+}
+/// Keeps an open blame card beside its line as rows come and go, closing
+/// it when the line is no longer shown.
+fn anchorBlame(model: *Model) void {
+    const shown = if (model.blame) |*value| value else return;
+    if (shown.file < model.starts.len) {
+        const end = if (shown.file + 1 < model.starts.len) model.starts[shown.file + 1] else model.display.len;
+        for (model.starts[shown.file]..end) |index| {
+            const row = sourceRow(model, index) orelse continue;
+            if ((if (shown.old) row.old else row.new) == shown.line) {
+                shown.row = index;
+                return;
+            }
+        }
+    }
+    model.blame = null;
 }
 /// Code text runs at about 7.8 points a character (13-point SF Mono); the
 /// offset stops where the widest line's end meets its column's edge.
@@ -1592,7 +1609,7 @@ fn blameRow(model: *Model, fx: *Effects, row: usize, old: bool) void {
     } else if (revision.len > 0) args.append(alloc, alloc.dupe(u8, revision) catch return lookup_job.destroy()) catch return lookup_job.destroy();
     args.appendSlice(alloc, &.{ "--", path }) catch return lookup_job.destroy();
     lookup_job.args = args.items;
-    model.blame = .{ .row = row, .old = side_old, .line = line_number };
+    model.blame = .{ .row = row, .file = model.display[row].file, .old = side_old, .line = line_number };
     startLookup(model, fx, lookup_job);
 }
 /// Looks a name up across the repository (at the comparison's new side):
@@ -2249,6 +2266,9 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             @memcpy(files[index..], model.files[index + 1 ..]);
             model.files = files;
             job.files = files;
+            if (model.blame) |*shown| {
+                if (shown.file == index) model.blame = null else if (shown.file > index) shown.file -= 1;
+            }
             if (index < model.marks.len) if (gpa.alloc(Marks, model.marks.len - 1)) |marks| {
                 @memcpy(marks[0..index], model.marks[0..index]);
                 @memcpy(marks[index..], model.marks[index + 1 ..]);
