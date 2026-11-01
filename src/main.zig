@@ -3,6 +3,9 @@ const sdk = @import("native_sdk");
 const runner = @import("runner");
 const git = @import("native/git.zig");
 const patch = @import("native/patch.zig");
+const syntax = @import("native/syntax.zig");
+const review = @import("native/review.zig");
+pub const history = @import("native/history.zig");
 const canvas = sdk.canvas;
 pub const keyboard = @import("native/keyboard.zig");
 pub const selection = @import("native/selection.zig");
@@ -13,8 +16,9 @@ pub const app_icons = @import("native/icons.zig").all;
 const theme = @import("native/theme.zig");
 const easing = @import("native/motion.zig");
 
-const Note = struct { path: []const u8, line: u32 = 0, line_end: u32 = 0, old: bool = false, text: []const u8 };
-const Saved = struct { reviewed: []const []const u8 = &.{}, notes: []const Note = &.{} };
+pub const Note = review.Note;
+/// Progress as Patch saved it before the review store: one file per snapshot.
+const Legacy = struct { reviewed: []const []const u8 = &.{}, notes: []const Note = &.{} };
 const Anchor = struct { line: u32 = 0, line_end: u32 = 0, old: bool = false, file: ?usize = null };
 pub const DisplayRow = struct { file: usize, code: ?usize = null, spacer: bool = false };
 pub const RailRow = struct { file: ?usize = null, directory: []const u8 = "" };
@@ -22,7 +26,7 @@ pub const Focus = enum { review, note, file_filter, search, palette };
 pub const Palette = enum { closed, commands, files };
 pub const SettingsSection = enum { review, layout, appearance, keyboard, about };
 /// Preferences saved beside review progress, applied before the first load.
-const Settings = struct { collapse_reviewed: bool = true, split: bool = true, sidebar: bool = true, mode: git.Mode = .working, base: []const u8 = "main", sidebar_width: f32 = 219, notes_width: f32 = 300, theme: []const u8 = "noir", glass: bool = false, colors: [5][]const u8 = .{ "", "", "", "", "" } };
+const Settings = struct { collapse_reviewed: bool = true, split: bool = true, sidebar: bool = true, mode: git.Mode = .working, base: []const u8 = "main", sidebar_width: f32 = 219, notes_width: f32 = 300, theme: []const u8 = "noir", glass: bool = false, colors: [5][]const u8 = .{ "", "", "", "", "" }, ignore_whitespace: bool = false, algorithm: git.Algorithm = .default, fold_generated: bool = true };
 /// Colors a person can set over any theme, in Settings › Appearance.
 pub const color_roles = [_][]const u8{ "Background", "Text", "Accent", "Added", "Removed" };
 pub const Choice = struct { index: usize, score: u32, file: bool = false };
@@ -60,6 +64,8 @@ pub const Model = struct {
     palette_offset: f32 = 0,
     history: std.ArrayList(ReviewChange) = .empty,
     files: []patch.File = &.{},
+    /// The highlighter states rows start in (`patch.Row.old_carry`).
+    carries: []const syntax.State = &.{},
     selected: usize = 0,
     visible: []usize = &.{},
     rail_rows: []const RailRow = &.{},
@@ -83,6 +89,11 @@ pub const Model = struct {
     split: bool = true,
     sidebar: bool = true,
     collapse_reviewed: bool = true,
+    /// Lockfiles and `linguist-generated` paths open folded.
+    fold_generated: bool = true,
+    /// Diff options; changing one reads the comparison again.
+    ignore_whitespace: bool = false,
+    algorithm: git.Algorithm = .default,
     default_mode: git.Mode = .working,
     settings_open: bool = false,
     base_popover: bool = false,
@@ -123,7 +134,21 @@ pub const Model = struct {
     error_text: []const u8 = "",
     notice: []const u8 = "",
     generation: usize = 0,
+    /// The notes of the comparison shown: those of this view (the whole
+    /// comparison, or the commit shown), then any left on commits a rewrite
+    /// dropped. Saved with the rest of the store's notes.
     notes: std.ArrayList(Note) = .empty,
+    /// Every file change reviewed in this repository (or patch), by content.
+    records: std.ArrayList(review.Record) = .empty,
+    /// Files reviewed in an earlier version show only what changed since.
+    since_review: bool = false,
+    /// Branch mode: its commits, oldest first, and the one under review on
+    /// its own (null for all of them together).
+    commits: []const git.Commit = &.{},
+    commit: ?usize = null,
+    commit_states: []history.CommitState = &.{},
+    commit_menu: bool = false,
+    commit_offset: f32 = 0,
 };
 pub const Msg = union(enum) {
     key: keyboard.Key,
@@ -185,11 +210,21 @@ pub const Msg = union(enum) {
     settings_section: SettingsSection,
     settings_search_edit: canvas.TextInputEvent,
     toggle_fold_setting,
+    toggle_generated_setting,
+    toggle_whitespace,
+    set_algorithm: git.Algorithm,
     toggle_rail_setting,
     default_split: bool,
     default_mode: git.Mode,
     reset_widths,
     copy_data_path,
+    toggle_since,
+    select_commit: ?usize,
+    toggle_commit_menu,
+    close_commit_menu,
+    commit_menu_scrolled: canvas.ScrollState,
+    resolve_note: usize,
+    reopen_note: usize,
     note_file: usize,
     toggle_split,
     toggle_notes,
@@ -211,6 +246,7 @@ pub const Msg = union(enum) {
     export_review,
     dismiss,
     poll: sdk.EffectTimer,
+    keeper_tick: sdk.EffectTimer,
     clear_notice: sdk.EffectTimer,
     pane_tick: sdk.EffectTimer,
     palette_tick: sdk.EffectTimer,
@@ -227,9 +263,41 @@ const Job = struct {
     mode: git.Mode,
     base: []const u8,
     head: []const u8 = "",
+    options: git.Options = .{},
     imported: ?[]const u8 = null,
+    /// Patch's data folder, absolute; each repository's store sits in it.
+    data: []const u8 = "",
     result: ?git.Review = null,
     files: []patch.File = &.{},
+    carries: []const syntax.State = &.{},
+    /// What the store holds, split for the view: records; this view's notes
+    /// (then those of dropped commits); every other note.
+    store_dir: []const u8 = "",
+    scope: []const u8 = "",
+    records: std.ArrayList(review.Record) = .empty,
+    notes: std.ArrayList(Note) = .empty,
+    hidden: std.ArrayList(Note) = .empty,
+    tips: std.ArrayList(review.Tip) = .empty,
+    marks: std.ArrayList(review.Mark) = .empty,
+    migrated: std.ArrayList([]const u8) = .empty,
+    commit_states: []history.CommitState = &.{},
+    /// A file changed after Git read it, so what is shown is already behind.
+    stale: bool = false,
+    /// The store changed while loading (a migration, a rewritten branch).
+    dirty: bool = false,
+    /// The store could not be read, so this review is not saved.
+    store_failed: bool = false,
+    /// The store, and the thread writing the rest of the working tree's
+    /// versions into it once the review is up (those not needed at once).
+    store: ?git.Store = null,
+    keeper: ?std.Thread = null,
+    keeper_done: std.atomic.Value(bool) = .init(false),
+    keeper_stale: std.atomic.Value(bool) = .init(false),
+    /// Reviewed versions to copy from the repository into the store, and
+    /// every version the store must keep (taken as loading ends, so the
+    /// thread reads nothing the review then changes).
+    copies: []const []const u8 = &.{},
+    referenced: std.StringHashMapUnmanaged(void) = .empty,
     failure: ?anyerror = null,
     done: std.atomic.Value(bool) = .init(false),
     thread: ?std.Thread = null,
@@ -248,16 +316,253 @@ const Job = struct {
             .base = "",
             .title = "Imported patch",
             .kind = "patch",
-        } else try git.read(alloc, self.io, self.repo, self.mode, self.base, self.head);
-        self.files = try patch.parse(alloc, self.result.?.patch);
+        } else blk: {
+            // Where Git may keep what it makes while diffing a merge.
+            if (self.options.commit.len > 0 and self.options.scratch.len > 0) std.Io.Dir.cwd().createDirPath(self.io, self.options.scratch) catch {};
+            break :blk try git.read(alloc, self.io, self.repo, self.mode, self.base, self.head, self.options);
+        };
+        const result = self.result.?;
+        self.files = try patch.parse(alloc, result.patch);
+        if (result.identity.len > 0) self.files = try withWhitespaceOnly(alloc, self.files, result.identity);
         std.mem.sort(patch.File, self.files, {}, struct {
             fn less(_: void, a: patch.File, b: patch.File) bool {
                 return std.mem.lessThan(u8, a.path, b.path);
             }
         }.less);
+        markGenerated(alloc, self.io, result.root, self.files);
+        // A commit's review opens with its message.
+        if (self.options.commit.len > 0) for (result.commits) |commit| if (std.mem.eql(u8, commit.id, self.options.commit)) {
+            var files: std.ArrayList(patch.File) = .empty;
+            try files.append(alloc, try history.messageFile(alloc, commit.message));
+            try files.appendSlice(alloc, self.files);
+            self.files = files.items;
+            break;
+        };
+        // Without the store read whole, nothing is saved over it.
+        self.remember(alloc) catch {
+            self.store_dir = "";
+            self.store_failed = true;
+        };
+        // The changes since review are lexed alongside the full diffs.
+        var lexed: std.ArrayList(patch.File) = .empty;
+        try lexed.appendSlice(alloc, self.files);
+        for (self.files) |file| if (file.since) |since| try lexed.append(alloc, .{ .path = file.path, .unified = since.unified, .split = since.split });
+        self.carries = try syntax.carryStates(alloc, lexed.items);
+        if (self.store != null) {
+            self.keeper = std.Thread.spawn(.{}, keepRest, .{self}) catch null;
+            if (self.keeper == null) self.keeper_done.store(true, .release);
+        }
+    }
+    /// Fills the store off the path to the first frame: the working tree's
+    /// versions not yet in it, so a change marked reviewed can later be
+    /// diffed, and reviewed versions the repository alone holds.
+    fn keepRest(self: *Job) void {
+        var arena = std.heap.ArenaAllocator.init(gpa);
+        defer arena.deinit();
+        const result = self.result.?;
+        const context = history.Context{ .alloc = arena.allocator(), .io = self.io, .root = result.root, .store = self.store, .options = self.options };
+        if (self.mode == .working and !history.snapshot(context, self.files, null)) self.keeper_stale.store(true, .release);
+        git.copyBlobs(arena.allocator(), self.io, result.root, self.store.?, self.copies) catch {};
+        history.prune(arena.allocator(), self.io, self.store.?.objects, &self.referenced);
+        self.keeper_done.store(true, .release);
+    }
+    /// Reads the store and brings it to what was just read: which changes
+    /// were reviewed, what changed since, where notes are now, and how a
+    /// rewritten branch's commits pair with the ones reviewed.
+    fn remember(self: *Job, alloc: std.mem.Allocator) !void {
+        const result = self.result.?;
+        const seed = self.imported orelse result.root;
+        const folder = review.folder(seed);
+        self.store_dir = try std.fmt.allocPrint(alloc, "{s}/{s}/{s}", .{ self.data, if (self.imported != null) "patches" else "repos", &folder });
+        const objects = try std.fmt.allocPrint(alloc, "{s}/objects", .{self.store_dir});
+        try std.Io.Dir.cwd().createDirPath(self.io, if (self.imported != null) self.store_dir else objects);
+        const store_path = try std.fmt.allocPrint(alloc, "{s}/review.json", .{self.store_dir});
+        if (std.Io.Dir.cwd().readFileAlloc(self.io, store_path, alloc, .limited(32 * 1024 * 1024))) |bytes| {
+            const stored = try std.json.parseFromSliceLeaky(review.Store, alloc, bytes, .{ .ignore_unknown_fields = true, .allocate = .alloc_always });
+            try self.records.appendSlice(alloc, stored.records);
+            try self.hidden.appendSlice(alloc, stored.notes);
+            try self.tips.appendSlice(alloc, stored.tips);
+            try self.marks.appendSlice(alloc, stored.commits);
+            try self.migrated.appendSlice(alloc, stored.migrated);
+        } else |err| if (err != error.FileNotFound) return err;
+        var scope_buffer: [256]u8 = undefined;
+        const head_name = if (self.head.len > 0) self.head else result.head;
+        self.scope = try alloc.dupe(u8, if (self.imported != null) "patch" else review.scope(&scope_buffer, @tagName(self.mode), head_name));
+        if (self.options.commit.len == 0) self.migrate(alloc);
+        const store: ?git.Store = if (self.imported == null and result.objects.len > 0) .{ .objects = objects, .repository = result.objects } else null;
+        self.store = store;
+        var context = history.Context{ .alloc = alloc, .io = self.io, .root = result.root, .store = store, .options = self.options };
+        // A message's versions are blobs too, so a reworded message diffs.
+        if (store) |value| for (self.files) |file| if (file.message and !value.has(self.io, file.new_blob)) {
+            for (result.commits) |commit| if (std.mem.eql(u8, commit.id, self.options.commit)) {
+                _ = git.writeBlob(alloc, self.io, result.root, value, commit.message) catch {};
+            };
+        };
+        var pairs: []const git.Pair = &.{};
+        if (self.imported == null and self.mode == .branch) pairs = self.pair(alloc);
+        // The message this commit had when last seen, under its id then or now.
+        if (self.options.commit.len > 0) {
+            var earlier: []const u8 = self.options.commit;
+            for (pairs) |pairing| if (std.mem.eql(u8, pairing.new, earlier)) {
+                earlier = pairing.old;
+            };
+            for (self.marks.items) |mark| if (mark.message.len > 0 and (std.mem.eql(u8, mark.id, earlier) or std.mem.eql(u8, mark.id, self.options.commit))) {
+                context.earlier_message = mark.message;
+            };
+        }
+        // This view's notes: the comparison's, and the commit's when one is
+        // shown; in the combined view, also those of commits a rewrite dropped.
+        var dropped: std.ArrayList(Note) = .empty;
+        var others: std.ArrayList(Note) = .empty;
+        for (self.hidden.items) |note| {
+            if (!std.mem.eql(u8, note.scope, self.scope)) {
+                try others.append(alloc, note);
+            } else if (std.mem.eql(u8, note.commit, self.options.commit)) {
+                try self.notes.append(alloc, note);
+            } else if (self.options.commit.len == 0 and !listed(result.commits, note.commit)) {
+                try dropped.append(alloc, note);
+            } else try others.append(alloc, note);
+        }
+        self.hidden = others;
+        // The working tree's versions this comparison diffs against now; the
+        // rest are written once the review is up.
+        if (self.imported == null and self.mode == .working) self.stale = !history.snapshot(context, self.files, history.urgent(alloc, self.files, self.records.items, self.notes.items));
+        self.copies = history.toKeep(context, self.files, self.records.items);
+        history.apply(context, self.files, self.records.items, self.notes.items);
+        try self.notes.appendSlice(alloc, dropped.items);
+        // Reviewed commit by commit, a file counts as reviewed together too.
+        if (self.mode == .branch and self.options.commit.len == 0) for (self.files) |*file| {
+            if (file.reviewed or !review.chained(alloc, self.records.items, file.path, file.old_blob, file.new_blob)) continue;
+            file.reviewed = true;
+            file.prior = .same;
+        };
+        if (self.mode == .branch) self.commit_states = @constCast(history.commitStates(alloc, result.commits, self.records.items, self.marks.items, pairs));
+        if (store != null) {
+            for (self.records.items) |reviewed| for ([_][]const u8{ reviewed.old, reviewed.new }) |id| try self.referenced.put(alloc, id, {});
+            for ([_][]const Note{ self.notes.items, self.hidden.items }) |group| for (group) |note| try self.referenced.put(alloc, note.blob, {});
+            for (self.marks.items) |mark| try self.referenced.put(alloc, mark.message, {});
+            for (self.files) |file| for ([_][]const u8{ file.old_blob, file.new_blob }) |id| try self.referenced.put(alloc, id, {});
+        }
+    }
+    /// Pairs a rewritten branch's commits with those last reviewed (by
+    /// `git range-diff` while Git has the old ones, else by subject and
+    /// author time), moving notes to their commits' new ids and keeping
+    /// reviews of commits whose changes are unchanged. Remembers the tip.
+    fn pair(self: *Job, alloc: std.mem.Allocator) []const git.Pair {
+        const result = self.result.?;
+        var pairs: []const git.Pair = &.{};
+        var previous: ?*review.Tip = null;
+        for (self.tips.items) |*tip| if (std.mem.eql(u8, tip.scope, self.scope)) {
+            previous = tip;
+        };
+        if (previous) |tip| if (tip.tip.len > 0 and !std.mem.eql(u8, tip.tip, result.tip)) {
+            if (tip.base.len > 0 and result.merge_base.len > 0 and git.hasCommit(alloc, self.io, result.root, tip.tip)) {
+                const old_range = std.fmt.allocPrint(alloc, "{s}..{s}", .{ tip.base, tip.tip }) catch "";
+                const new_range = std.fmt.allocPrint(alloc, "{s}..{s}", .{ result.merge_base, result.tip }) catch "";
+                pairs = git.rangeDiff(alloc, self.io, result.root, old_range, new_range) catch &.{};
+            }
+            if (pairs.len == 0) {
+                var found: std.ArrayList(git.Pair) = .empty;
+                for (self.marks.items) |mark| {
+                    if (listed(result.commits, mark.id) or mark.subject.len == 0) continue;
+                    for (result.commits) |commit| if (commit.time == mark.time and std.mem.eql(u8, commit.subject(), mark.subject)) {
+                        found.append(alloc, .{ .old = mark.id, .new = commit.id, .same = false }) catch break;
+                        break;
+                    };
+                }
+                pairs = found.items;
+            }
+        };
+        for (pairs) |pairing| {
+            for (self.hidden.items) |*note| if (std.mem.eql(u8, note.scope, self.scope) and std.mem.eql(u8, note.commit, pairing.old)) {
+                note.commit = pairing.new;
+                self.dirty = true;
+            };
+            for (self.marks.items) |mark| if (std.mem.eql(u8, mark.id, pairing.old)) {
+                for (result.commits) |commit| if (std.mem.eql(u8, commit.id, pairing.new)) {
+                    self.marks.append(alloc, .{ .id = commit.id, .subject = commit.subject(), .time = commit.time, .reviewed = mark.reviewed and pairing.same, .message = mark.message }) catch {};
+                    self.dirty = true;
+                };
+                break;
+            };
+        }
+        const now = review.Tip{ .scope = self.scope, .base = result.merge_base, .tip = result.tip };
+        if (previous) |tip| {
+            if (!std.mem.eql(u8, tip.tip, now.tip) or !std.mem.eql(u8, tip.base, now.base)) self.dirty = true;
+            tip.* = now;
+        } else if (result.tip.len > 0) {
+            self.tips.append(alloc, now) catch {};
+            self.dirty = true;
+        }
+        return pairs;
+    }
+    /// Brings in progress saved before the review store, under the key it
+    /// had then: the comparison as Git showed it by default. Each scope is
+    /// tried once.
+    fn migrate(self: *Job, alloc: std.mem.Allocator) void {
+        const attempt = std.fmt.allocPrint(alloc, "scope {s}", .{self.scope}) catch return;
+        for (self.migrated.items) |done| if (std.mem.eql(u8, done, attempt)) return;
+        self.migrated.append(alloc, attempt) catch return;
+        self.dirty = true;
+        if (!legacyFiles(self.io, self.data)) return;
+        const result = self.result.?;
+        const text = if (self.imported != null) result.patch else (git.read(alloc, self.io, self.repo, self.mode, self.base, self.head, .{ .full_index = false }) catch return).patch;
+        const key = review.legacyKey(self.imported orelse self.repo, text);
+        const path = std.fmt.allocPrint(alloc, "{s}/{s}.json", .{ self.data, &key }) catch return;
+        const bytes = std.Io.Dir.cwd().readFileAlloc(self.io, path, alloc, .limited(4 * 1024 * 1024)) catch return;
+        const legacy = std.json.parseFromSliceLeaky(Legacy, alloc, bytes, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch return;
+        for (legacy.reviewed) |reviewed| for (self.files) |file| if (std.mem.eql(u8, file.path, reviewed)) {
+            review.mark(alloc, &self.records, file) catch {};
+        };
+        for (legacy.notes) |legacy_note| {
+            var note = legacy_note;
+            note.scope = self.scope;
+            for (self.files) |file| if (std.mem.eql(u8, file.path, note.path)) {
+                note.blob = if (note.old) file.old_blob else file.new_blob;
+                note.excerpt = review.excerpt(alloc, file.unified, note.old, note.line, note.line_end);
+            };
+            self.hidden.append(alloc, note) catch {};
+        }
+        self.migrated.append(alloc, alloc.dupe(u8, &key) catch return) catch {};
+    }
+    /// Whether any progress saved before the store is left to bring in:
+    /// files named by a 64-digit key.
+    fn legacyFiles(io: std.Io, data: []const u8) bool {
+        var dir = std.Io.Dir.cwd().openDir(io, data, .{ .iterate = true }) catch return false;
+        defer dir.close(io);
+        var entries = dir.iterate();
+        while (entries.next(io) catch return false) |entry| {
+            if (entry.kind == .file and entry.name.len == 69 and std.mem.endsWith(u8, entry.name, ".json")) return true;
+        }
+        return false;
+    }
+    fn listed(commits: []const git.Commit, id: []const u8) bool {
+        for (commits) |commit| if (std.mem.eql(u8, commit.id, id)) return true;
+        return false;
+    }
+    /// Files the default diff changes but the shown one does not: every change
+    /// was whitespace. They stay listed, so their review state stays too.
+    fn withWhitespaceOnly(alloc: std.mem.Allocator, shown: []patch.File, identity: []const u8) ![]patch.File {
+        var paths: std.StringHashMapUnmanaged(void) = .empty;
+        for (shown) |file| try paths.put(alloc, file.path, {});
+        var files: std.ArrayList(patch.File) = .fromOwnedSlice(shown);
+        for (try patch.parse(alloc, identity)) |file| if (!paths.contains(file.path)) {
+            try files.append(alloc, .{ .path = file.path, .previous = file.previous, .status = file.status, .unified = &.{}, .split = &.{}, .whitespace_only = true, .old_blob = file.old_blob, .new_blob = file.new_blob, .mode = file.mode, .change = file.change });
+        };
+        return files.items;
+    }
+    /// Generated files: lockfiles, unless an attribute says otherwise, and
+    /// paths the repository marks `linguist-generated`.
+    fn markGenerated(alloc: std.mem.Allocator, io: std.Io, root: []const u8, files: []patch.File) void {
+        const paths = alloc.alloc([]const u8, files.len) catch return;
+        const marks = alloc.alloc(?bool, files.len) catch return;
+        for (files, paths) |file, *path| path.* = file.path;
+        if (root.len > 0) git.generated(alloc, io, root, paths, marks) else @memset(marks, null);
+        for (files, marks) |*file, mark| file.generated = mark orelse patch.isLockfile(file.path);
     }
     fn destroy(self: *Job) void {
         if (self.thread) |thread| thread.join();
+        if (self.keeper) |thread| thread.join();
         self.arena.deinit();
         gpa.destroy(self);
     }
@@ -270,7 +575,12 @@ const Session = struct {
     pending: ?*Job = null,
     document: ?*Job = null,
     data_dir: []const u8,
-    progress_path: []const u8 = "",
+    /// The attributes file Git diffs with (`git.Options.attributes`).
+    attributes_path: []const u8 = "",
+    /// The data folder, absolute (Git runs elsewhere and needs it whole).
+    data_abs: []const u8 = "",
+    /// A file to return to once a re-read finishes, owned by `gpa`.
+    keep: ?[]const u8 = null,
     measure_startup: bool = false,
     review_reported: bool = false,
     pointer_point: sdk.geometry.PointF = .{},
@@ -335,15 +645,21 @@ fn showError(model: *Model, err: anyerror) void {
         error.NoInitialCommit => "This repository has no commits yet.",
         error.InvalidPatch, error.InvalidHunk => "This patch could not be read.",
         error.PatchTooLarge, error.StreamTooLong => "Patch exceeds 64 MB.",
+        error.CommitNotFound => "That commit is no longer on the branch.",
         else => @errorName(err),
     };
 }
 fn startLoad(model: *Model) bool {
     if (session.pending != null) return false;
     const job = gpa.create(Job) catch return false;
-    job.* = .{ .io = session.io, .repo = session.repo, .mode = model.mode, .base = "main", .imported = session.imported };
-    job.base = job.arena.allocator().dupe(u8, model.base.text()) catch "main";
-    job.head = job.arena.allocator().dupe(u8, model.compare_head.text()) catch "";
+    job.* = .{ .io = session.io, .repo = session.repo, .mode = model.mode, .base = "main", .imported = session.imported, .data = session.data_abs, .options = .{ .ignore_whitespace = model.ignore_whitespace, .algorithm = model.algorithm, .attributes = session.attributes_path } };
+    const alloc = job.arena.allocator();
+    job.base = alloc.dupe(u8, model.base.text()) catch "main";
+    job.head = alloc.dupe(u8, model.compare_head.text()) catch "";
+    if (model.mode == .branch and session.imported == null) if (model.commit) |index| if (index < model.commits.len) {
+        job.options.commit = alloc.dupe(u8, model.commits[index].id) catch "";
+    };
+    job.options.scratch = std.fmt.allocPrint(alloc, "{s}/scratch/objects", .{session.data_abs}) catch "";
     model.busy = true;
     model.error_text = "";
     session.pending = job;
@@ -441,29 +757,6 @@ fn jump(model: *Model, fx: *Effects, index: usize) void {
     if (model.focus != .review) focusReview(model);
     requestScroll(model, fx, @as(f32, @floatFromInt(model.starts[index])) * 24);
 }
-fn progressPath(review: git.Review) []const u8 {
-    var hash = std.crypto.hash.sha2.Sha256.init(.{});
-    hash.update(session.imported orelse session.repo);
-    hash.update("\x00");
-    hash.update(review.patch);
-    var digest: [32]u8 = undefined;
-    hash.final(&digest);
-    return std.fmt.allocPrint(gpa, "{s}/{s}.json", .{ session.data_dir, std.fmt.bytesToHex(digest, .lower) }) catch "";
-}
-fn restore(model: *Model) void {
-    const job = session.document orelse return;
-    const alloc = job.arena.allocator();
-    const bytes = std.Io.Dir.cwd().readFileAlloc(session.io, session.progress_path, alloc, .limited(4 * 1024 * 1024)) catch return;
-    const value = std.json.parseFromSlice(Saved, alloc, bytes, .{ .ignore_unknown_fields = true, .allocate = .alloc_always }) catch return;
-    for (model.files) |*file| for (value.value.reviewed) |path| {
-        if (std.mem.eql(u8, file.path, path)) {
-            file.reviewed = true;
-            file.collapsed = model.collapse_reviewed;
-            break;
-        }
-    };
-    model.notes.appendSlice(alloc, value.value.notes) catch {};
-}
 const PaneMotion = struct { start_ms: u64, rail_from: f32, notes_from: f32 };
 fn railTarget(model: *const Model) f32 {
     return if (model.sidebar) model.sidebar_width else 0;
@@ -531,7 +824,7 @@ fn saveSettings(model: *const Model) void {
     defer gpa.free(path);
     var colors: [color_roles.len][]const u8 = undefined;
     for (&colors, &model.colors) |*out, *buffer| out.* = buffer.text();
-    const bytes = std.json.Stringify.valueAlloc(gpa, Settings{ .collapse_reviewed = model.collapse_reviewed, .split = model.split, .sidebar = model.sidebar, .mode = model.default_mode, .base = model.base.text(), .sidebar_width = model.sidebar_width, .notes_width = model.notes_width, .theme = theme.schemes[model.theme_index].id, .glass = model.glass_panes, .colors = colors }, .{}) catch return;
+    const bytes = std.json.Stringify.valueAlloc(gpa, Settings{ .collapse_reviewed = model.collapse_reviewed, .split = model.split, .sidebar = model.sidebar, .mode = model.default_mode, .base = model.base.text(), .sidebar_width = model.sidebar_width, .notes_width = model.notes_width, .theme = theme.schemes[model.theme_index].id, .glass = model.glass_panes, .colors = colors, .ignore_whitespace = model.ignore_whitespace, .algorithm = model.algorithm, .fold_generated = model.fold_generated }, .{}) catch return;
     defer gpa.free(bytes);
     std.Io.Dir.cwd().writeFile(session.io, .{ .sub_path = path, .data = bytes }) catch {};
 }
@@ -544,6 +837,9 @@ fn loadSettings(model: *Model) void {
     defer parsed.deinit();
     const value = parsed.value;
     model.collapse_reviewed = value.collapse_reviewed;
+    model.fold_generated = value.fold_generated;
+    model.ignore_whitespace = value.ignore_whitespace;
+    model.algorithm = value.algorithm;
     model.split = value.split;
     model.sidebar = value.sidebar;
     model.rail_mounted = value.sidebar;
@@ -558,17 +854,49 @@ fn loadSettings(model: *Model) void {
     for (&model.colors, value.colors) |*buffer, text| buffer.* = .init(text[0..@min(text.len, 7)]);
     applyAppearance(model);
 }
+/// Saves the store: every record, this view's notes with every other note,
+/// where each branch's review stood, and the commits worth finding again.
+/// It is written whole beside the old one and renamed over it.
 fn persist(model: *Model) void {
-    if (session.progress_path.len == 0) return;
+    const job = session.document orelse return;
+    if (job.store_dir.len == 0) return;
     var arena = std.heap.ArenaAllocator.init(gpa);
     defer arena.deinit();
     const alloc = arena.allocator();
-    var reviewed_files: std.ArrayList([]const u8) = .empty;
-    for (model.files) |file| if (file.reviewed) {
-        reviewed_files.append(alloc, file.path) catch return;
-    };
-    const bytes = std.json.Stringify.valueAlloc(alloc, Saved{ .reviewed = reviewed_files.items, .notes = model.notes.items }, .{}) catch return;
-    std.Io.Dir.cwd().writeFile(session.io, .{ .sub_path = session.progress_path, .data = bytes }) catch |err| showError(model, err);
+    var notes: std.ArrayList(Note) = .empty;
+    notes.appendSlice(alloc, model.notes.items) catch return;
+    notes.appendSlice(alloc, job.hidden.items) catch return;
+    const store = review.Store{ .records = model.records.items, .notes = notes.items, .tips = job.tips.items, .commits = job.marks.items, .migrated = job.migrated.items };
+    const bytes = std.json.Stringify.valueAlloc(alloc, store, .{}) catch return;
+    const path = std.fmt.allocPrint(alloc, "{s}/review.json", .{job.store_dir}) catch return;
+    const temporary = std.fmt.allocPrint(alloc, "{s}/review.json.new", .{job.store_dir}) catch return;
+    std.Io.Dir.cwd().writeFile(session.io, .{ .sub_path = temporary, .data = bytes }) catch |err| return showError(model, err);
+    std.Io.Dir.cwd().rename(temporary, std.Io.Dir.cwd(), path, session.io) catch |err| showError(model, err);
+}
+/// Where a file folds by default: reviewed ones (when that setting is on),
+/// whitespace-only ones, and generated ones (when that one is).
+fn defaultFold(model: *const Model, file: patch.File) bool {
+    return (file.reviewed and model.collapse_reviewed) or file.whitespace_only or (file.generated and model.fold_generated);
+}
+/// Shows, or stops showing, only what changed since review: a file reviewed
+/// in an earlier version shows the diff from that version, and files whose
+/// change was reviewed fold away.
+fn showSince(model: *Model, on: bool) void {
+    model.since_review = on;
+    for (model.files) |*file| {
+        if (file.since != null and file.showing_since != on) file.swapSince();
+        file.collapsed = if (!on) defaultFold(model, file.*) else switch (file.prior) {
+            .same, .rebased => true,
+            .changed, .base => false,
+            .none => defaultFold(model, file.*),
+        };
+    }
+}
+/// Files that an earlier review saw in another version.
+pub fn changedSince(model: *const Model) usize {
+    var count: usize = 0;
+    for (model.files) |file| count += @intFromBool(file.prior == .changed or file.prior == .base);
+    return count;
 }
 fn poll(model: *Model, fx: *Effects) void {
     const job = session.pending orelse return;
@@ -580,11 +908,19 @@ fn poll(model: *Model, fx: *Effects) void {
     if (job.failure) |err| {
         showError(model, err);
         job.destroy();
+        if (session.keep) |path| gpa.free(path);
+        session.keep = null;
+        // A commit rewritten away: review the branch as a whole instead.
+        if (err == error.CommitNotFound) {
+            model.commit = null;
+            load(model, fx);
+        }
         return;
     }
     const old_document = session.document;
     session.document = job;
     model.files = job.files;
+    model.carries = job.carries;
     model.selected = 0;
     model.cursor = 0;
     model.cursor_active = false;
@@ -597,8 +933,16 @@ fn poll(model: *Model, fx: *Effects) void {
     model.search_matches = &.{};
     model.search_query.clear();
     model.palette = .closed;
+    model.commit_menu = false;
     focusReview(model);
-    model.notes = .empty;
+    model.notes = job.notes;
+    model.records = job.records;
+    model.commits = job.result.?.commits;
+    model.commit_states = job.commit_states;
+    model.commit = null;
+    if (job.options.commit.len > 0) for (model.commits, 0..) |commit, index| if (std.mem.eql(u8, commit.id, job.options.commit)) {
+        model.commit = index;
+    };
     model.repository = job.result.?.repository;
     model.branch = if (job.result.?.kind.len == 3) job.result.?.base else "patch";
     model.head = if (job.result.?.kind.len == 3) job.result.?.head else "";
@@ -608,19 +952,38 @@ fn poll(model: *Model, fx: *Effects) void {
     model.draft.clear();
     model.generation += 1;
     model.scroll_x = 0;
-    if (session.progress_path.len > 0) gpa.free(session.progress_path);
-    session.progress_path = progressPath(job.result.?);
-    restore(model);
+    for (model.files) |*file| file.collapsed = defaultFold(model, file.*);
+    // Still reading what changed since review, if there is any.
+    if (model.since_review) showSince(model, changedSince(model) > 0);
     reindex(model);
     layoutRows(model);
     model.jump_offset = null;
+    if (session.keep) |path| {
+        defer gpa.free(path);
+        session.keep = null;
+        for (model.files, 0..) |file, index| if (std.mem.eql(u8, file.path, path)) {
+            jump(model, fx, index);
+            break;
+        };
+    }
     if (old_document) |old_job| old_job.destroy();
+    if (job.dirty) persist(model);
+    if (job.stale) notify(model, fx, "Files changed while loading · ⌘R reads them again");
+    if (job.store_failed) model.error_text = "Saved review progress could not be read; this review will not be saved.";
+    if (job.keeper != null) fx.startTimer(.{ .key = 10, .interval_ms = 150, .mode = .repeating, .on_fire = Effects.timerMsg(.keeper_tick) });
     if (session.imported == null) {
         const last_path = std.fmt.allocPrint(gpa, "{s}/repository", .{session.data_dir}) catch return;
         defer gpa.free(last_path);
         std.Io.Dir.cwd().writeFile(session.io, .{ .sub_path = last_path, .data = session.repo }) catch {};
     }
     if (session.measure_startup and model.generation == 1) std.debug.print("patch-perf: review_ready wall_ns={d}\n", .{std.Io.Clock.real.now(session.io).nanoseconds});
+}
+/// Reads a Git comparison again under new diff options, returning the
+/// reader to the file they were on. An imported patch is shown as written.
+fn rediff(model: *Model, fx: *Effects) void {
+    if (model.imported) return;
+    if (session.keep == null and model.selected < model.files.len) session.keep = gpa.dupe(u8, model.files[model.selected].path) catch null;
+    load(model, fx);
 }
 fn notify(model: *Model, fx: *Effects, text: []const u8) void {
     model.notice = text;
@@ -642,20 +1005,72 @@ fn pick(model: *Model, fx: *Effects, directory: bool) void {
     } else session.imported = path;
     load(model, fx);
 }
+/// The commit under review on its own, or "" for the whole comparison.
+pub fn currentCommit(model: *const Model) []const u8 {
+    const index = model.commit orelse return "";
+    return if (index < model.commits.len) model.commits[index].id else "";
+}
+/// Whether a note belongs to what is shown (not to a commit a rewrite dropped).
+pub fn inView(model: *const Model, note: Note) bool {
+    return std.mem.eql(u8, note.commit, currentCommit(model));
+}
+/// A commit's short id and subject, from the branch or from what Patch kept.
+fn commitTitle(model: *const Model, id: []const u8, buffer: []u8) []const u8 {
+    const short = id[0..@min(id.len, 7)];
+    for (model.commits) |commit| if (std.mem.eql(u8, commit.id, id)) return std.fmt.bufPrint(buffer, "`{s}` {s}", .{ short, commit.subject() }) catch short;
+    if (session.document) |job| for (job.marks.items) |mark| if (std.mem.eql(u8, mark.id, id)) return std.fmt.bufPrint(buffer, "`{s}` {s} (no longer on the branch)", .{ short, mark.subject }) catch short;
+    return std.fmt.bufPrint(buffer, "`{s}`", .{short}) catch short;
+}
+fn exportNote(writer: *std.Io.Writer, note: Note, level: []const u8) !void {
+    try writer.print("\n{s} `{s}`", .{ level, note.path });
+    if (note.line > 0) {
+        try writer.print(":{d}", .{note.line});
+        if (note.line_end > note.line) try writer.print("–{d}", .{note.line_end});
+        try writer.print(" ({s})", .{if (note.old) "old" else "new"});
+    }
+    if (note.state == .outdated) try writer.writeAll(" · outdated");
+    try writer.writeAll("\n\n");
+    // An outdated note quotes the lines it was left on, since they changed.
+    if (note.state == .outdated and note.excerpt.len > 0) {
+        var lines = std.mem.splitScalar(u8, note.excerpt, '\n');
+        while (lines.next()) |line| try writer.print("> {s}\n", .{line});
+        try writer.writeAll("\n");
+    }
+    try writer.print("{s}\n", .{note.text});
+}
+/// The review as Markdown: the files and their state, then the open and
+/// outdated notes (resolved ones are done), a branch's grouped by commit.
 fn exportMarkdown(alloc: std.mem.Allocator, model: *const Model) ![]const u8 {
     var output: std.Io.Writer.Allocating = .init(alloc);
-    try output.writer.print("# Review: {s}\n\n{s} · {s}\n\n", .{ model.repository, @tagName(model.mode), model.branch });
+    const writer = &output.writer;
+    var title: [256]u8 = undefined;
+    try writer.print("# Review: {s}\n\n{s} · {s}\n", .{ model.repository, @tagName(model.mode), model.branch });
+    if (model.commit != null) try writer.print("\nCommit {s}\n", .{commitTitle(model, currentCommit(model), &title)});
+    try writer.writeAll("\n");
     for (model.files) |file| {
-        try output.writer.print("- [{s}] `{s}` (+{d} −{d})\n", .{ if (file.reviewed) "x" else " ", file.path, file.additions, file.deletions });
+        const state = if (!file.reviewed and (file.prior == .changed or file.prior == .base)) " · changed since review" else "";
+        try writer.print("- [{s}] `{s}` (+{d} −{d}){s}\n", .{ if (file.reviewed) "x" else " ", file.path, file.additions, file.deletions, state });
     }
-    for (model.notes.items) |note| {
-        try output.writer.print("\n## `{s}`", .{note.path});
-        if (note.line > 0) {
-            try output.writer.print(":{d}", .{note.line});
-            if (note.line_end > note.line) try output.writer.print("–{d}", .{note.line_end});
-            try output.writer.print(" ({s})", .{if (note.old) "old" else "new"});
-        }
-        try output.writer.print("\n\n{s}\n", .{note.text});
+    for (model.notes.items) |note| if (note.state != .resolved and inView(model, note)) try exportNote(writer, note, "##");
+    // Notes on other commits of the branch, each commit under its own heading.
+    var commits: std.ArrayList([]const u8) = .empty;
+    defer commits.deinit(alloc);
+    const others = if (session.document) |job| job.hidden.items else &.{};
+    for ([_][]const Note{ model.notes.items, others }) |group| for (group) |note| {
+        if (inView(model, note) or note.state == .resolved or note.scope.len == 0) continue;
+        if (session.document) |job| if (!std.mem.eql(u8, note.scope, job.scope)) continue;
+        const seen = for (commits.items) |id| {
+            if (std.mem.eql(u8, id, note.commit)) break true;
+        } else false;
+        if (!seen) try commits.append(alloc, note.commit);
+    };
+    for (commits.items) |id| {
+        try writer.print("\n## {s}\n", .{if (id.len == 0) "All changes" else commitTitle(model, id, &title)});
+        for ([_][]const Note{ model.notes.items, others }) |group| for (group) |note| {
+            if (note.state == .resolved or !std.mem.eql(u8, note.commit, id) or inView(model, note)) continue;
+            if (session.document) |job| if (!std.mem.eql(u8, note.scope, job.scope)) continue;
+            try exportNote(writer, note, "###");
+        };
     }
     return output.toOwnedSlice();
 }
@@ -737,6 +1152,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             model.compare_head.set(if (std.mem.eql(u8, base, model.head)) "" else base);
             model.base.set(new_base);
             saveSettings(model);
+            model.commit = null;
             load(model, fx);
         },
         .toggle_band_menu => model.band_menu = !model.band_menu,
@@ -752,6 +1168,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         .pan => |delta| model.scroll_x = std.math.clamp(model.scroll_x + delta, 0, maxPan(model)),
         .goto_note => |index| if (index < model.notes.items.len) {
             const note = model.notes.items[index];
+            if (!inView(model, note)) return;
             for (model.files, 0..) |file, file_index| if (std.mem.eql(u8, file.path, note.path)) {
                 if (file.collapsed) update(model, .{ .collapse_file = file_index }, fx);
                 jump(model, fx, file_index);
@@ -784,6 +1201,21 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             model.collapse_reviewed = !model.collapse_reviewed;
             saveSettings(model);
         },
+        .toggle_generated_setting => {
+            model.fold_generated = !model.fold_generated;
+            saveSettings(model);
+        },
+        .toggle_whitespace => if (!model.busy) {
+            model.ignore_whitespace = !model.ignore_whitespace;
+            saveSettings(model);
+            rediff(model, fx);
+            notify(model, fx, if (model.imported) "Imported patches show whitespace as written" else if (model.ignore_whitespace) "Ignoring whitespace" else "Showing whitespace");
+        },
+        .set_algorithm => |algorithm| if (!model.busy and model.algorithm != algorithm) {
+            model.algorithm = algorithm;
+            saveSettings(model);
+            rediff(model, fx);
+        },
         .toggle_rail_setting => {
             model.sidebar = !model.sidebar;
             movePanes(model, fx);
@@ -804,6 +1236,43 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             saveSettings(model);
         },
         .copy_data_path => fx.writeClipboard(.{ .key = 3, .text = session.data_dir, .on_result = Effects.clipboardMsg(.clipboard_result) }),
+        .toggle_since => {
+            if (!model.since_review and changedSince(model) == 0) return notify(model, fx, "Nothing changed since your review");
+            const file = if (model.selected < model.files.len) model.files[model.selected].path else "";
+            showSince(model, !model.since_review);
+            layoutRows(model);
+            findMatches(model);
+            clearSelection(model);
+            model.cursor_active = false;
+            // Stay on the file being read; else start at the first that changed.
+            var target: ?usize = null;
+            for (model.files, 0..) |each, index| if (std.mem.eql(u8, each.path, file) and !each.collapsed) {
+                target = index;
+            };
+            if (target == null) for (model.files, 0..) |each, index| if (!each.collapsed) {
+                target = index;
+                break;
+            };
+            jump(model, fx, target orelse 0);
+            notify(model, fx, if (model.since_review) "Showing changes since review" else "Showing all changes");
+        },
+        .select_commit => |choice| if (!model.busy) {
+            model.commit_menu = false;
+            const next = if (choice) |index| (if (index < model.commits.len) index else return) else null;
+            if (std.meta.eql(next, model.commit)) return;
+            model.commit = next;
+            load(model, fx);
+        },
+        .toggle_commit_menu => {
+            model.commit_menu = !model.commit_menu;
+            model.commit_offset = 0;
+        },
+        .close_commit_menu => model.commit_menu = false,
+        .commit_menu_scrolled => |scroll| model.commit_offset = scroll.offset_y,
+        .resolve_note, .reopen_note => |index| if (index < model.notes.items.len) {
+            model.notes.items[index].state = if (msg == .resolve_note) .resolved else .open;
+            persist(model);
+        },
         .mouse => |pointer| {
             model.hover = pointer.hit;
             model.mouse.apply(pointer);
@@ -834,10 +1303,10 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             clearSelection(model);
             fx.cancelTimer(7);
         },
-        .comment_selection => commentSelection(model),
+        .comment_selection => commentSelection(model, fx),
         .copy_selection => copySelection(model, fx),
         .line_press => |anchor| {
-            if (!model.mouse.active) beginNote(model, anchor.file orelse model.selected, anchor);
+            if (!model.mouse.active) beginNote(model, fx, anchor.file orelse model.selected, anchor);
         },
         .copy_line => |hit| {
             if (model.mouse.active and model.mouse.range != null and model.mouse.range.?.contains(hit.file, hit.old, hit.row)) copySelection(model, fx) else {
@@ -890,6 +1359,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         .mode => |mode| if (!model.busy) {
             model.scope_menu = false;
             model.mode = mode;
+            model.commit = null;
             if (mode == .branch) openBranchPicker(model, .base) else {
                 model.base_popover = false;
             }
@@ -898,6 +1368,12 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         },
         .poll => |timer| if (timer.outcome == .fired) {
             poll(model, fx);
+        },
+        .keeper_tick => |timer| if (timer.outcome == .fired) {
+            const job = session.document orelse return fx.cancelTimer(10);
+            if (!job.keeper_done.load(.acquire)) return;
+            fx.cancelTimer(10);
+            if (job.keeper_stale.swap(false, .acq_rel)) notify(model, fx, "Files changed while loading · ⌘R reads them again");
         },
         .toggle_sidebar => {
             model.sidebar = !model.sidebar;
@@ -945,7 +1421,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             model.files[index].collapsed = !model.files[index].collapsed;
             refold(model, fx, index);
         },
-        .note_file => |index| beginNote(model, index, .{}),
+        .note_file => |index| beginNote(model, fx, index, .{}),
         .toggle_notes => {
             model.band_menu = false;
             defer movePanes(model, fx);
@@ -989,7 +1465,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
                     anchor.line_end = range.last_line;
                 }
             };
-            beginNote(model, anchor.file orelse model.selected, anchor);
+            beginNote(model, fx, anchor.file orelse model.selected, anchor);
         },
         .edit_note => |index| {
             if (model.editing and !model.draft.isEmpty()) {
@@ -1014,8 +1490,20 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             if (text.len == 0 or model.draft_file >= model.files.len) return;
             const job = session.document orelse return;
             const bytes = job.arena.allocator().dupe(u8, text) catch return;
-            const note = Note{ .path = model.files[model.draft_file].path, .line = model.anchor.line, .line_end = model.anchor.line_end, .old = model.anchor.old, .text = bytes };
-            if (model.edit_index) |index| model.notes.items[index] = note else model.notes.append(job.arena.allocator(), note) catch return;
+            const alloc = job.arena.allocator();
+            const file = model.files[model.draft_file];
+            const old = model.anchor.old and model.anchor.line > 0;
+            // Anchored to the version of its side, with the lines as they read,
+            // so it can follow them as the file changes.
+            var note = Note{ .path = file.path, .line = model.anchor.line, .line_end = model.anchor.line_end, .old = old, .text = bytes, .blob = if (old) file.old_blob else file.new_blob, .excerpt = review.excerpt(alloc, file.fullRows(), old, model.anchor.line, model.anchor.line_end), .scope = job.scope, .commit = job.options.commit };
+            if (model.edit_index) |index| {
+                const previous = model.notes.items[index];
+                // Editing keeps where the note was left and what it was left on.
+                note = previous;
+                note.text = bytes;
+            }
+            if (model.edit_index) |index| model.notes.items[index] = note else model.notes.append(alloc, note) catch return;
+            if (model.commit) |index| if (index < model.commits.len) markCommit(model, index, null);
             model.editing = false;
             model.draft.clear();
             focusReview(model);
@@ -1259,8 +1747,8 @@ pub fn main(init: std.process.Init) !void {
         var arena = std.heap.ArenaAllocator.init(gpa);
         defer arena.deinit();
         const mode = if (args.len > 3) std.meta.stringToEnum(git.Mode, args[3]) orelse return error.InvalidMode else .working;
-        const review = try git.read(arena.allocator(), init.io, args[2], mode, if (args.len > 4) args[4] else "main", if (args.len > 5) args[5] else "");
-        const bytes = try std.json.Stringify.valueAlloc(arena.allocator(), review, .{});
+        const inspected = try git.read(arena.allocator(), init.io, args[2], mode, if (args.len > 4) args[4] else "main", if (args.len > 5) args[5] else "", .{});
+        const bytes = try std.json.Stringify.valueAlloc(arena.allocator(), inspected, .{});
         try std.Io.File.stdout().writeStreamingAll(init.io, bytes);
         return;
     }
@@ -1268,6 +1756,11 @@ pub fn main(init: std.process.Init) !void {
     const dir = init.environ_map.get("PATCH_STATE_DIR") orelse try sdk.app_dirs.resolveOne(.{ .name = "computer.patch.app" }, sdk.app_dirs.currentPlatform(), .{ .home = init.environ_map.get("HOME"), .xdg_data_home = init.environ_map.get("XDG_DATA_HOME") }, .data, &dir_buf);
     try std.Io.Dir.cwd().createDirPath(init.io, dir);
     session = .{ .io = init.io, .data_dir = try gpa.dupe(u8, dir), .measure_startup = init.environ_map.contains("NATIVE_SDK_WINDOW_TIMING") };
+    // Git runs in the repository, so the attributes file needs an absolute path.
+    const absolute_dir = std.Io.Dir.cwd().realPathFileAlloc(init.io, dir, gpa) catch try gpa.dupe(u8, dir);
+    session.attributes_path = try std.fmt.allocPrint(gpa, "{s}/gitattributes", .{absolute_dir});
+    session.data_abs = absolute_dir;
+    git.environ = init.environ_map;
     const last = try std.fmt.allocPrint(gpa, "{s}/repository", .{dir});
     defer gpa.free(last);
     session.repo = std.Io.Dir.cwd().readFileAlloc(init.io, last, gpa, .limited(8192)) catch ".";
@@ -1309,6 +1802,9 @@ pub fn main(init: std.process.Init) !void {
 
 test {
     _ = patch;
+    _ = syntax;
+    _ = review;
+    _ = history;
     _ = git;
     _ = keyboard;
     _ = selection;
@@ -1382,9 +1878,11 @@ fn moveLines(model: *Model, fx: *Effects, forward: bool, count: usize) void {
 /// Whether a saved note covers this line of this file's side.
 pub fn noted(model: *const Model, file: usize, line: u32, old: bool) bool {
     if (line == 0 or file >= model.files.len) return false;
+    // The old side of the changes since review is the reviewed version, where no note counts lines.
+    if (old and model.files[file].showing_since) return false;
     const path = model.files[file].path;
     for (model.notes.items) |note| {
-        if (note.line == 0 or note.old != old or !std.mem.eql(u8, note.path, path)) continue;
+        if (note.line == 0 or note.old != old or note.state == .resolved or !std.mem.eql(u8, note.path, path) or !inView(model, note)) continue;
         if (line >= note.line and line <= @max(note.line, note.line_end)) return true;
     }
     return false;
@@ -1395,7 +1893,7 @@ fn goLine(model: *Model, fx: *Effects, number: usize) void {
     const end = if (model.selected + 1 < model.starts.len) model.starts[model.selected + 1] else model.display.len;
     var closest: ?usize = null;
     const file = model.files[model.selected];
-    const old = (model.cursor_old and file.status != .added) or file.status == .deleted;
+    const old = if (file.oneSided()) file.status == .deleted else model.cursor_old;
     for (start..end) |index| if (sourceRow(model, index)) |row| {
         const line_number = if (old) row.old else row.new;
         if (line_number == 0) continue;
@@ -1451,21 +1949,70 @@ fn markReviewed(model: *Model, fx: *Effects, index: usize, value: bool) void {
     model.files[index].collapsed = value;
     refold(model, fx, index);
 }
-/// Rebuilds the rows after files fold or unfold, keeping the reader on `index`.
+/// Rebuilds the rows after files fold or unfold, keeping the reader on `index`
+/// and the view still: that file's header stays where it is on screen, and
+/// what follows it closes up beneath (or opens out) rather than the review
+/// scrolling. A header scrolled past (folded from its pinned pill) lands at
+/// the top, where the pill was.
 fn refold(model: *Model, fx: *Effects, index: usize) void {
+    const file = @min(index, model.files.len -| 1);
+    const before = if (file < model.starts.len) @as(f32, @floatFromInt(model.starts[file])) * 24 - model.scroll_offset else 0;
+    const screen = std.math.clamp(before, 0, @max(0, model.viewport_height - 24));
     layoutRows(model);
     findMatches(model);
     clearSelection(model);
-    if (model.cursor >= model.display.len) model.cursor = 0;
-    const file = @min(index, model.files.len -| 1);
-    jump(model, fx, file);
+    if (file >= model.files.len) {
+        model.cursor = 0;
+        return;
+    }
+    model.selected = file;
     // A folded file keeps the reader: the cursor parks on its header.
-    if (file < model.files.len and model.files[file].collapsed) model.cursor = model.starts[file];
+    model.cursor = if (model.files[file].collapsed) model.starts[file] else seekCode(model, model.starts[file], true) orelse model.starts[file];
+    if (model.focus != .review) focusReview(model);
+    requestScroll(model, fx, @as(f32, @floatFromInt(model.starts[file])) * 24 - screen);
 }
 fn setReviewed(model: *Model, index: usize, value: bool) void {
     if (index >= model.files.len or model.files[index].reviewed == value) return;
     model.history.append(gpa, .{ .file = index, .reviewed = model.files[index].reviewed }) catch {};
-    model.files[index].reviewed = value;
+    record(model, index, value);
+}
+/// Marks a file's change reviewed (or not) in the records, which say so for
+/// any comparison that shows the same change, and in the commit's progress.
+fn record(model: *Model, index: usize, value: bool) void {
+    const job = session.document orelse return;
+    const alloc = job.arena.allocator();
+    const file = &model.files[index];
+    file.reviewed = value;
+    if (value) {
+        review.mark(alloc, &model.records, file.*) catch {};
+        file.prior = .same;
+    } else {
+        review.unmark(&model.records, file.*);
+        file.prior = review.classify(model.records.items, file.*);
+        if (file.prior == .changed) if (review.latest(model.records.items, file.path)) |latest| {
+            if (std.mem.eql(u8, latest.new, file.new_blob)) file.prior = .base;
+        };
+    }
+    const commit_index = model.commit orelse return;
+    if (commit_index >= model.commits.len or commit_index >= model.commit_states.len) return;
+    var done: usize = 0;
+    for (model.files) |each| done += @intFromBool(each.reviewed);
+    const state: history.CommitState = if (done == model.files.len) .reviewed else if (done > 0) .partial else .new;
+    model.commit_states[commit_index] = state;
+    markCommit(model, commit_index, state == .reviewed);
+}
+/// Remembers a commit (to find it after a rewrite) and whether it was reviewed.
+fn markCommit(model: *Model, index: usize, reviewed: ?bool) void {
+    const job = session.document orelse return;
+    const alloc = job.arena.allocator();
+    const commit = model.commits[index];
+    const message = alloc.dupe(u8, &patch.blobId(commit.message)) catch "";
+    for (job.marks.items) |*mark| if (std.mem.eql(u8, mark.id, commit.id)) {
+        if (reviewed) |value| mark.reviewed = value;
+        mark.message = message;
+        return;
+    };
+    job.marks.append(alloc, .{ .id = commit.id, .subject = commit.subject(), .time = commit.time, .reviewed = reviewed orelse false, .message = message }) catch {};
 }
 fn nextUnreviewed(model: *Model, fx: *Effects, forward: bool, count: usize) void {
     if (model.files.len == 0) return;
@@ -1644,7 +2191,7 @@ fn perform(model: *Model, fx: *Effects, invocation: keyboard.Invocation) void {
             for (0..count) |_| {
                 const change = model.history.pop() orelse break;
                 if (change.file < model.files.len) {
-                    model.files[change.file].reviewed = change.reviewed;
+                    record(model, change.file, change.reviewed);
                     if (model.collapse_reviewed) model.files[change.file].collapsed = change.reviewed;
                     refold(model, fx, change.file);
                     model.cursor_active = true;
@@ -1654,7 +2201,7 @@ fn perform(model: *Model, fx: *Effects, invocation: keyboard.Invocation) void {
         },
         .comment_line => {
             if (model.mouse.active) {
-                commentSelection(model);
+                commentSelection(model, fx);
                 return;
             }
             if (!ensureCursor(model)) return;
@@ -1675,6 +2222,18 @@ fn perform(model: *Model, fx: *Effects, invocation: keyboard.Invocation) void {
         .staged => update(model, .{ .mode = .staged }, fx),
         .branch => update(model, .{ .mode = .branch }, fx),
         .settings => update(model, .open_settings, fx),
+        .whitespace => update(model, .toggle_whitespace, fx),
+        .since_review => update(model, .toggle_since, fx),
+        .commit_next, .commit_previous => {
+            if (model.mode != .branch or model.imported or model.commits.len == 0) return notify(model, fx, "Commits are listed when reviewing a branch");
+            // The whole branch sits before its first commit and after its last.
+            const slots = model.commits.len + 1;
+            const at = if (model.commit) |index| index + 1 else 0;
+            const step = count % slots;
+            const next = if (invocation.action == .commit_next) (at + step) % slots else (at + slots - step) % slots;
+            update(model, .{ .select_commit = if (next == 0) null else next - 1 }, fx);
+        },
+        .all_changes => update(model, .{ .select_commit = null }, fx),
     }
 }
 
@@ -1732,6 +2291,7 @@ fn pickBranch(model: *Model, fx: *Effects) void {
     }
     model.base_popover = false;
     model.mode = .branch;
+    model.commit = null;
     load(model, fx);
 }
 /// A new comment opens the notes at once, so its editor is on screen to take
@@ -1742,8 +2302,14 @@ fn openNotesNow(model: *Model) void {
     model.notes_shown = model.notes_width;
     if (model.motion) |*motion| motion.notes_from = model.notes_width;
 }
-fn beginNote(model: *Model, file: usize, anchor: Anchor) void {
+fn beginNote(model: *Model, fx: *Effects, file: usize, anchor: Anchor) void {
     if (file >= model.files.len) return;
+    // Lines on the old side of the changes since review are the reviewed
+    // version's, which no later review shows; notes go on the new side.
+    if (anchor.old and anchor.line > 0 and model.files[file].showing_since) {
+        notify(model, fx, "Notes go on the new side while showing changes since review");
+        return;
+    }
     openNotesNow(model);
     model.focus = .note;
     if (model.editing and !model.draft.isEmpty()) return;
@@ -1781,8 +2347,8 @@ fn mouseHit(model: *const Model, x: f32, y: f32) ?selection.Hit {
         old = range.old;
     };
     const file = model.files[model.display[index].file];
-    if (!model.split or file.status == .added or file.status == .deleted) {
-        if (!model.mouse.dragging) old = file.status == .deleted or (sourceRow(model, index) != null and sourceRow(model, index).?.new == 0);
+    if (!model.split or file.oneSided()) {
+        if (!model.mouse.dragging) old = (file.oneSided() and file.status == .deleted) or (sourceRow(model, index) != null and sourceRow(model, index).?.new == 0);
     }
     const candidate = index;
     const forward = if (model.mouse.range) |range| index >= range.anchor else true;
@@ -1862,9 +2428,9 @@ fn normalizeNativeRange(model: *Model, bytes: selection.Bytes) void {
         range.bytes = bytes;
     }
 }
-fn commentSelection(model: *Model) void {
+fn commentSelection(model: *Model, fx: *Effects) void {
     const range = model.mouse.range orelse return;
-    beginNote(model, range.file, .{ .file = range.file, .old = range.old, .line = range.first_line, .line_end = range.last_line });
+    beginNote(model, fx, range.file, .{ .file = range.file, .old = range.old, .line = range.first_line, .line_end = range.last_line });
     model.mouse.active = false;
     model.mouse.dragging = false;
 }

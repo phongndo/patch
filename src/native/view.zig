@@ -2,6 +2,7 @@ const std = @import("std");
 const canvas = @import("native_sdk").canvas;
 const app = @import("../main.zig");
 const patch = @import("patch.zig");
+const syntax = @import("syntax.zig");
 const AppUi = app.AppUi;
 const Model = app.Model;
 const Msg = app.Msg;
@@ -143,20 +144,25 @@ fn headerLayer(ui: *AppUi, model: *const Model) AppUi.Node {
         }),
     });
 }
-/// What is under review, at the top of the rail with its reload and settings.
+/// What is under review, at the top of the rail with its reload. Beside the
+/// repository's name, quietly, its checked-out branch; when reviewing a
+/// branch (whose name the comparison control already gives) that place
+/// picks the commits instead: all of them, or one.
 fn repositoryRow(ui: *AppUi, model: *const Model) AppUi.Node {
     const name = ui.arena.dupe(canvas.TextSpan, &.{.{ .text = model.repository, .weight = .medium }}) catch &.{};
+    const commits = model.mode == .branch and !model.imported and model.commits.len > 0;
     return ui.row(.{ .height = 30, .padding = 0, .gap = 0, .cross = .center }, .{
         space(ui, theme.rail_left, 0),
-        ui.row(.{ .key = .{ .str = "open-repo" }, .grow = 1, .height = 30, .padding = 0, .gap = 0, .cross = .center, .on_press = .open_repo, .semantics = .{ .label = "Open repository · ⌘O", .role = .button }, .style = .{ .radius = 15 } }, .{
+        ui.row(.{ .key = .{ .str = "open-repo" }, .grow = if (commits) 0 else 1, .height = 30, .padding = 0, .gap = 0, .cross = .center, .on_press = .open_repo, .semantics = .{ .label = "Open repository · ⌘O", .role = .button }, .style = .{ .radius = 15 } }, .{
             space(ui, 11.5, 0),
             ui.appIcon(.{ .width = 16, .height = 16, .style = .{ .foreground = theme.sidebar_ink } }, if (model.imported) "document" else "repository"),
             space(ui, 10.5, 0),
             ui.paragraph(.{ .height = 18, .wrap = false, .overflow = .clip, .style = .{ .foreground = theme.ink } }, name),
-            space(ui, 7, 0),
-            ui.text(.{ .grow = 1, .style = .{ .foreground = theme.tertiary } }, if (model.imported) "Patch file" else model.head),
-            space(ui, 4, 0),
+            space(ui, if (commits) 6 else 7, 0),
+            if (commits) ui.spacer(0) else ui.text(.{ .grow = 1, .style = .{ .foreground = theme.tertiary } }, if (model.imported) "Patch file" else model.head),
+            if (commits) ui.spacer(0) else space(ui, 4, 0),
         }),
+        if (commits) commitPicker(ui, model) else ui.spacer(0),
         tinted(ui, "refresh", "refresh", "Refresh · ⌘R", .refresh, theme.tertiary, model.busy, 28),
         space(ui, theme.rail_right, 0),
     });
@@ -312,6 +318,65 @@ fn railName(ui: *AppUi, model: *const Model, file: patch.File) []const u8 {
     const head = fits - 1 - tail;
     return ui.fmt("{s}…{s}", .{ name[0..head], name[name.len - tail ..] });
 }
+/// How far a commit's review has come, as an icon and its color.
+fn commitMark(state: app.history.CommitState) struct { icon: []const u8, color: canvas.Color } {
+    return switch (state) {
+        .reviewed => .{ .icon = "check", .color = theme.green },
+        .partial => .{ .icon = "checkbox", .color = theme.secondary },
+        .changed => .{ .icon = "modified", .color = theme.note },
+        .new => .{ .icon = "document", .color = theme.tertiary },
+    };
+}
+/// A branch's commits, all together or one at a time: how many, or which,
+/// in the repository row's quiet ink, opening the list of them. ]C and [C
+/// step through them.
+fn commitPicker(ui: *AppUi, model: *const Model) AppUi.Node {
+    const count = model.commits.len;
+    const label = if (model.commit) |index| ui.fmt("{d} of {d}", .{ index + 1, count }) else if (count == 1) "1 commit" else ui.fmt("{d} commits", .{count});
+    const face = ui.row(.{ .key = .{ .str = "commit-picker" }, .height = 26, .padding = 0, .gap = 0, .cross = .center, .on_press = .toggle_commit_menu, .semantics = .{ .role = .button, .label = ui.fmt("Commits: {s} · ]C / [C", .{label}) }, .style = .{ .background = if (model.commit_menu) theme.selected else theme.clear, .radius = 13 } }, .{
+        space(ui, 7, 0),
+        ui.text(.{ .style = .{ .foreground = if (model.commit != null) theme.sidebar_ink else theme.tertiary } }, label),
+        space(ui, 5, 0),
+        ui.appIcon(.{ .width = 10, .height = 10, .style = .{ .foreground = theme.tertiary } }, "chevron"),
+        space(ui, 7, 0),
+    });
+    return ui.row(.{ .grow = 1, .height = 30, .padding = 0, .gap = 0, .cross = .center }, .{
+        ui.stack(.{ .height = 26, .padding = 0 }, .{ face, if (model.commit_menu) commitMenu(ui, model) else ui.spacer(0) }),
+        ui.spacer(1),
+    });
+}
+/// The branch's commits, oldest first, after the whole branch, each with
+/// how far its review has come.
+fn commitMenu(ui: *AppUi, model: *const Model) AppUi.Node {
+    const row_h = theme.palette_row;
+    const total = model.commits.len + 1;
+    const height = @as(f32, @floatFromInt(@min(total, 12))) * row_h;
+    const options = AppUi.VirtualListOptions{ .id = "commit-list", .item_count = total, .item_extent = row_h, .height = height, .overscan = 1, .semantics = .{ .label = "Commits" }, .on_scroll = AppUi.scrollMsg(.commit_menu_scrolled) };
+    const window = canvas.virtualListRange(.{ .item_count = total, .item_extent = row_h, .viewport_extent = height, .scroll_offset = model.commit_offset, .overscan = 1 });
+    const white = canvas.Color.rgb8(255, 255, 255);
+    var rows: [20]AppUi.Node = undefined;
+    var n: usize = 0;
+    for (window.start_index..window.end_index) |position| {
+        if (n == rows.len) break;
+        const index: ?usize = if (position == 0) null else position - 1;
+        const active = std.meta.eql(index, model.commit);
+        const commit = if (index) |value| model.commits[value] else null;
+        const mark = if (index) |value| (if (value < model.commit_states.len) commitMark(model.commit_states[value]) else commitMark(.new)) else @TypeOf(commitMark(.new)){ .icon = "branch", .color = theme.palette_hint };
+        const title = if (commit) |value| value.subject() else "All changes";
+        const detail = if (commit) |value| value.id[0..@min(7, value.id.len)] else if (model.commits.len == 1) "1 commit" else ui.fmt("{d} commits", .{model.commits.len});
+        rows[n] = ui.row(.{ .key = .{ .index = position }, .height = row_h, .padding = 0, .gap = 0, .cross = .center, .on_press = .{ .select_commit = index }, .semantics = .{ .role = .listitem, .label = title }, .style = .{ .background = if (active) theme.palette_active else theme.clear, .quiet_hover = true, .radius = 11 } }, .{
+            space(ui, 11, 0),
+            ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = if (active) white else mark.color } }, mark.icon),
+            space(ui, 8, 0),
+            ui.text(.{ .grow = 1, .style = .{ .foreground = if (active) white else theme.palette_ink } }, title),
+            space(ui, 8, 0),
+            smallText(ui, detail, if (active) canvas.Color.rgba8(255, 255, 255, 200) else theme.palette_hint),
+            space(ui, 11, 0),
+        });
+        n += 1;
+    }
+    return ui.el(.popover, .{ .key = .{ .str = "commit-menu" }, .width = 340, .anchor = .below, .anchor_alignment = .start, .anchor_offset = 6, .padding = 5, .backdrop_blur_token = .md, .on_dismiss = .close_commit_menu, .semantics = .{ .role = .dialog, .label = "Commits" }, .style = .{ .background = theme.palette_glass, .border = theme.glass_edge, .radius = 16 } }, .{ui.virtualList(options, window, rows[0..n])});
+}
 fn fileRail(ui: *AppUi, model: *const Model) AppUi.Node {
     const options = AppUi.VirtualListOptions{ .id = "files", .item_count = model.rail_rows.len, .item_extent = theme.row_pitch, .overscan = 1, .grow = 1 };
     const window = ui.virtualWindow(options);
@@ -322,10 +387,14 @@ fn fileRail(ui: *AppUi, model: *const Model) AppUi.Node {
         nodes[count] = if (entry.file) |index| blk: {
             const file = model.files[index];
             const active = index == model.selected;
+            // Reviewed files are checked; those reviewed in another version are marked changed.
+            const changed = !file.reviewed and (file.prior == .changed or file.prior == .base);
+            const icon = if (file.reviewed) "check" else if (changed) "modified" else if (file.message) "note" else "document";
+            const tint = if (file.reviewed) theme.green else if (changed) theme.note else theme.sidebar_ink;
             // Rex's selection: a quiet capsule with a hairline edge, inset from the sidebar.
             const item = ui.row(.{ .key = .{ .str = "file" }, .grow = 1, .height = theme.row_height, .padding = 0, .gap = 0, .cross = .center, .on_press = .{ .select = index }, .semantics = .{ .label = file.path, .role = .listitem }, .style = .{ .background = if (active) theme.selected else theme.clear, .border = if (active) theme.selected_edge else theme.clear, .stroke_width = 0.5, .radius = theme.row_height / 2, .quiet_hover = active } }, .{
                 space(ui, 11.5, 0),
-                ui.appIcon(.{ .width = 16, .height = 16, .style = .{ .foreground = if (file.reviewed) theme.green else theme.sidebar_ink } }, if (file.reviewed) "check" else "document"),
+                ui.appIcon(.{ .width = 16, .height = 16, .style = .{ .foreground = tint } }, icon),
                 space(ui, 10.5, 0),
                 ui.text(.{ .grow = 1, .style = .{ .foreground = if (active) theme.ink else if (file.reviewed) theme.tertiary else if (model.active) theme.sidebar_ink else theme.sidebar_inactive } }, railName(ui, model, file)),
                 space(ui, 6, 0),
@@ -360,12 +429,6 @@ fn fileRail(ui: *AppUi, model: *const Model) AppUi.Node {
         // Lands the foot control on Rex's foot-bar line, 25 points above the edge.
         space(ui, 0, 11),
     });
-}
-fn languageFor(path: []const u8) canvas.code.Language {
-    const ext = std.fs.path.extension(path);
-    const entries = .{ .{ ".ts", .typescript }, .{ ".tsx", .tsx }, .{ ".js", .javascript }, .{ ".jsx", .jsx }, .{ ".zig", .zig }, .{ ".json", .json }, .{ ".css", .css }, .{ ".html", .html }, .{ ".rs", .rust }, .{ ".go", .go }, .{ ".py", .python }, .{ ".sh", .shell }, .{ ".yaml", .yaml }, .{ ".yml", .yaml }, .{ ".md", .markdown } };
-    inline for (entries) |entry| if (std.mem.eql(u8, ext, entry[0])) return entry[1];
-    return .plain;
 }
 fn groupedCode(ui: *AppUi, node: AppUi.Node, group: u64, offset: usize) AppUi.Node {
     var result = node;
@@ -427,7 +490,7 @@ fn emphasize(spans: []const canvas.TextSpan, text: []const u8, range: Emphasis, 
     }
     return out[0..count];
 }
-fn codeLine(ui: *AppUi, model: *const Model, source: []const u8, number: u32, old: bool, file: usize, row_index: usize, offset: usize, language: canvas.code.Language, emphasis: Emphasis) AppUi.Node {
+fn codeLine(ui: *AppUi, model: *const Model, source: []const u8, number: u32, old: bool, file: usize, row_index: usize, offset: usize, language: canvas.code.Language, carry: u16, emphasis: Emphasis) AppUi.Node {
     const group = app.selection.groupId(file, old, model.selection_epoch, model.generation);
     const key = ui.fmt("source-{d}-{d}-{any}", .{ model.generation, row_index, old });
     const label = ui.fmt("{s} code line {d}", .{ if (old) "Old" else "New", number });
@@ -438,7 +501,9 @@ fn codeLine(ui: *AppUi, model: *const Model, source: []const u8, number: u32, ol
     // unusually long lines.
     if (source.len > 4096) return groupedCode(ui, ui.code(.{ .global_key = .{ .str = key }, .language = language, .wrap = false, .height = 24, .grow = 1, .semantics = .{ .label = label } }, text), group, offset);
     var storage: [canvas.max_text_spans_per_paragraph]canvas.TextSpan = undefined;
-    var state: canvas.code.HighlightState = .{};
+    // The line starts in the state the lines above it left (a comment or
+    // string still open), as worked out once when the patch was read.
+    var state: canvas.code.HighlightState = if (carry < model.carries.len) model.carries[carry] else .{};
     const highlighted = canvas.CodeContentPolicy.highlight(ui.code_content_policy, text, language, &storage, &state);
     var split: [canvas.max_text_spans_per_paragraph]canvas.TextSpan = undefined;
     const changed = emphasize(highlighted, text, emphasis, if (old) .destructive else .success, &split);
@@ -475,7 +540,7 @@ fn gutter(ui: *AppUi, model: *const Model, file: usize, number: u32, old: bool, 
     if (!noted) return button;
     return ui.row(.{ .width = 48, .height = 24, .padding = 0, .gap = 0, .cross = .center }, .{ ui.row(.{ .width = 2, .height = 16, .padding = 0, .style = .{ .background = theme.note, .radius = 1 } }, .{}), button });
 }
-fn codeCell(ui: *AppUi, model: *const Model, source: []const u8, number: u32, old: bool, file: usize, row_index: usize, offset: usize, wash: canvas.Color, language: canvas.code.Language, current: bool, match: bool, emphasis: Emphasis) AppUi.Node {
+fn codeCell(ui: *AppUi, model: *const Model, source: []const u8, number: u32, old: bool, file: usize, row_index: usize, offset: usize, wash: canvas.Color, language: canvas.code.Language, carry: u16, current: bool, match: bool, emphasis: Emphasis) AppUi.Node {
     const hovered = if (model.hover) |hit| hit.row == row_index and hit.old == old else false;
     const selected = model.mouse.active and model.mouse.range != null and model.mouse.range.?.contains(file, old, row_index);
     const fill = if (selected) theme.text_selection else wash;
@@ -488,7 +553,7 @@ fn codeCell(ui: *AppUi, model: *const Model, source: []const u8, number: u32, ol
         .{ .label = if (selected) "Comment on selection" else "Add line comment", .msg = if (selected) Msg.comment_selection else .{ .anchor = .{ .file = file, .line = number, .old = old } }, .enabled = number > 0 },
         .{ .label = if (selected) "Copy selection" else "Copy line", .msg = .{ .copy_line = .{ .file = file, .row = row_index, .old = old, .line = number } }, .enabled = number > 0 },
     }) catch &.{};
-    const source_node = if (number > 0) codeLine(ui, model, source, number, old, file, row_index, offset, language, emphasis) else ui.spacer(1);
+    const source_node = if (number > 0) codeLine(ui, model, source, number, old, file, row_index, offset, language, carry, emphasis) else ui.spacer(1);
     return ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0, .cross = .center, .context_menu = menu_items, .style = .{ .background = background } }, .{
         // A noted line carries a short accent bar at the gutter's edge; its
         // number keeps the change's color.
@@ -498,33 +563,40 @@ fn codeCell(ui: *AppUi, model: *const Model, source: []const u8, number: u32, ol
         source_node,
     });
 }
-/// Actions for a mouse selection: an opaque raised capsule floating 6 points
-/// under the selection's last line, 12 points in from the pane's edge, so it
-/// never straddles rows of different colors or touches the pane's theme.border.
+/// Actions for a mouse selection: a small raised capsule floating 6 points
+/// under the selection's last line, 12 points in from the pane's edge, holding
+/// only the selected range and two quiet icons, comment and copy.
 fn selectionBar(ui: *AppUi, model: *const Model) AppUi.Node {
     const range = model.mouse.range.?;
-    const bar = ui.el(.popover, .{ .width = 210, .height = 34, .padding = 3, .gap = 4, .anchor = .below, .anchor_alignment = .end, .anchor_offset = 6, .on_dismiss = .clear_selection, .semantics = .{ .label = "Selection actions" }, .style = .{ .background = theme.header_current, .border = theme.glass_edge, .radius = 12 } }, .{
-        ui.row(.{ .padding = 0, .gap = 2, .cross = .center }, .{
-            ui.button(.{ .icon = "app:add", .height = 28, .size = .sm, .variant = .ghost, .on_press = .comment_selection, .semantics = .{ .label = "Comment on selected lines" }, .style = .{ .radius = 9 } }, "Comment"),
-            smallText(ui, ui.fmt("{d}–{d}", .{ range.first_line, range.last_line }), theme.muted),
-            ui.spacer(1),
-            iconButton(ui, "copy-selection", "copy", "Copy selected code", .copy_selection, false, false),
+    const label = if (range.last_line > range.first_line) ui.fmt("{d}–{d}", .{ range.first_line, range.last_line }) else ui.fmt("{d}", .{range.first_line});
+    // Figures run about 6.7 points apiece at the small size, the dash about 7.
+    const text_width = @as(f32, @floatFromInt(std.unicode.utf8CountCodepoints(label) catch label.len)) * 6.8;
+    const width = 12 + text_width + 6 + 28 + 28 + 2 * 2;
+    const bar = ui.el(.popover, .{ .width = width, .height = 32, .padding = 2, .anchor = .below, .anchor_alignment = .end, .anchor_offset = 6, .on_dismiss = .clear_selection, .semantics = .{ .label = "Selection actions" }, .style = .{ .background = theme.menu, .border = theme.glass_edge, .stroke_width = 0.5, .radius = 16 } }, .{
+        ui.row(.{ .height = 28, .padding = 0, .gap = 0, .cross = .center }, .{
+            space(ui, 10, 0),
+            ui.text(.{ .size = .sm, .style = .{ .foreground = theme.secondary } }, label),
+            space(ui, 6, 0),
+            tinted(ui, "comment-selection", "comment", "Comment on selected lines", .comment_selection, theme.sidebar_ink, false, 28),
+            tinted(ui, "copy-selection", "copy", "Copy selected code", .copy_selection, theme.sidebar_ink, false, 28),
         }),
     });
-    // The bar anchors to a 210-point marker at the row's right, 12 points in.
-    return ui.row(.{ .height = 24, .padding = 0, .gap = 0 }, .{ ui.spacer(1), ui.stack(.{ .width = 210, .height = 24, .padding = 0 }, .{bar}), space(ui, 12, 0) });
+    // The bar anchors to a marker of its width at the row's right, 12 points in.
+    return ui.row(.{ .height = 24, .padding = 0, .gap = 0 }, .{ ui.spacer(1), ui.stack(.{ .width = width, .height = 24, .padding = 0 }, .{bar}), space(ui, 12, 0) });
 }
 /// A file's header is the title row of its pane, as a Rex block's is: 3
 /// points of ground above it (the file pane before ends 3 points short, so
 /// panes part by 6), then the pane's rounded top. A folded file is just this
-/// row, a short pane rounded at both ends with 3 points of ground below.
+/// row: a short pane rounded at both ends, filling all but a point of ground
+/// above and below, so folded files read as a list of full-height rows (as
+/// the rail's 30-point rows sit on a 32-point pitch) rather than thin bars.
 fn fileHeader(ui: *AppUi, model: *const Model, index: usize, current: bool) AppUi.Node {
     const folded = model.files[index].collapsed;
-    const height: f32 = if (folded) 18 else 21;
+    const height: f32 = if (folded) 22 else 21;
     return ui.column(.{ .height = 24, .padding = 0, .gap = 0 }, .{
-        space(ui, 0, 3),
+        space(ui, 0, if (folded) 1 else 3),
         ui.stack(.{ .height = height, .padding = 0 }, .{ paneEdge(ui, height, true, folded), headerRow(ui, model, index, current, height) }),
-        if (folded) space(ui, 0, 3) else ui.spacer(0),
+        if (folded) space(ui, 0, 1) else ui.spacer(0),
     });
 }
 /// What a file's header says: the whole row folds the file, naming it and
@@ -532,20 +604,30 @@ fn fileHeader(ui: *AppUi, model: *const Model, index: usize, current: bool) AppU
 fn headerRow(ui: *AppUi, model: *const Model, index: usize, current: bool, height: f32) AppUi.Node {
     const file = model.files[index];
     var notes: usize = 0;
-    for (model.notes.items) |note| if (std.mem.eql(u8, note.path, file.path)) {
+    for (model.notes.items) |note| if (note.state != .resolved and std.mem.eql(u8, note.path, file.path) and app.inView(model, note)) {
         notes += 1;
     };
+    // What kind of change it is, or what an earlier review makes of it.
+    const label: []const u8 = if (file.whitespace_only) "Whitespace only" else if (file.generated) "Generated" else switch (file.prior) {
+        .rebased => "Reviewed on another base",
+        .changed => if (file.showing_since) (if (file.since.?.base_moved) "Since review · base moved too" else "Since review") else "Changed since review",
+        .base => "Base changed since review",
+        else => "",
+    };
+    const label_color = if (file.prior == .changed or file.prior == .base) theme.note else theme.tertiary;
     const folded = file.collapsed;
     const name = ui.arena.dupe(canvas.TextSpan, &.{.{ .text = std.fs.path.basename(file.path), .weight = .medium }}) catch &.{};
     var header = ui.row(.{ .key = .{ .str = ui.fmt("header-{d}", .{index}) }, .grow = 1, .height = height, .padding = 0, .gap = 0, .cross = .center, .on_press = .{ .collapse_file = index }, .semantics = .{ .label = ui.fmt("{s} {s}", .{ if (folded) "Expand" else "Collapse", file.path }), .role = .button }, .style = .{ .background = if (current) theme.selected else theme.clear, .radius = @min(theme.pane_radius, height / 2) } }, .{
         space(ui, 8, 0),
         ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.tertiary } }, if (folded) "collapsed" else "expanded"),
         space(ui, 6, 0),
-        ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.muted } }, "document"),
+        ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.muted } }, if (file.message) "note" else "document"),
         space(ui, 8, 0),
         ui.paragraph(.{ .height = 16, .size = .sm, .wrap = false, .overflow = .clip, .style = .{ .foreground = if (folded) theme.sidebar_ink else theme.ink } }, name),
         space(ui, 8, 0),
         ui.text(.{ .grow = 1, .size = .sm, .style = .{ .foreground = theme.tertiary } }, std.fs.path.dirname(file.path) orelse ""),
+        if (label.len > 0) smallText(ui, label, label_color) else ui.spacer(0),
+        if (label.len > 0 and file.additions + file.deletions > 0) space(ui, 8, 0) else ui.spacer(0),
         if (file.additions > 0) smallText(ui, ui.fmt("+{d}", .{file.additions}), theme.green) else ui.spacer(0),
         if (file.additions > 0 and file.deletions > 0) space(ui, 6, 0) else ui.spacer(0),
         if (file.deletions > 0) smallText(ui, ui.fmt("−{d}", .{file.deletions}), theme.red) else ui.spacer(0),
@@ -585,21 +667,19 @@ fn paneEdge(ui: *AppUi, height: f32, top: bool, bottom: bool) AppUi.Node {
 }
 /// A pill over one of the review's edges: the file being read pinned at the
 /// top once its header scrolls under it (so a long file can be folded from
-/// anywhere in it), and the status at the foot. Both are opaque (menus'
-/// raised surface, opaque over glass too) and sit in a layer above the
-/// list's: code text paints after the fills in its own layer, so in the same
-/// layer it would show through.
-fn edgePill(ui: *AppUi, content: AppUi.Node) AppUi.Node {
-    const height = app.pill_height;
-    const shape = ui.el(.panel, .{ .grow = 1, .height = height, .padding = 0, .style = .{ .background = theme.menu, .border = theme.hairline, .stroke_width = 1, .radius = height / 2 } }, .{});
-    var pill = ui.stack(.{ .height = height, .padding = 0 }, .{ shape, content });
+/// anywhere in it), and the status at the foot. Each is a slice of pane in
+/// the pane's own color, so it reads as part of the diff: the pinned header
+/// is its file's rounded top, and the status the rounded foot of the pane it
+/// cuts (or, past the last file, a pane of its own). No row draws under a
+/// pill, so glass panes stay even, and the pill sits in a layer above the
+/// list's: code text paints after the fills in its own layer.
+fn edgePill(ui: *AppUi, content: AppUi.Node, top: bool, bottom: bool) AppUi.Node {
+    var pill = ui.stack(.{ .height = app.pill_height, .padding = 0 }, .{ paneEdge(ui, app.pill_height, top, bottom), content });
     pill.widget.layer = 200;
     return pill;
 }
 /// The part of a 24-point row from `from` to `to` points down it, the rest
-/// clipped away. Under an edge pill the pane runs on to the pill's middle and
-/// no further, so the pill's round ends are the cut pane's corners and the
-/// pane still floats on the window.
+/// clipped away, so nothing draws under an edge pill.
 fn rowSlice(ui: *AppUi, node: AppUi.Node, top: f32, bottom: f32) AppUi.Node {
     const from = std.math.clamp(top, 0, 24);
     const to = std.math.clamp(bottom, 0, 24);
@@ -626,15 +706,16 @@ fn review(ui: *AppUi, model: *const Model) AppUi.Node {
     }
     var nodes: [100]AppUi.Node = undefined;
     var count: usize = 0;
-    // A pane cut by either edge ends at a pill there: the rows under the
-    // pill's outer half draw nothing, and the row across its middle stops
-    // there, so the pill's round ends become the pane's corners.
+    // A pane cut by either edge ends in the pill there: the rows stop at
+    // the pill, whose rounded corners become the pane's.
     const offset = model.scroll_offset;
     const height = app.listHeight(model);
     const pinned = app.pinnedFile(model, offset);
     const bottom = app.bottomPill(model, offset, height);
-    const top_edge: f32 = if (pinned != null) app.pill_height / 2 else -24;
-    const bottom_edge: f32 = if (bottom) height - app.pill_height / 2 else std.math.inf(f32);
+    // Whether a pane runs on under the status pill, which then closes it.
+    const cut = @as(f32, @floatFromInt(model.display.len)) * 24 - 3 - offset > height - app.pill_height;
+    const top_edge: f32 = if (pinned != null) app.pill_height else -24;
+    const bottom_edge: f32 = if (bottom) height - app.pill_height else std.math.inf(f32);
     for (model.display[window.start_index..window.end_index], window.start_index..) |entry, index| {
         if (count == nodes.len) break;
         const file = model.files[entry.file];
@@ -648,7 +729,7 @@ fn review(ui: *AppUi, model: *const Model) AppUi.Node {
             // enclosing declaration where the code begins. The full git
             // header stays as its label.
             if (row.meta) {
-                const text = if (file.status == .added) "New file" else if (file.status == .deleted) "Deleted file" else hunkTitle(ui, row.left);
+                const text = if (file.oneSided() and file.status == .added) "New file" else if (file.oneSided()) "Deleted file" else hunkTitle(ui, row.left);
                 const title = ui.arena.dupe(canvas.TextSpan, &.{.{ .text = text, .monospace = true }}) catch &.{};
                 var top = ui.row(.{ .height = 24, .padding = 0, .gap = 0, .cross = .center, .style = .{ .background = theme.pane } }, .{
                     ui.row(.{ .width = 48, .height = 24, .padding = 0, .main = .center, .cross = .center }, .{smallText(ui, "⋯", theme.line_number)}),
@@ -657,16 +738,16 @@ fn review(ui: *AppUi, model: *const Model) AppUi.Node {
                 top.widget.layout.clip_content = true;
                 break :blk top;
             }
-            const language = languageFor(file.path);
+            const language = syntax.languageFor(file.path);
             const current = model.cursor_active and model.cursor == index;
             const match = app.isMatch(model, index);
             const old = (model.cursor_old and row.old > 0) or row.new == 0;
             const pair = if (row.removed and row.added) intraline(row.left, row.right) else @TypeOf(intraline("", "")){};
-            const content = if (model.split and file.status != .added and file.status != .deleted) ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0, .style = .{ .background = theme.pane } }, .{
-                codeCell(ui, model, row.left, row.old, true, entry.file, index, row.old_offset, if (row.removed) theme.removed else theme.background, language, current and old, match, pair.old), line(ui, true),
-                codeCell(ui, model, row.right, row.new, false, entry.file, index, row.new_offset, if (row.added) theme.added else theme.background, language, current and !old, match, pair.new),
+            const content = if (model.split and !file.oneSided()) ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0, .style = .{ .background = theme.pane } }, .{
+                codeCell(ui, model, row.left, row.old, true, entry.file, index, row.old_offset, if (row.base and row.removed) theme.hunk else if (row.removed) theme.removed else theme.background, language, row.old_carry, current and old, match, pair.old), line(ui, true),
+                codeCell(ui, model, row.right, row.new, false, entry.file, index, row.new_offset, if (row.base and row.added) theme.hunk else if (row.added) theme.added else theme.background, language, row.new_carry, current and !old, match, pair.new),
             }) else ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0, .style = .{ .background = theme.pane } }, .{
-                codeCell(ui, model, if (row.removed) row.left else row.right, if (row.removed) row.old else row.new, row.removed, entry.file, index, if (row.removed) row.old_offset else row.new_offset, if (row.removed) theme.removed else if (row.added) theme.added else theme.background, language, current, match, .{}),
+                codeCell(ui, model, if (row.removed) row.left else row.right, if (row.removed) row.old else row.new, row.removed, entry.file, index, if (row.removed) row.old_offset else row.new_offset, if (row.base and (row.removed or row.added)) theme.hunk else if (row.removed) theme.removed else if (row.added) theme.added else theme.background, language, if (row.removed) row.old_carry else row.new_carry, current, match, .{}),
             });
             break :blk content;
         } else fileHeader(ui, model, entry.file, model.cursor_active and model.cursor == index);
@@ -686,27 +767,61 @@ fn review(ui: *AppUi, model: *const Model) AppUi.Node {
     ground.widget.layout.grow = 1;
     if (pinned == null and !bottom) return ground;
     var stacked = ui.stack(.{ .grow = 1, .padding = 0 }, .{ ground, ui.column(.{ .grow = 1, .padding = 0, .gap = 0 }, .{
-        if (pinned) |file| edgePill(ui, headerRow(ui, model, file, false, app.pill_height)) else ui.spacer(0),
+        if (pinned) |file| edgePill(ui, headerRow(ui, model, file, false, app.pill_height), true, false) else ui.spacer(0),
         ui.spacer(1),
-        if (bottom) edgePill(ui, statusRow(ui, model)) else ui.spacer(0),
+        if (bottom) edgePill(ui, statusRow(ui, model), !cut, true) else ui.spacer(0),
     }) });
     stacked.widget.layout.grow = 1;
     return stacked;
 }
+/// One note: where it sits, its state, its actions, and its text. An
+/// outdated note quotes the lines it was left on, which have since changed;
+/// a resolved one reads quietly. Notes from elsewhere name their file.
+fn noteCard(ui: *AppUi, note: app.Note, index: usize, elsewhere: bool) AppUi.Node {
+    const where = if (note.line_end > note.line) ui.fmt("{s}ines {d}–{d}", .{ if (note.old) "Old l" else "L", note.line, note.line_end }) else if (note.line > 0) ui.fmt("{s}ine {d}", .{ if (note.old) "Old l" else "L", note.line }) else "Whole file";
+    const resolved = note.state == .resolved;
+    const quoted = note.state == .outdated and note.excerpt.len > 0;
+    var excerpt_lines: usize = 0;
+    var excerpt_end: usize = 0;
+    if (quoted) {
+        // At most three lines of what it was left on.
+        while (excerpt_end < note.excerpt.len and excerpt_lines < 3) : (excerpt_lines += 1) {
+            excerpt_end = if (std.mem.indexOfScalarPos(u8, note.excerpt, excerpt_end, '\n')) |at| at + 1 else note.excerpt.len;
+        }
+    }
+    const excerpt = std.mem.trimEnd(u8, note.excerpt[0..excerpt_end], "\n");
+    return ui.column(.{ .key = .{ .index = index }, .padding = 12, .gap = 8, .on_press = if (elsewhere) null else Msg{ .goto_note = index }, .semantics = .{ .role = .button, .label = ui.fmt("Go to note on {s}", .{note.path}) }, .style = .{ .background = theme.background, .radius = 8 } }, .{
+        ui.row(.{ .padding = 0, .cross = .center }, .{
+            ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = if (resolved) theme.tertiary else theme.note } }, if (resolved) "check" else "note"),
+            space(ui, 7, 0),
+            smallText(ui, if (elsewhere) ui.fmt("{s} · {s}", .{ std.fs.path.basename(note.path), where }) else where, theme.muted),
+            if (note.state != .open) space(ui, 7, 0) else ui.spacer(0),
+            if (note.state == .outdated) smallText(ui, "Outdated", theme.note) else if (resolved) smallText(ui, "Resolved", theme.tertiary) else ui.spacer(0),
+            ui.spacer(1),
+            iconButton(ui, ui.fmt("resolve-{d}", .{index}), if (resolved) "left" else "check", if (resolved) "Reopen note" else "Resolve note", if (resolved) Msg{ .reopen_note = index } else Msg{ .resolve_note = index }, false, false),
+            iconButton(ui, ui.fmt("edit-{d}", .{index}), "add", "Edit note", .{ .edit_note = index }, false, elsewhere),
+            iconButton(ui, ui.fmt("delete-{d}", .{index}), "trash", "Delete note", .{ .delete_note = index }, false, false),
+        }),
+        if (quoted) ui.paragraph(.{ .wrap = false, .overflow = .clip, .semantics = .{ .label = ui.fmt("Was: {s}", .{excerpt}) }, .style = .{ .foreground = theme.tertiary } }, ui.arena.dupe(canvas.TextSpan, &.{.{ .text = excerpt, .monospace = true, .scale = 11.0 / 13.0 }}) catch &.{}) else ui.spacer(0),
+        ui.text(.{ .wrap = true, .style = .{ .foreground = if (resolved) theme.tertiary else theme.ink } }, note.text),
+    });
+}
 /// Every note in the review, grouped by file in review order: a file's name
 /// jumps to it, a note to its line, and the file being read is marked.
+/// Notes this view cannot place (on files no longer changed, or on commits a
+/// rewrite dropped) follow under Elsewhere, so none is lost from sight.
 fn notePanel(ui: *AppUi, model: *const Model) AppUi.Node {
     var nodes: [160]AppUi.Node = undefined;
     var count: usize = 0;
     for (model.files, 0..) |file, file_index| {
         var any = false;
-        for (model.notes.items) |note| any = any or std.mem.eql(u8, note.path, file.path);
+        for (model.notes.items) |note| any = any or (std.mem.eql(u8, note.path, file.path) and app.inView(model, note));
         if (!any or count + 2 >= nodes.len) continue;
         const current = file_index == model.selected;
         const name = ui.arena.dupe(canvas.TextSpan, &.{.{ .text = std.fs.path.basename(file.path), .weight = .medium }}) catch &.{};
         nodes[count] = ui.row(.{ .key = .{ .str = ui.fmt("notes-file-{d}", .{file_index}) }, .height = 26, .padding = 0, .gap = 0, .cross = .center, .on_press = .{ .select = file_index }, .semantics = .{ .role = .button, .label = ui.fmt("Go to {s}", .{file.path}) }, .style = .{ .background = if (current) theme.selected else theme.clear, .radius = 7 } }, .{
             space(ui, 6, 0),
-            ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.muted } }, "document"),
+            ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.muted } }, if (file.message) "note" else "document"),
             space(ui, 7, 0),
             ui.paragraph(.{ .height = 16, .wrap = false, .overflow = .clip, .style = .{ .foreground = if (current) theme.ink else theme.sidebar_ink } }, name),
             space(ui, 7, 0),
@@ -715,20 +830,26 @@ fn notePanel(ui: *AppUi, model: *const Model) AppUi.Node {
         });
         count += 1;
         for (model.notes.items, 0..) |note, index| {
-            if (!std.mem.eql(u8, note.path, file.path) or count >= nodes.len) continue;
-            nodes[count] = ui.column(.{ .key = .{ .index = index }, .padding = 12, .gap = 8, .on_press = .{ .goto_note = index }, .semantics = .{ .role = .button, .label = ui.fmt("Go to note on {s}", .{file.path}) }, .style = .{ .background = theme.background, .radius = 8 } }, .{
-                ui.row(.{ .padding = 0, .cross = .center }, .{
-                    ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.note } }, "note"),
-                    space(ui, 7, 0),
-                    smallText(ui, if (note.line_end > note.line) ui.fmt("{s}ines {d}–{d}", .{ if (note.old) "Old l" else "L", note.line, note.line_end }) else if (note.line > 0) ui.fmt("{s}ine {d}", .{ if (note.old) "Old l" else "L", note.line }) else "Whole file", theme.muted),
-                    ui.spacer(1),
-                    iconButton(ui, ui.fmt("edit-{d}", .{index}), "add", "Edit note", .{ .edit_note = index }, false, false),
-                    iconButton(ui, ui.fmt("delete-{d}", .{index}), "trash", "Delete note", .{ .delete_note = index }, false, false),
-                }),
-                ui.text(.{ .wrap = true, .style = .{ .foreground = theme.ink } }, note.text),
-            });
+            if (!std.mem.eql(u8, note.path, file.path) or !app.inView(model, note) or count >= nodes.len) continue;
+            nodes[count] = noteCard(ui, note, index, false);
             count += 1;
         }
+    }
+    var heading_shown = false;
+    for (model.notes.items, 0..) |note, index| {
+        if (count + 2 >= nodes.len) break;
+        var placed = false;
+        if (app.inView(model, note)) for (model.files) |file| {
+            placed = placed or std.mem.eql(u8, file.path, note.path);
+        };
+        if (placed) continue;
+        if (!heading_shown) {
+            heading_shown = true;
+            nodes[count] = ui.row(.{ .key = .{ .str = "notes-elsewhere" }, .height = 26, .padding = 0, .gap = 0, .cross = .center }, .{ space(ui, 6, 0), smallText(ui, "Elsewhere", theme.secondary) });
+            count += 1;
+        }
+        nodes[count] = noteCard(ui, note, index, true);
+        count += 1;
     }
     if (count == 0 and !model.editing) {
         nodes[0] = ui.column(.{ .padding = 16, .gap = 6, .cross = .center }, .{
@@ -809,7 +930,8 @@ fn reviewTitle(ui: *AppUi, model: *const Model) []const u8 {
     return switch (model.mode) {
         .working => "Working changes",
         .staged => "Staged changes",
-        .branch => if (model.head.len > 0 or model.compare_head.len > 0) ui.fmt("{s} since {s}", .{ headName(model), model.base.text() }) else ui.fmt("Changes since {s}", .{model.base.text()}),
+        // A commit under review on its own is titled by its subject.
+        .branch => if (model.commit) |index| (if (index < model.commits.len) model.commits[index].subject() else "Commit") else if (model.head.len > 0 or model.compare_head.len > 0) ui.fmt("{s} since {s}", .{ headName(model), model.base.text() }) else ui.fmt("Changes since {s}", .{model.base.text()}),
     };
 }
 /// The pane is titled by the comparison under review, with its totals and progress.
@@ -820,9 +942,12 @@ fn paneHeader(ui: *AppUi, model: *const Model) AppUi.Node {
         totals.additions += file.additions;
         totals.deletions += file.deletions;
     }
+    const changed = app.changedSince(model);
     // The title lives in the header layer above; this strip keeps notices and progress.
     return ui.row(.{ .height = theme.pane_header, .padding = 0, .gap = 0, .cross = .center, .window_drag = true }, .{
         ui.spacer(1),
+        // Files reviewed in an earlier version: show only what changed since.
+        if (changed > 0 or model.since_review) ui.button(.{ .key = .{ .str = "since-review" }, .height = 24, .size = .sm, .variant = .ghost, .on_press = .toggle_since, .semantics = .{ .label = if (model.since_review) "Show all changes" else "Show changes since review" }, .style = .{ .foreground = if (model.since_review) theme.ink else theme.note, .background = if (model.since_review) theme.segment_on else theme.clear, .border = if (model.since_review) theme.selected_edge else theme.clear, .stroke_width = 0.5, .radius = 12, .quiet_hover = true } }, if (model.since_review) "Since review" else if (changed == 1) "1 changed since review" else ui.fmt("{d} changed since review", .{changed})) else ui.spacer(0),
         space(ui, 12, 0),
         // Review progress: the check brightens once every file is done.
         if (model.files.len > 0) ui.row(.{ .padding = 0, .gap = 5, .cross = .center, .semantics = .{ .label = "Review progress" } }, .{
@@ -982,7 +1107,7 @@ fn divider(ui: *AppUi) AppUi.Node {
     return ui.row(.{ .height = 1, .padding = 0, .gap = 0 }, .{ space(ui, 14, 0), ui.row(.{ .grow = 1, .height = 1, .padding = 0, .style = .{ .background = theme.settings_divider } }, .{}), space(ui, 14, 0) });
 }
 fn card(ui: *AppUi, rows: []const AppUi.Node) AppUi.Node {
-    var nodes: [24]AppUi.Node = undefined;
+    var nodes: [2 * app.keyboard.commands.len]AppUi.Node = undefined;
     var count: usize = 0;
     for (rows, 0..) |row, index| {
         if (count + 2 > nodes.len) break;
@@ -1104,11 +1229,14 @@ fn settingsBody(ui: *AppUi, model: *const Model) AppUi.Node {
             heading(ui, "Reviewing"),
             card(ui, &.{
                 settingRow(ui, "Fold reviewed files", "Marking a file reviewed folds it to its header, so what is left to read stays in view.", toggle(ui, "Fold reviewed files", model.collapse_reviewed, .toggle_fold_setting)),
+                settingRow(ui, "Fold generated files", "Lockfiles and paths marked linguist-generated open folded to their headers.", toggle(ui, "Fold generated files", model.fold_generated, .toggle_generated_setting)),
                 settingRow(ui, "Diff layout", "How changes are laid out. ⌘\\ switches while you review.", choices(ui, .{ choice(ui, "Split", model.split, .{ .default_split = true }), choice(ui, "Unified", !model.split, .{ .default_split = false }) })),
             }),
             heading(ui, "Comparison"),
             card(ui, &.{
                 settingRow(ui, "Open with", "What Patch reviews when it opens a repository.", choices(ui, .{ choice(ui, "Working", model.default_mode == .working, .{ .default_mode = .working }), choice(ui, "Staged", model.default_mode == .staged, .{ .default_mode = .staged }), choice(ui, "Branch", model.default_mode == .branch, .{ .default_mode = .branch }) })),
+                settingRow(ui, "Ignore whitespace", "Hide changes that only add, remove or re-indent whitespace. Also in the command palette.", toggle(ui, "Ignore whitespace", model.ignore_whitespace, .toggle_whitespace)),
+                settingRow(ui, "Diff algorithm", "Histogram often lines up rewritten code more readably than Git's default.", choices(ui, .{ choice(ui, "Default", model.algorithm == .default, .{ .set_algorithm = .default }), choice(ui, "Histogram", model.algorithm == .histogram, .{ .set_algorithm = .histogram }), choice(ui, "Patience", model.algorithm == .patience, .{ .set_algorithm = .patience }) })),
                 settingRow(ui, "Base branch", "Branch comparisons start from the merge base with this branch.", ui.row(.{ .width = 150, .height = 26, .padding = 0, .gap = 0, .cross = .center, .style = .{ .background = theme.field, .radius = 13 } }, .{
                     ui.textField(.{ .key = .{ .str = "settings-base" }, .grow = 1, .height = 24, .text = model.base.text(), .placeholder = "main", .on_input = AppUi.inputMsg(.base_edit), .semantics = .{ .label = "Default base branch" }, .variant = .ghost, .style = .{ .border = theme.clear, .background = theme.clear, .focus_ring = theme.clear, .radius = 0 } }),
                 })),
@@ -1122,7 +1250,7 @@ fn settingsBody(ui: *AppUi, model: *const Model) AppUi.Node {
             }),
         }),
         .keyboard => blk: {
-            var rows: [24]AppUi.Node = undefined;
+            var rows: [app.keyboard.commands.len]AppUi.Node = undefined;
             var count: usize = 0;
             for (app.keyboard.commands) |item| {
                 if (item.shortcut.len == 0 or count == rows.len) continue;
@@ -1169,7 +1297,7 @@ fn settingsBody(ui: *AppUi, model: *const Model) AppUi.Node {
             }),
             heading(ui, "Data"),
             card(ui, &.{
-                settingRow(ui, "Review progress and notes", "Saved on this Mac for each repository and patch snapshot. A changed patch starts a fresh review.", ui.button(.{ .height = 26, .size = .sm, .variant = .ghost, .on_press = .copy_data_path, .semantics = .{ .label = "Copy data folder path" }, .style = .{ .foreground = theme.ink, .background = theme.segment_on, .radius = 13 } }, "Copy Path")),
+                settingRow(ui, "Review progress and notes", "Saved on this Mac for each repository. A reviewed change stays reviewed wherever it appears again, a rebase included; notes follow their lines as files change.", ui.button(.{ .height = 26, .size = .sm, .variant = .ghost, .on_press = .copy_data_path, .semantics = .{ .label = "Copy data folder path" }, .style = .{ .foreground = theme.ink, .background = theme.segment_on, .radius = 13 } }, "Copy Path")),
             }),
         }),
     };

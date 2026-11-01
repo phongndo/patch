@@ -52,6 +52,11 @@ pub const Action = enum {
     staged,
     branch,
     settings,
+    whitespace,
+    since_review,
+    commit_next,
+    commit_previous,
+    all_changes,
 };
 pub const Invocation = struct { action: Action, count: usize = 1 };
 pub const Key = union(enum) { character: u8, control: u8, escape, enter, up, down, page_up, page_down, home, end, other };
@@ -116,12 +121,14 @@ pub const State = struct {
             break :blk switch (prefix) {
                 .g => if (key.character == 'g') (if (explicit_count) .go_line else .first) else null,
                 .next => switch (key.character) {
+                    'C' => .commit_next,
                     'c' => .change_next,
                     'f' => .file_next,
                     'u' => .unreviewed_next,
                     else => null,
                 },
                 .previous => switch (key.character) {
+                    'C' => .commit_previous,
                     'c' => .change_previous,
                     'f' => .file_previous,
                     'u' => .unreviewed_previous,
@@ -245,6 +252,11 @@ pub const commands = [_]Command{
     .{ .action = .collapse_all, .id = "patch.collapse-all", .title = "Collapse all files", .shortcut = "zM", .icon = "collapsed" },
     .{ .action = .expand_all, .id = "patch.expand-all", .title = "Expand all files", .shortcut = "zR", .icon = "expanded" },
     .{ .action = .split, .id = "patch.split", .title = "Toggle split or unified diff", .shortcut = "⌘\\", .icon = "split" },
+    .{ .action = .whitespace, .id = "patch.whitespace", .title = "Toggle ignore whitespace", .icon = "modified", .document = false },
+    .{ .action = .since_review, .id = "patch.since-review", .title = "Toggle changes since review", .icon = "modified" },
+    .{ .action = .commit_next, .id = "patch.commit-next", .title = "Next commit", .shortcut = "]C", .icon = "branch", .document = false },
+    .{ .action = .commit_previous, .id = "patch.commit-previous", .title = "Previous commit", .shortcut = "[C", .icon = "branch", .document = false },
+    .{ .action = .all_changes, .id = "patch.all-changes", .title = "Review all the branch's changes", .icon = "branch", .document = false },
     .{ .action = .sidebar, .id = "patch.sidebar", .title = "Toggle file rail", .shortcut = "⌘B", .icon = "sidebar", .document = false },
     .{ .action = .notes, .id = "patch.notes", .title = "Toggle notes", .shortcut = "⌘⇧N", .icon = "comment" },
     .{ .action = .refresh, .id = "patch.refresh", .title = "Refresh changes", .shortcut = "⌘R", .icon = "refresh", .document = false },
@@ -309,6 +321,8 @@ test "fold keys collapse and expand files" {
     var state = State{};
     _ = state.feed(.{ .character = 'z' });
     try std.testing.expectEqual(Action.collapse_toggle, state.feed(.{ .character = 'a' }).?.action);
+    _ = state.feed(.{ .character = ']' });
+    try std.testing.expectEqual(Action.commit_next, state.feed(.{ .character = 'C' }).?.action);
     _ = state.feed(.{ .character = 'z' });
     try std.testing.expectEqual(Action.collapse_all, state.feed(.{ .character = 'M' }).?.action);
     _ = state.feed(.{ .character = 'z' });
