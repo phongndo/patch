@@ -52,12 +52,24 @@ takes values from those sources rather than approximating them.
 - Panes resize from the gaps between them, within Rex's measured range, and
   ease open and closed (240 ms, Core Animation's default curve) with a real
   layout every frame.
-- Files fold to their headers, a short pane each; reviewed files fold as they
-  are marked. The file being read pins its header at the top of the review as
-  an opaque 24-point pill over the code, so it reads clearly and folds from
-  anywhere; the status is the same pill at the foot. A pane cut by either
-  edge runs to the pill's middle and no further, so the pill's round ends
-  become its corners and it still floats on the window.
+- Files fold to their headers, a short pane each (22 points of the row's 24,
+  so folded files read as a list of full rows); reviewed files fold as they
+  are marked, and generated or whitespace-only files open folded, the header
+  saying which in the tertiary ink. Folding or unfolding never scrolls: the
+  file's header stays where it was on screen and what follows closes up or
+  opens out beneath it. The file being read pins its header at the top of the
+  review as a 24-point slice of its own pane, in the pane's color, so the
+  header reads as the pane's rounded top and folds from anywhere; the status
+  is the same at the foot, closing the pane it cuts (or, past the last file,
+  a short pane of its own). No row draws under either, so glass panes stay
+  even.
+- What an earlier review says is quiet until it matters: a changed-since-review
+  file carries an amber mark in the rail and an amber label on its header,
+  and the strip above the review offers to show only those changes. Lines
+  there that the base brought in keep only a faint wash. In a branch, the
+  repository row's quiet second word becomes the commit count (the branch
+  is already named by the comparison control), opening the list of commits,
+  each marked reviewed, partly reviewed, or changed since review.
 
 ## The diff
 
