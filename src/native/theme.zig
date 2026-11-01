@@ -224,6 +224,20 @@ pub var moved_ink: canvas.Color = noir.moved_ink;
 pub var syntax_type: canvas.Color = noir.syntax_type;
 pub var dark: bool = true;
 
+/// Whether a native blur sits behind the canvas: glass.m installs one on
+/// macOS, under the window tint. Other platforms have neither, so glass
+/// panes are macOS-only and the canvas paints the window color itself.
+pub const native_blur = @import("builtin").os.tag == .macos;
+
+/// The window's background where the canvas must paint it: clear over the
+/// native blur on macOS; elsewhere the tint over an even backdrop close to
+/// what macOS's sidebar material shows behind it, so panes read the same.
+pub fn windowFill() canvas.Color {
+    if (native_blur) return clear;
+    const backdrop = if (dark) canvas.Color.rgba8(38, 38, 38, 255) else canvas.Color.rgba8(236, 236, 236, 255);
+    return mix(backdrop, window, window.a);
+}
+
 pub fn apply(next: Palette) void {
     dark = next.dark;
     inline for (@typeInfo(Palette).@"struct".fields) |member| {

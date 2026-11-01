@@ -1540,10 +1540,11 @@ fn settingsBody(ui: *AppUi, model: *const Model) AppUi.Node {
         .appearance => ui.column(.{ .padding = 0, .gap = 0 }, .{
             heading(ui, "Theme"),
             themeGrid(ui, model),
-            heading(ui, "Panes"),
-            card(ui, &.{
+            // Glass needs the native blur only macOS has under the window.
+            if (theme.native_blur) heading(ui, "Panes") else ui.spacer(0),
+            if (theme.native_blur) card(ui, &.{
                 settingRow(ui, "Material", "Glass lets the window's blur show through the review and the notes.", choices(ui, .{ choice(ui, "Solid", !model.glass_panes, .{ .set_glass = false }), choice(ui, "Glass", model.glass_panes, .{ .set_glass = true }) })),
-            }),
+            }) else ui.spacer(0),
             heading(ui, "Colors"),
             card(ui, &.{
                 colorRow(ui, model, 0),
@@ -1681,9 +1682,10 @@ pub fn view(ui: *AppUi, model: *const Model) AppUi.Node {
         ui.row(.{ .grow = 1, .padding = 0, .gap = 0 }, .{panes}),
         space(ui, 0, inset),
     });
-    // The window's dark tint is a native layer under the canvas (glass.m), so the
-    // canvas never blends a full-window fill on every frame.
-    return ui.stack(.{ .padding = 0, .style = .{ .background = theme.clear, .foreground = theme.ink, .radius = 0 } }, .{
+    // On macOS the window's dark tint is a native layer under the canvas
+    // (glass.m), so the canvas never blends a full-window fill on every frame;
+    // elsewhere there is no layer under it, and the canvas paints it opaque.
+    return ui.stack(.{ .padding = 0, .style = .{ .background = theme.windowFill(), .foreground = theme.ink, .radius = 0 } }, .{
         ui.split(.{ .grow = 1, .gap = inset, .value = rail, .on_resize = AppUi.valueMsg(.sidebar_resized) }, .{
             withMin(drawer(ui, model.sidebar, if (!model.sidebar and !model.rail_mounted) ui.spacer(0) else fileRail(ui, model)), if (model.sidebar and idle) theme.rail_min else 0),
             withMin(main, @max(480, span - theme.rail_max)),

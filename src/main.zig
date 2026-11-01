@@ -1144,7 +1144,7 @@ fn loadSettings(model: *Model) void {
     model.notes_width = std.math.clamp(value.notes_width, theme.notes_min, theme.notes_max);
     model.rail_shown = railTarget(model);
     model.theme_index = theme.schemeIndex(value.theme) orelse 0;
-    model.glass_panes = value.glass;
+    model.glass_panes = value.glass and theme.native_blur;
     for (&model.colors, value.colors) |*buffer, text| buffer.* = .init(text[0..@min(text.len, 7)]);
     applyAppearance(model);
 }
@@ -2000,7 +2000,7 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
             saveSettings(model);
         },
         .set_glass => |on| {
-            model.glass_panes = on;
+            model.glass_panes = on and theme.native_blur;
             applyAppearance(model);
             saveSettings(model);
         },
@@ -2655,8 +2655,11 @@ pub fn main(init: std.process.Init) !void {
     }
     canvas.icons.registerAppIcons(&app_icons);
     base_tokens = .{ baseTokens(.dark), baseTokens(.light) };
+    // `.metal` asks for the accelerated presenter: Metal on macOS, Direct2D on
+    // Windows; Linux presents through the software renderer whatever is asked.
+    // Only macOS keeps the window transparent, for the blur glass.m puts under it.
     const views = [_]sdk.ShellView{.{ .label = "main-canvas", .kind = .gpu_surface, .fill = true, .accessibility_label = "Patch", .gpu_backend = .metal, .gpu_pixel_format = .bgra8_unorm, .gpu_present_mode = .timer, .gpu_alpha_mode = .premultiplied, .gpu_color_space = .srgb, .gpu_vsync = true }};
-    const windows = [_]sdk.ShellWindow{.{ .label = "main", .title = "Patch", .width = 1380, .height = 900, .min_width = 880, .min_height = 500, .titlebar = .hidden_inset, .transparent = true, .activate_on_show = false, .views = &views }};
+    const windows = [_]sdk.ShellWindow{.{ .label = "main", .title = "Patch", .width = 1380, .height = 900, .min_width = 880, .min_height = 500, .titlebar = .hidden_inset, .transparent = theme.native_blur, .activate_on_show = false, .views = &views }};
     const state = try PatchApp.create(gpa, .{ .name = "patch", .scene = .{ .windows = &windows }, .canvas_label = "main-canvas", .update_fx = update, .init_fx = initFx, .view = view, .windows_fn = declaredWindows, .window_view = windowView, .tokens_fn = designTokens, .on_wheel = wheelMsg, .on_key = keys, .on_command = command, .on_frame = if (session.measure_startup) measureStartupFrame else null });
     defer state.destroy();
     // Read Git/parse while AppKit and Metal initialize. initFx adopts the
