@@ -79,7 +79,7 @@ fn bandIcons(ui: *AppUi, model: *const Model) AppUi.Node {
     const controls = [_]Control{
         .{ .key = "split", .icon = if (model.split) "columns" else "rows", .label = if (model.split) "Switch to unified diff" else "Switch to split diff", .title = if (model.split) "Unified Diff" else "Split Diff", .msg = .toggle_split, .color = theme.sidebar_ink, .disabled = model.files.len == 0 },
         .{ .key = "notes", .icon = "note", .label = "Notes", .title = if (model.notes_open) "Hide Notes" else "Show Notes", .msg = .toggle_notes, .color = if (model.notes_open) theme.ink else theme.sidebar_ink, .disabled = model.files.len == 0 },
-        .{ .key = "commands", .icon = "command", .label = "Commands · ⌘K / ?", .title = "Command Palette", .msg = .{ .action = .{ .action = .commands } }, .color = theme.sidebar_ink, .disabled = false },
+        .{ .key = "commands", .icon = "command", .label = "Commands · ⌘K", .title = "Command Palette", .msg = .{ .action = .{ .action = .commands } }, .color = theme.sidebar_ink, .disabled = false },
     };
     const fits = bandFits(model);
     const shown = if (fits >= controls.len) controls.len else fits -| 1;
@@ -342,7 +342,7 @@ fn commitMark(state: app.history.CommitState) struct { icon: []const u8, color: 
 fn commitPicker(ui: *AppUi, model: *const Model) AppUi.Node {
     const count = model.commits.len;
     const label = if (model.commit) |index| ui.fmt("{d} of {d}", .{ index + 1, count }) else if (count == 1) "1 commit" else ui.fmt("{d} commits", .{count});
-    const face = ui.row(.{ .key = .{ .str = "commit-picker" }, .height = 26, .padding = 0, .gap = 0, .cross = .center, .on_press = .toggle_commit_menu, .semantics = .{ .role = .button, .label = ui.fmt("Commits: {s} · ]C / [C", .{label}) }, .style = .{ .background = if (model.commit_menu) theme.selected else theme.clear, .radius = 13 } }, .{
+    const face = ui.row(.{ .key = .{ .str = "commit-picker" }, .height = 26, .padding = 0, .gap = 0, .cross = .center, .on_press = .toggle_commit_menu, .semantics = .{ .role = .button, .label = ui.fmt("Commits: {s} · {s} / {s}", .{ label, app.keyboard.shortcut(.commit_next), app.keyboard.shortcut(.commit_previous) }) }, .style = .{ .background = if (model.commit_menu) theme.selected else theme.clear, .radius = 13 } }, .{
         space(ui, 7, 0),
         ui.text(.{ .style = .{ .foreground = if (model.commit != null) theme.sidebar_ink else theme.tertiary } }, label),
         space(ui, 5, 0),
@@ -643,7 +643,7 @@ fn selectionBar(ui: *AppUi, model: *const Model) AppUi.Node {
             space(ui, 6, 0),
             tinted(ui, "comment-selection", "comment", "Comment on selected lines", .comment_selection, theme.sidebar_ink, false, 28),
             tinted(ui, "copy-selection", "copy", "Copy selected code", .copy_selection, theme.sidebar_ink, false, 28),
-            tinted(ui, "find-selection", "symbol", "Find where this is defined and used · gd", .{ .find_symbol_at = .{ .file = range.file, .row = range.focus, .old = range.old, .line = range.last_line } }, theme.sidebar_ink, model.imported, 28),
+            tinted(ui, "find-selection", "symbol", ui.fmt("Find where this is defined and used · {s}", .{app.keyboard.shortcut(.find_symbol)}), .{ .find_symbol_at = .{ .file = range.file, .row = range.focus, .old = range.old, .line = range.last_line } }, theme.sidebar_ink, model.imported, 28),
         }),
     });
     // The bar anchors to a marker of its width at the row's right, 12 points in.
@@ -784,7 +784,7 @@ fn hunkHeader(ui: *AppUi, model: *const Model, file_index: usize, rows: []const 
             if (hidden > 0 and !row.tail) smallText(ui, if (hidden == 1) "1 hidden line" else ui.fmt("{d} hidden lines", .{hidden}), theme.line_number) else ui.spacer(0),
             if (hidden > 0 and !row.tail) space(ui, 8, 0) else ui.spacer(0),
         }),
-        if (hunk != null) ui.button(.{ .key = .{ .str = "hunk-reviewed" }, .width = 24, .height = 24, .icon = if (reviewed) "app:check" else "app:checkbox", .size = .icon, .variant = .ghost, .on_press = .{ .reviewed_hunk = at }, .style = .{ .foreground = if (reviewed) theme.green else theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Mark hunk {s} · v", .{if (reviewed) "unreviewed" else "reviewed"}) } }, "") else ui.spacer(0),
+        if (hunk != null) ui.button(.{ .key = .{ .str = "hunk-reviewed" }, .width = 24, .height = 24, .icon = if (reviewed) "app:check" else "app:checkbox", .size = .icon, .variant = .ghost, .on_press = .{ .reviewed_hunk = at }, .style = .{ .foreground = if (reviewed) theme.green else theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Mark hunk {s} · {s}", .{ if (reviewed) "unreviewed" else "reviewed", app.keyboard.shortcut(.hunk_reviewed) }) } }, "") else ui.spacer(0),
         space(ui, 7, 0),
     });
     top.widget.layout.clip_content = true;
@@ -953,7 +953,7 @@ fn review(ui: *AppUi, model: *const Model) AppUi.Node {
             const wash_old = if (row.base and row.removed) theme.hunk else if (row.moved_old != 0) theme.moved else if (row.removed) theme.removed else theme.background;
             const wash_new = if (row.base and row.added) theme.hunk else if (row.moved_new != 0) theme.moved else if (row.added) theme.added else theme.background;
             const content = if (model.split and !file.oneSided()) ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0, .style = .{ .background = theme.pane } }, .{
-                codeCell(ui, model, row.left, row.old, true, entry.file, index, row.old_offset, wash_old, language, row.old_carry, current and old, match, pair.old.slice(), link_old), line(ui, true),
+                codeCell(ui, model, row.left, row.old, true, entry.file, index, row.old_offset, wash_old, language, row.old_carry, current and old, match, pair.old.slice(), link_old),    line(ui, true),
                 codeCell(ui, model, row.right, row.new, false, entry.file, index, row.new_offset, wash_new, language, row.new_carry, current and !old, match, pair.new.slice(), link_new),
             }) else ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0, .style = .{ .background = theme.pane } }, .{
                 codeCell(ui, model, if (row.removed) row.left else row.right, if (row.removed) row.old else row.new, row.removed, entry.file, index, if (row.removed) row.old_offset else row.new_offset, if (row.removed) wash_old else wash_new, language, if (row.removed) row.old_carry else row.new_carry, current, match, &.{}, if (row.removed) link_old else link_new),
@@ -1076,7 +1076,7 @@ fn notePanel(ui: *AppUi, model: *const Model) AppUi.Node {
             ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.sidebar_ink } }, "comment"),
             space(ui, 8, 0),
             ui.text(.{ .grow = 1, .style = .{ .foreground = theme.ink } }, "Notes"),
-            paneControl(ui, "new-note", "add", "Add file note · C", .add_note, false, false),
+            paneControl(ui, "new-note", "add", ui.fmt("Add file note · {s}", .{app.keyboard.shortcut(.comment_file)}), .add_note, false, false),
             paneControl(ui, "close-notes", "close", "Close notes", .toggle_notes, false, false),
             space(ui, 8, 0),
         }),
@@ -1108,8 +1108,6 @@ fn paneSurface(ui: *AppUi, key: []const u8, width: f32, children: anytype) AppUi
 /// The status pill's content. Left: the find field or where the cursor is;
 /// right: panning and match counts.
 fn statusRow(ui: *AppUi, model: *const Model) AppUi.Node {
-    var hint_buffer: [24]u8 = undefined;
-    const hint = model.keys.hint(&hint_buffer);
     const matches = model.search_matches;
     var match_index: usize = 0;
     for (matches, 0..) |index, position| {
@@ -1126,14 +1124,12 @@ fn statusRow(ui: *AppUi, model: *const Model) AppUi.Node {
             space(ui, 4, 0),
             ui.textField(.{ .key = .{ .str = "diff-search" }, .grow = 1, .height = height - 2, .text = model.search_query.text(), .placeholder = "Find in diff…", .autofocus = true, .on_input = AppUi.inputMsg(.search_edit), .on_submit = .search_accept, .semantics = .{ .label = "Find in diff" }, .variant = .ghost, .style = .{ .background = theme.clear, .border = theme.clear, .focus_ring = theme.clear, .radius = 0 } }),
         }) else if (position) smallText(ui, ui.fmt("Line {d} · {s}", .{ app.cursorNumber(model), if (app.cursorIsOld(model)) "old" else "new" }), theme.muted) else ui.spacer(0),
-        if (hint.len > 0) space(ui, 10, 0) else ui.spacer(0),
-        if (hint.len > 0) smallText(ui, hint, theme.green) else ui.spacer(0),
         if (searching) space(ui, 12, 0) else ui.spacer(1),
         if (column_text.len > 0) smallText(ui, column_text, theme.tertiary) else ui.spacer(0),
         if (column_text.len > 0 and model.search_query.len > 0) space(ui, 12, 0) else ui.spacer(0),
         if (model.search_query.len > 0) smallText(ui, ui.fmt("{d}/{d}", .{ match_index, matches.len }), if (matches.len == 0) theme.red else theme.muted) else ui.spacer(0),
         if (model.search_query.len > 0 and !searching) space(ui, 10, 0) else ui.spacer(0),
-        if (model.search_query.len > 0 and !searching) smallText(ui, "n / N", theme.muted) else ui.spacer(0),
+        if (model.search_query.len > 0 and !searching) smallText(ui, ui.fmt("{s} / {s}", .{ app.keyboard.shortcut(.match_next), app.keyboard.shortcut(.match_previous) }), theme.muted) else ui.spacer(0),
         space(ui, 12, 0),
     });
 }
@@ -1196,17 +1192,6 @@ fn keyHint(ui: *AppUi, label: []const u8, key: []const u8) AppUi.Node {
             ui.row(.{ .height = 18, .padding = 0, .gap = 0, .cross = .center }, .{ space(ui, 5, 0), smallText(ui, key, theme.secondary), space(ui, 5, 0) }),
         }),
     });
-}
-/// The palette shows one key per command, preferring the ⌘ chord; the rest
-/// of a command's keys are listed in Settings › Keyboard.
-fn primaryShortcut(shortcut: []const u8) []const u8 {
-    var parts = std.mem.splitSequence(u8, shortcut, " / ");
-    var first: []const u8 = "";
-    while (parts.next()) |part| {
-        if (first.len == 0) first = part;
-        if (std.mem.indexOf(u8, part, "⌘") != null) return part;
-    }
-    return first;
 }
 /// One place a symbol appears: its line of code, then where it is, with
 /// definitions marked.
@@ -1276,7 +1261,7 @@ fn palette(ui: *AppUi, model: *const Model) AppUi.Node {
         }
         const command = if (!item.file) app.keyboard.commands[item.index] else null;
         const title = if (item.file) std.fs.path.basename(model.files[item.index].path) else command.?.title;
-        const detail = if (item.file) std.fs.path.dirname(model.files[item.index].path) orelse "" else primaryShortcut(command.?.shortcut);
+        const detail = if (item.file) std.fs.path.dirname(model.files[item.index].path) orelse "" else app.keyboard.shortcut(command.?.action);
         rows[count] = ui.row(.{ .key = .{ .index = position }, .height = row_h, .padding = 0, .gap = 0, .cross = .center, .on_press = .{ .palette_choose = position }, .semantics = .{ .role = .listitem, .label = if (item.file) model.files[item.index].path else title }, .style = .{ .background = if (active) theme.palette_active else theme.clear, .quiet_hover = true, .radius = 11 } }, .{
             space(ui, 11.5, 0),
             ui.text(.{ .grow = 1, .style = .{ .foreground = if (active) canvas.Color.rgb8(255, 255, 255) else theme.palette_ink } }, title),
@@ -1400,6 +1385,18 @@ fn choices(ui: *AppUi, nodes: anytype) AppUi.Node {
 fn keycap(ui: *AppUi, text: []const u8) AppUi.Node {
     return ui.row(.{ .height = 20, .padding = 0, .gap = 0, .cross = .center, .style = .{ .background = theme.field, .radius = 5 } }, .{ space(ui, 7, 0), smallText(ui, text, theme.sidebar_ink), space(ui, 7, 0) });
 }
+/// Each key bound to a command on its own cap, side by side.
+fn keycaps(ui: *AppUi, keys: []const u8) AppUi.Node {
+    var caps: [4]AppUi.Node = undefined;
+    var count: usize = 0;
+    var parts = std.mem.splitSequence(u8, keys, "  ");
+    while (parts.next()) |part| {
+        if (count == caps.len) break;
+        caps[count] = keycap(ui, part);
+        count += 1;
+    }
+    return ui.row(.{ .padding = 0, .gap = 4, .cross = .center }, ui.arena.dupe(AppUi.Node, caps[0..count]) catch &.{});
+}
 /// A theme as a card: a little review in its own colors (a title, a removed
 /// and an added line, its accent), then its name. The chosen one is ringed.
 fn themeSwatch(ui: *AppUi, model: *const Model, index: usize) AppUi.Node {
@@ -1516,19 +1513,29 @@ fn settingsBody(ui: *AppUi, model: *const Model) AppUi.Node {
             }),
         }),
         .keyboard => blk: {
-            var rows: [app.keyboard.commands.len]AppUi.Node = undefined;
-            var count: usize = 0;
-            for (app.keyboard.commands) |item| {
-                if (item.shortcut.len == 0 or count == rows.len) continue;
-                rows[count] = settingRow(ui, item.title, "", keycap(ui, item.shortcut));
-                count += 1;
+            // One card per group, in the order a review goes.
+            const groups = std.enums.values(app.keyboard.Group);
+            var sections: [2 * groups.len + 2]AppUi.Node = undefined;
+            var section_count: usize = 0;
+            for (groups) |group| {
+                var rows: [app.keyboard.commands.len]AppUi.Node = undefined;
+                var count: usize = 0;
+                for (app.keyboard.commands) |item| {
+                    const keys = app.keyboard.keysFor(item.action);
+                    if (item.group != group or keys.len == 0) continue;
+                    rows[count] = settingRow(ui, item.title, "", keycaps(ui, keys));
+                    count += 1;
+                }
+                if (count == 0) continue;
+                sections[section_count] = heading(ui, group.title());
+                sections[section_count + 1] = card(ui, ui.arena.dupe(AppUi.Node, rows[0..count]) catch &.{});
+                section_count += 2;
             }
-            break :blk ui.column(.{ .padding = 0, .gap = 0 }, .{
-                heading(ui, "Shortcuts"),
-                ui.row(.{ .padding = 0, .gap = 0 }, .{ space(ui, 2, 0), ui.column(.{ .grow = 1, .padding = 0, .gap = 0 }, .{caption(ui, "Vim keys move through the review. Counts repeat a motion, as in 5j or 2]c. Every command is also in the palette, ⌘K.")}) }),
-                space(ui, 0, 8),
-                card(ui, ui.arena.dupe(AppUi.Node, rows[0..count]) catch &.{}),
-            });
+            sections[section_count] = space(ui, 0, 12);
+            section_count += 1;
+            sections[section_count] = ui.row(.{ .padding = 0, .gap = 0 }, .{ space(ui, 2, 0), ui.column(.{ .grow = 1, .padding = 0, .gap = 0 }, .{caption(ui, "Arrows move through the review and Return acts on the line you are on; the rest take ⌘. Keys wait while you type in a field, except the ⌘ keys that open, find and switch. Every command is also in the palette, ⌘K.")}) });
+            section_count += 1;
+            break :blk ui.column(.{ .padding = 0, .gap = 0 }, ui.arena.dupe(AppUi.Node, sections[0..section_count]) catch &.{});
         },
         .appearance => ui.column(.{ .padding = 0, .gap = 0 }, .{
             heading(ui, "Theme"),

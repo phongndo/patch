@@ -98,7 +98,6 @@ pub const Model = struct {
     selection_epoch: usize = 0,
     canvas_width: f32 = 1380,
     canvas_height: f32 = 900,
-    keys: keyboard.State = .{},
     focus: Focus = .review,
     focus_epoch: usize = 0,
     cursor: usize = 0,
@@ -221,9 +220,8 @@ pub const Model = struct {
     commit_offset: f32 = 0,
 };
 pub const Msg = union(enum) {
-    key: keyboard.Key,
+    key: keyboard.Chord,
     action: keyboard.Invocation,
-    expire_keys: sdk.EffectTimer,
     viewport: struct { width: f32, height: f32 },
     sidebar_resized: f32,
     notes_resized: f32,
@@ -891,11 +889,10 @@ pub fn pinnedFile(model: *const Model, offset: f32) ?usize {
     return file;
 }
 /// Whether the status has something to say: where the cursor is, the find
-/// field or its matches, a pending key, or how far the code is panned.
+/// field or its matches, or how far the code is panned.
 pub fn statusShown(model: *const Model) bool {
-    var buffer: [24]u8 = undefined;
     const position = model.cursor_active and !onFoldedHeader(model);
-    return model.focus == .search or position or model.keys.hint(&buffer).len > 0 or model.scroll_x > 0 or model.search_query.len > 0;
+    return model.focus == .search or position or model.scroll_x > 0 or model.search_query.len > 0;
 }
 /// The pill at the review's foot shows while the status has something to
 /// say or a pane runs past the bottom edge, so the cut pane still ends round.
@@ -1225,7 +1222,6 @@ fn poll(model: *Model, fx: *Effects) void {
     model.mouse.clear();
     model.hover = null;
     model.scroll_offset = 0;
-    model.keys.reset();
     model.history.clearRetainingCapacity();
     if (model.search_matches.len > 0) gpa.free(model.search_matches);
     model.search_matches = &.{};
@@ -1903,20 +1899,14 @@ fn exportMarkdown(alloc: std.mem.Allocator, model: *const Model) ![]const u8 {
 }
 pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
     switch (msg) {
-        .key => |key| {
-            if (model.palette != .closed) {
-                if (key == .character and (key.character == 'j' or key.character == 'k')) update(model, .{ .palette_move = if (key.character == 'j') 1 else -1 }, fx);
-                return;
-            }
-            if (model.keys.feed(key)) |invocation| perform(model, fx, invocation);
-            if (model.keys.pending()) fx.startTimer(.{ .key = 5, .interval_ms = 1200, .on_fire = Effects.timerMsg(.expire_keys) }) else fx.cancelTimer(5);
+        .key => |chord| {
+            if (model.palette != .closed) return;
+            if (keyboard.match(chord, .review)) |action| perform(model, fx, .{ .action = action });
         },
         .action => |invocation| {
-            model.keys.reset();
             model.band_menu = false;
             perform(model, fx, invocation);
         },
-        .expire_keys => model.keys.reset(),
         .viewport => |size| {
             model.canvas_width = size.width;
             model.canvas_height = size.height;
@@ -2424,8 +2414,8 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
 pub const view = @import("native/view.zig").view;
 fn keys(event: canvas.WidgetKeyboardEvent) ?Msg {
     if (event.phase != .key_down or session.settings_keys) return null;
-    const key = keyboard.decode(event.key, event.modifiers.shift, event.modifiers.control, event.modifiers.super, event.modifiers.alt) orelse return null;
-    return .{ .key = key };
+    const chord = keyboard.decode(event.key, event.modifiers.shift, event.modifiers.control, event.modifiers.super, event.modifiers.alt) orelse return null;
+    return .{ .key = chord };
 }
 fn command(name: []const u8) ?Msg {
     const action = keyboard.byId(name) orelse return null;
@@ -2451,6 +2441,7 @@ fn routeEvent(context: *anyopaque, runtime: *sdk.Runtime, event: sdk.Event) anye
         const input = event.canvas_widget_keyboard;
         const key = input.keyboard;
         if (key.phase == .key_down) {
+            const chord = keyboard.decode(key.key, key.modifiers.shift, key.modifiers.control, key.modifiers.super, key.modifiers.alt);
             if (key.modifiers.super) {
                 if (state.model.focus == .review and state.model.mouse.active and state.model.mouse.range != null and state.model.mouse.range.?.bytes == null and std.ascii.eqlIgnoreCase(key.key, "c")) {
                     try state.dispatch(runtime, input.window_id, .copy_selection);
@@ -2461,38 +2452,38 @@ fn routeEvent(context: *anyopaque, runtime: *sdk.Runtime, event: sdk.Event) anye
                         try state.dispatch(runtime, input.window_id, .palette_accept);
                         return;
                     }
-                    if (state.model.editing) {
+                    if (state.model.editing and state.model.focus == .note) {
                         try state.dispatch(runtime, input.window_id, .save_note);
                         return;
                     }
                 }
-                if (keyboard.primary(key.key, key.modifiers.shift)) |action| {
+                // ⌘ keys that work everywhere, a text field included.
+                if (chord) |value| if (keyboard.match(value, .global)) |action| {
                     try state.dispatch(runtime, input.window_id, .{ .action = .{ .action = action } });
                     return;
-                }
+                };
             }
             // Tab switches the branch picker between base and head.
             if (state.model.base_popover and !key.modifiers.super and std.ascii.eqlIgnoreCase(key.key, "tab")) {
                 try state.dispatch(runtime, input.window_id, .{ .branch_slot = if (state.model.branch_slot == .base) .head else .base });
                 return;
             }
-            const decoded = keyboard.decode(key.key, key.modifiers.shift, key.modifiers.control, key.modifiers.super, key.modifiers.alt);
-            if (decoded) |value| {
-                if (value == .escape or (value == .control and value.control == '[')) {
+            if (chord) |value| {
+                if (value.key == .escape) {
                     try state.dispatch(runtime, input.window_id, .{ .action = .{ .action = .escape } });
                     return;
                 }
-                if (state.model.base_popover and state.model.palette == .closed) {
-                    if (value == .up or value == .down or (value == .control and (value.control == 'n' or value.control == 'p'))) {
-                        const down = value == .down or (value == .control and value.control == 'n');
-                        try state.dispatch(runtime, input.window_id, .{ .branch_move = if (down) 1 else -1 });
+                // Lists move with the arrows, or ⌃N and ⌃P as in every Mac text field.
+                const plain = !value.command and !value.option and !value.shift;
+                const down = plain and (value.key == .down or (value.control and value.key == keyboard.Key.char('n')));
+                const up = plain and (value.key == .up or (value.control and value.key == keyboard.Key.char('p')));
+                if (down or up) {
+                    if (state.model.palette != .closed) {
+                        try state.dispatch(runtime, input.window_id, .{ .palette_move = if (down) 1 else -1 });
                         return;
                     }
-                }
-                if (state.model.palette != .closed) {
-                    if (value == .up or value == .down or (value == .control and (value.control == 'n' or value.control == 'p' or value.control == 'j' or value.control == 'k'))) {
-                        const down = value == .down or (value == .control and (value.control == 'n' or value.control == 'j'));
-                        try state.dispatch(runtime, input.window_id, .{ .palette_move = if (down) 1 else -1 });
+                    if (state.model.base_popover) {
+                        try state.dispatch(runtime, input.window_id, .{ .branch_move = if (down) 1 else -1 });
                         return;
                     }
                 }
@@ -2782,11 +2773,26 @@ pub fn noted(model: *const Model, file: usize, line: u32, old: bool) bool {
 }
 fn goLine(model: *Model, fx: *Effects, number: usize) void {
     if (model.selected >= model.files.len) return;
+    const file = &model.files[model.selected];
+    const old = if (file.oneSided()) file.status == .deleted else model.cursor_old;
+    // A folded file, or a reviewed hunk folded to its header, opens to show
+    // the line asked for.
+    var opened = file.collapsed;
+    file.collapsed = false;
+    const rows = if (model.split) file.split else file.unified;
+    for (rows) |row| {
+        const line_number = if (old) row.old else row.new;
+        if (row.meta or line_number < number or row.hunk >= file.hunks.len) continue;
+        if (file.hunks[row.hunk].collapsed) {
+            file.hunks[row.hunk].collapsed = false;
+            opened = true;
+        }
+        break;
+    }
+    if (opened) refold(model, fx, model.selected);
     const start = model.starts[model.selected];
     const end = if (model.selected + 1 < model.starts.len) model.starts[model.selected + 1] else model.display.len;
     var closest: ?usize = null;
-    const file = model.files[model.selected];
-    const old = if (file.oneSided()) file.status == .deleted else model.cursor_old;
     for (start..end) |index| if (sourceRow(model, index)) |row| {
         const line_number = if (old) row.old else row.new;
         if (line_number == 0) continue;
@@ -2970,7 +2976,7 @@ fn matchChoices(model: *Model) void {
         }
         return;
     }
-    const query = std.mem.trim(u8, model.palette_query.text(), " :");
+    const query = keyboard.target(model.palette_query.text()).query;
     const command_count = if (model.palette == .files) @as(usize, 0) else keyboard.commands.len;
     const length = command_count + (if (model.palette == .files or query.len > 0) model.files.len else 0);
     for (0..length) |index| {
@@ -3015,19 +3021,20 @@ fn acceptChoice(model: *Model, fx: *Effects) void {
     const choice = model.choices[model.choice_selected];
     const index = choice.index;
     const symbols = model.palette == .symbols;
+    const line = keyboard.target(model.palette_query.text()).line;
     model.palette = .closed;
     focusReview(model);
     if (symbols) {
         if (index < model.symbol_hits.len) openLocation(model, fx, model.symbol_hits[index].path, model.symbol_hits[index].line);
     } else if (choice.file) {
-        jump(model, fx, index);
+        const message = index < model.files.len and model.files[index].message;
+        if (line != null and !message) openLocation(model, fx, model.files[index].path, @intCast(@min(line.?, std.math.maxInt(u32)))) else jump(model, fx, index);
         model.cursor_active = true;
     } else perform(model, fx, .{ .action = keyboard.commands[index].action });
 }
 fn perform(model: *Model, fx: *Effects, invocation: keyboard.Invocation) void {
-    const count = invocation.count;
     switch (invocation.action) {
-        .line_down, .line_up, .file_next, .file_previous, .change_next, .change_previous, .first, .last, .go_line, .half_down, .half_up, .page_down, .page_up, .viewport_top, .viewport_middle, .viewport_bottom => clearSelection(model),
+        .line_down, .line_up, .file_next, .file_previous, .change_next, .change_previous, .first, .last, .page_down, .page_up => clearSelection(model),
         else => {},
     }
     switch (invocation.action) {
@@ -3044,7 +3051,6 @@ fn perform(model: *Model, fx: *Effects, invocation: keyboard.Invocation) void {
             } else openPalette(model, fx, .files);
         },
         .escape => {
-            model.keys.reset();
             model.blame = null;
             clearSelection(model);
             if (model.palette != .closed) model.palette = .closed else if (model.base_popover) {
@@ -3058,47 +3064,50 @@ fn perform(model: *Model, fx: *Effects, invocation: keyboard.Invocation) void {
             }
             focusReview(model);
         },
-        .line_down, .line_up => moveLines(model, fx, invocation.action == .line_down, count),
+        .line_down, .line_up => moveLines(model, fx, invocation.action == .line_down, 1),
         .old_side, .new_side => {
             if (ensureCursor(model)) model.cursor_old = invocation.action == .old_side;
         },
         .file_next => {
-            jump(model, fx, @min(model.selected + count, model.files.len -| 1));
+            jump(model, fx, @min(model.selected + 1, model.files.len -| 1));
             model.cursor_active = true;
         },
         .file_previous => {
-            jump(model, fx, model.selected -| count);
+            jump(model, fx, model.selected -| 1);
             model.cursor_active = true;
         },
-        .change_next, .change_previous => moveIndex(model, fx, model.changes, invocation.action == .change_next, count, false),
-        .unreviewed_next, .unreviewed_previous => nextUnreviewed(model, fx, invocation.action == .unreviewed_next, count),
+        .change_next, .change_previous => moveIndex(model, fx, model.changes, invocation.action == .change_next, 1, false),
+        .unreviewed_next, .unreviewed_previous => nextUnreviewed(model, fx, invocation.action == .unreviewed_next, 1),
         .first => {
             if (seekCode(model, 0, true)) |index| moveTo(model, fx, index);
         },
         .last => {
             if (seekCode(model, model.display.len -| 1, false)) |index| moveTo(model, fx, index);
         },
-        .go_line => goLine(model, fx, count),
-        .half_down, .half_up, .page_down, .page_up => {
-            const half = invocation.action == .half_down or invocation.action == .half_up;
-            const forward = invocation.action == .half_down or invocation.action == .page_down;
-            const lines = @max(1, @as(usize, @intFromFloat(model.viewport_height / (if (half) @as(f32, 48) else 24))));
-            moveLines(model, fx, forward, @min(model.display.len, lines * count));
+        .go_line => {
+            // The file picker takes `:line`, and a name before it for another file.
+            if (model.files.len == 0) return;
+            openPalette(model, fx, .files);
+            model.palette_query.set(":");
+            matchChoices(model);
         },
-        .scroll_down, .scroll_up => requestScroll(model, fx, model.scroll_offset + @as(f32, @floatFromInt(count)) * 24 * (if (invocation.action == .scroll_down) @as(f32, 1) else -1)),
-        .viewport_top, .viewport_middle, .viewport_bottom => {
-            const offset = if (invocation.action == .viewport_top) @as(f32, 0) else if (invocation.action == .viewport_middle) model.viewport_height / 2 else model.viewport_height - 24;
-            const target = @as(usize, @intFromFloat(@max(0, model.scroll_offset + offset) / 24));
-            if (seekCode(model, target, invocation.action != .viewport_bottom)) |index| moveTo(model, fx, index);
+        .page_down, .page_up => {
+            // A page keeps two lines of the last one in view, as browsers do.
+            const lines = @max(1, @as(usize, @intFromFloat(model.viewport_height / 24)) -| 2);
+            moveLines(model, fx, invocation.action == .page_down, @min(model.display.len, lines));
         },
-        .center, .align_top, .align_bottom => {
-            if (ensureCursor(model)) {
-                const offset = if (invocation.action == .center) model.viewport_height / 2 else if (invocation.action == .align_bottom) model.viewport_height - 24 else 0;
-                requestScroll(model, fx, @as(f32, @floatFromInt(model.cursor)) * 24 - offset);
-            }
+        .center => {
+            if (ensureCursor(model)) requestScroll(model, fx, @as(f32, @floatFromInt(model.cursor)) * 24 - model.viewport_height / 2);
         },
-        .collapse_toggle => if (model.selected < model.files.len) {
-            model.files[model.selected].collapsed = !model.files[model.selected].collapsed;
+        .collapse_toggle, .collapse, .expand => if (model.selected < model.files.len) {
+            const file = &model.files[model.selected];
+            const folded = switch (invocation.action) {
+                .collapse => true,
+                .expand => false,
+                else => !file.collapsed,
+            };
+            if (file.collapsed == folded) return;
+            file.collapsed = folded;
             refold(model, fx, model.selected);
         },
         .collapse_all, .expand_all => if (model.files.len > 0) {
@@ -3109,7 +3118,7 @@ fn perform(model: *Model, fx: *Effects, invocation: keyboard.Invocation) void {
             model.focus = .search;
         },
         .match_next, .match_previous => {
-            if (model.search_query.len == 0) model.focus = .search else if (model.search_matches.len == 0) notify(model, fx, "No matches") else moveIndex(model, fx, model.search_matches, invocation.action == .match_next, count, true);
+            if (model.search_query.len == 0) model.focus = .search else if (model.search_matches.len == 0) notify(model, fx, "No matches") else moveIndex(model, fx, model.search_matches, invocation.action == .match_next, 1, true);
         },
         .reviewed => {
             if (ensureCursor(model)) update(model, .reviewed, fx);
@@ -3118,26 +3127,22 @@ fn perform(model: *Model, fx: *Effects, invocation: keyboard.Invocation) void {
             if (ensureCursor(model)) {
                 markReviewed(model, fx, model.selected, true);
                 persist(model);
-                nextUnreviewed(model, fx, true, count);
+                nextUnreviewed(model, fx, true, 1);
             }
         },
         .undo => {
-            for (0..count) |_| {
-                const change = model.history.pop() orelse break;
-                if (change.hunk) |hunk| {
-                    // Undoing is not itself undone.
-                    const kept = model.history.items.len;
-                    setHunkReviewed(model, fx, .{ .file = change.file, .hunk = hunk }, change.reviewed);
-                    model.history.shrinkRetainingCapacity(@min(kept, model.history.items.len));
-                    continue;
-                }
-                if (change.file < model.files.len) {
-                    record(model, change.file, change.reviewed);
-                    restoreHunks(model, change);
-                    if (model.collapse_reviewed) model.files[change.file].collapsed = change.reviewed;
-                    refold(model, fx, change.file);
-                    model.cursor_active = true;
-                }
+            const change = model.history.pop() orelse return notify(model, fx, "Nothing to undo");
+            if (change.hunk) |hunk| {
+                // Undoing is not itself undone.
+                const kept = model.history.items.len;
+                setHunkReviewed(model, fx, .{ .file = change.file, .hunk = hunk }, change.reviewed);
+                model.history.shrinkRetainingCapacity(@min(kept, model.history.items.len));
+            } else if (change.file < model.files.len) {
+                record(model, change.file, change.reviewed);
+                restoreHunks(model, change);
+                if (model.collapse_reviewed) model.files[change.file].collapsed = change.reviewed;
+                refold(model, fx, change.file);
+                model.cursor_active = true;
             }
             persist(model);
         },
@@ -3164,6 +3169,10 @@ fn perform(model: *Model, fx: *Effects, invocation: keyboard.Invocation) void {
         .staged => update(model, .{ .mode = .staged }, fx),
         .branch => update(model, .{ .mode = .branch }, fx),
         .settings => update(model, .open_settings, fx),
+        .shortcuts => {
+            model.settings_section = .keyboard;
+            update(model, .open_settings, fx);
+        },
         .whitespace => update(model, .toggle_whitespace, fx),
         .since_review => update(model, .toggle_since, fx),
         .commit_next, .commit_previous => {
@@ -3171,7 +3180,7 @@ fn perform(model: *Model, fx: *Effects, invocation: keyboard.Invocation) void {
             // The whole branch sits before its first commit and after its last.
             const slots = model.commits.len + 1;
             const at = if (model.commit) |index| index + 1 else 0;
-            const step = count % slots;
+            const step = 1;
             const next = if (invocation.action == .commit_next) (at + step) % slots else (at + slots - step) % slots;
             update(model, .{ .select_commit = if (next == 0) null else next - 1 }, fx);
         },

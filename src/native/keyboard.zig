@@ -1,5 +1,8 @@
-//! Keyboard review: Vim key sequences and counts, the commands they run,
-//! and allocation-free fuzzy matching for the pickers.
+//! Keyboard review: the keymap, the commands it runs, and allocation-free
+//! fuzzy matching for the pickers. Keys are chords, as in Rex and every Mac
+//! app: arrows move, Return acts on the line you are on, and everything else
+//! takes ⌘. There are no modes, prefixes or counts, so a key always does the
+//! same thing.
 
 const std = @import("std");
 
@@ -14,22 +17,15 @@ pub const Action = enum {
     change_previous,
     unreviewed_next,
     unreviewed_previous,
-    half_down,
-    half_up,
     page_down,
     page_up,
-    scroll_down,
-    scroll_up,
     first,
     last,
     go_line,
-    viewport_top,
-    viewport_middle,
-    viewport_bottom,
     center,
-    align_top,
-    align_bottom,
     collapse_toggle,
+    collapse,
+    expand,
     collapse_all,
     expand_all,
     search,
@@ -55,6 +51,7 @@ pub const Action = enum {
     staged,
     branch,
     settings,
+    shortcuts,
     whitespace,
     since_review,
     commit_next,
@@ -69,235 +66,297 @@ pub const Action = enum {
     blame,
     find_symbol,
 };
-pub const Invocation = struct { action: Action, count: usize = 1 };
-pub const Key = union(enum) { character: u8, control: u8, escape, enter, up, down, page_up, page_down, home, end, other };
-pub const Prefix = enum { none, g, next, previous, z };
-pub const State = struct {
-    count: usize = 0,
-    prefix: Prefix = .none,
+pub const Invocation = struct { action: Action };
 
-    pub fn pending(self: State) bool {
-        return self.count != 0 or self.prefix != .none;
+/// A key on its own: named keys sit below the printable range, and every
+/// other key is its unshifted character, as a US key cap reads.
+pub const Key = enum(u8) {
+    up = 1,
+    down,
+    left,
+    right,
+    page_up,
+    page_down,
+    home,
+    end,
+    enter,
+    space,
+    escape,
+    tab,
+    backspace,
+    _,
+
+    pub fn char(value: u8) Key {
+        return @enumFromInt(std.ascii.toLower(value));
     }
-    pub fn reset(self: *State) void {
-        self.* = .{};
-    }
-    pub fn hint(self: State, buffer: []u8) []const u8 {
-        const prefix: []const u8 = switch (self.prefix) {
-            .none => "",
-            .g => "g",
-            .next => "]",
-            .previous => "[",
-            .z => "z",
-        };
-        return if (self.count > 0) std.fmt.bufPrint(buffer, "{d}{s}", .{ self.count, prefix }) catch "" else prefix;
-    }
-    pub fn feed(self: *State, key: Key) ?Invocation {
-        if (key == .escape) {
-            self.reset();
-            return .{ .action = .escape };
-        }
-        if (key == .character) {
-            const char = key.character;
-            if (char >= '0' and char <= '9' and (char != '0' or self.count > 0)) {
-                self.count = @min(9999, self.count * 10 + char - '0');
-                return null;
-            }
-            if (self.prefix == .none) switch (char) {
-                'g' => {
-                    self.prefix = .g;
-                    return null;
-                },
-                ']' => {
-                    self.prefix = .next;
-                    return null;
-                },
-                '[' => {
-                    self.prefix = .previous;
-                    return null;
-                },
-                'z' => {
-                    self.prefix = .z;
-                    return null;
-                },
-                else => {},
-            };
-        }
-        const count = @max(1, self.count);
-        const prefix = self.prefix;
-        const explicit_count = self.count > 0;
-        self.reset();
-        const action: ?Action = if (prefix != .none) blk: {
-            if (key != .character) break :blk null;
-            break :blk switch (prefix) {
-                .g => switch (key.character) {
-                    'g' => if (explicit_count) .go_line else .first,
-                    'b' => .blame,
-                    'd' => .find_symbol,
-                    else => null,
-                },
-                .next => switch (key.character) {
-                    'C' => .commit_next,
-                    'c' => .change_next,
-                    'f' => .file_next,
-                    'u' => .unreviewed_next,
-                    'h' => .hunk_next,
-                    else => null,
-                },
-                .previous => switch (key.character) {
-                    'C' => .commit_previous,
-                    'c' => .change_previous,
-                    'f' => .file_previous,
-                    'u' => .unreviewed_previous,
-                    'h' => .hunk_previous,
-                    else => null,
-                },
-                .z => switch (key.character) {
-                    'z' => .center,
-                    't' => .align_top,
-                    'b' => .align_bottom,
-                    // Vim's fold keys: toggle the current file, close all, open all.
-                    'a' => .collapse_toggle,
-                    'M' => .collapse_all,
-                    'R' => .expand_all,
-                    else => null,
-                },
-                .none => unreachable,
-            };
-        } else switch (key) {
-            .character => |char| switch (char) {
-                'j' => .line_down,
-                'k' => .line_up,
-                'h' => .old_side,
-                'l' => .new_side,
-                'J' => .file_next,
-                'K' => .file_previous,
-                'G' => if (explicit_count) .go_line else .last,
-                'H' => .viewport_top,
-                'M' => .viewport_middle,
-                'L' => .viewport_bottom,
-                '/' => .search,
-                'n' => .match_next,
-                'N' => .match_previous,
-                'r' => .reviewed,
-                'R' => .review_next,
-                'v' => .hunk_reviewed,
-                'V' => .hunk_review_next,
-                'e' => .expand_context,
-                'E' => .whole_file,
-                'u' => .undo,
-                'c', 'i' => .comment_line,
-                'C' => .comment_file,
-                ':', '?' => .commands,
-                else => null,
-            },
-            .control => |char| switch (char) {
-                'd' => .half_down,
-                'u' => .half_up,
-                'f' => .page_down,
-                'b' => .page_up,
-                'e' => .scroll_down,
-                'y' => .scroll_up,
-                '[' => .escape,
-                else => null,
-            },
-            .down => .line_down,
-            .up => .line_up,
-            .page_down => .page_down,
-            .page_up => .page_up,
-            .home => .first,
-            .end => .last,
-            .enter => .comment_line,
-            .escape => .escape,
-            .other => null,
-        };
-        return if (action) |value| .{ .action = value, .count = count } else null;
+};
+pub const Chord = struct {
+    key: Key,
+    command: bool = false,
+    option: bool = false,
+    control: bool = false,
+    shift: bool = false,
+
+    pub fn eql(self: Chord, other: Chord) bool {
+        return self.key == other.key and self.command == other.command and self.option == other.option and self.control == other.control and self.shift == other.shift;
     }
 };
 
-/// Decode physical key-downs only; committed text stays with native editors.
-pub fn decode(name: []const u8, shift: bool, control: bool, super: bool, alt: bool) ?Key {
-    if (super or alt) return null;
-    for ([_][]const u8{ "shift", "control", "ctrl", "alt", "option", "command", "meta", "super", "capslock" }) |modifier| if (std.ascii.eqlIgnoreCase(name, modifier)) return null;
-    if (std.ascii.eqlIgnoreCase(name, "escape") or std.ascii.eqlIgnoreCase(name, "esc")) return .escape;
-    if (std.ascii.eqlIgnoreCase(name, "enter") or std.ascii.eqlIgnoreCase(name, "return")) return .enter;
-    if (std.ascii.eqlIgnoreCase(name, "arrowup") or std.ascii.eqlIgnoreCase(name, "up")) return .up;
-    if (std.ascii.eqlIgnoreCase(name, "arrowdown") or std.ascii.eqlIgnoreCase(name, "down")) return .down;
-    if (std.ascii.eqlIgnoreCase(name, "pageup")) return .page_up;
-    if (std.ascii.eqlIgnoreCase(name, "pagedown")) return .page_down;
-    if (std.ascii.eqlIgnoreCase(name, "home")) return .home;
-    if (std.ascii.eqlIgnoreCase(name, "end")) return .end;
-    var char: u8 = if (name.len == 1) name[0] else if (std.ascii.eqlIgnoreCase(name, "slash")) '/' else if (std.ascii.eqlIgnoreCase(name, "semicolon")) ';' else if (std.ascii.eqlIgnoreCase(name, "bracketleft")) '[' else if (std.ascii.eqlIgnoreCase(name, "bracketright")) ']' else return .other;
-    if (control) return .{ .control = std.ascii.toLower(char) };
-    if (shift) char = switch (char) {
-        '/' => '?',
-        ';' => ':',
-        else => std.ascii.toUpper(char),
-    };
-    return .{ .character = char };
+/// Global keys work everywhere, typing in a field included, so they all take
+/// ⌘. Review keys act on the diff, and only when no text field has focus.
+pub const Scope = enum { global, review };
+const Binding = struct { keys: []const u8, action: Action, scope: Scope = .review };
+
+/// The defaults. An action's first binding is the one the palette shows.
+const bindings = [_]Binding{
+    // Moving through the review.
+    .{ .keys = "down", .action = .line_down },
+    .{ .keys = "up", .action = .line_up },
+    .{ .keys = "left", .action = .old_side },
+    .{ .keys = "right", .action = .new_side },
+    .{ .keys = "alt+down", .action = .change_next },
+    .{ .keys = "alt+up", .action = .change_previous },
+    // Files stack as panes, so Rex's keys for the pane below and above.
+    .{ .keys = "alt+cmd+down", .action = .file_next },
+    .{ .keys = "alt+cmd+up", .action = .file_previous },
+    .{ .keys = "cmd+]", .action = .unreviewed_next },
+    .{ .keys = "cmd+[", .action = .unreviewed_previous },
+    .{ .keys = "alt+cmd+]", .action = .hunk_next },
+    .{ .keys = "alt+cmd+[", .action = .hunk_previous },
+    // Commits are a branch's tabs.
+    .{ .keys = "shift+cmd+]", .action = .commit_next },
+    .{ .keys = "shift+cmd+[", .action = .commit_previous },
+    .{ .keys = "pagedown", .action = .page_down },
+    .{ .keys = "space", .action = .page_down },
+    .{ .keys = "pageup", .action = .page_up },
+    .{ .keys = "shift+space", .action = .page_up },
+    .{ .keys = "cmd+up", .action = .first },
+    .{ .keys = "home", .action = .first },
+    .{ .keys = "cmd+down", .action = .last },
+    .{ .keys = "end", .action = .last },
+    .{ .keys = "ctrl+l", .action = .center },
+    .{ .keys = "cmd+l", .action = .go_line, .scope = .global },
+    // Reviewing: Return acts where you are; ⌘ marks the file, ⌥ the hunk,
+    // and Shift toggles in place instead of moving on.
+    .{ .keys = "enter", .action = .comment_line },
+    .{ .keys = "shift+enter", .action = .comment_file },
+    .{ .keys = "cmd+enter", .action = .review_next },
+    .{ .keys = "shift+cmd+enter", .action = .reviewed },
+    .{ .keys = "alt+enter", .action = .hunk_review_next },
+    .{ .keys = "shift+alt+enter", .action = .hunk_reviewed },
+    .{ .keys = "cmd+z", .action = .undo },
+    .{ .keys = "cmd+e", .action = .expand_context },
+    .{ .keys = "shift+cmd+e", .action = .whole_file },
+    .{ .keys = "shift+cmd+b", .action = .blame },
+    .{ .keys = "shift+cmd+o", .action = .find_symbol },
+    // Folding, as Xcode folds code.
+    .{ .keys = "alt+cmd+left", .action = .collapse },
+    .{ .keys = "alt+cmd+right", .action = .expand },
+    .{ .keys = "shift+alt+cmd+left", .action = .collapse_all },
+    .{ .keys = "shift+alt+cmd+right", .action = .expand_all },
+    // Finding.
+    .{ .keys = "cmd+f", .action = .search, .scope = .global },
+    .{ .keys = "cmd+g", .action = .match_next, .scope = .global },
+    .{ .keys = "shift+cmd+g", .action = .match_previous, .scope = .global },
+    .{ .keys = "cmd+p", .action = .files, .scope = .global },
+    .{ .keys = "cmd+k", .action = .commands, .scope = .global },
+    .{ .keys = "shift+cmd+p", .action = .commands, .scope = .global },
+    // The window and the app.
+    .{ .keys = "cmd+1", .action = .working, .scope = .global },
+    .{ .keys = "cmd+2", .action = .staged, .scope = .global },
+    .{ .keys = "cmd+3", .action = .branch, .scope = .global },
+    .{ .keys = "cmd+\\", .action = .split, .scope = .global },
+    .{ .keys = "cmd+b", .action = .sidebar, .scope = .global },
+    .{ .keys = "shift+cmd+n", .action = .notes, .scope = .global },
+    .{ .keys = "cmd+r", .action = .refresh, .scope = .global },
+    .{ .keys = "cmd+o", .action = .open_repo, .scope = .global },
+    .{ .keys = "cmd+,", .action = .settings, .scope = .global },
+    .{ .keys = "cmd+/", .action = .shortcuts, .scope = .global },
+    .{ .keys = "escape", .action = .escape },
+};
+
+const Entry = struct { chord: Chord, action: Action, scope: Scope };
+const table = blk: {
+    @setEvalBranchQuota(200_000);
+    var out: [bindings.len]Entry = undefined;
+    for (bindings, 0..) |binding, index| out[index] = .{ .chord = parse(binding.keys) catch @compileError("Bad key binding: " ++ binding.keys), .action = binding.action, .scope = binding.scope };
+    break :blk out;
+};
+
+/// The action a chord performs in a scope, if any.
+pub fn match(chord: Chord, scope: Scope) ?Action {
+    for (table) |entry| if (entry.scope == scope and entry.chord.eql(chord)) return entry.action;
+    return null;
 }
 
-pub const Command = struct { action: Action, id: []const u8, title: []const u8, shortcut: []const u8 = "", icon: []const u8 = "right", document: bool = true };
+/// Reads a key the way Rex writes one: modifiers and one key joined by `+`,
+/// such as `alt+cmd+down` or `shift+cmd+]`.
+pub fn parse(text: []const u8) !Chord {
+    var chord = Chord{ .key = .escape };
+    var parts = std.mem.splitScalar(u8, text, '+');
+    var key: ?[]const u8 = null;
+    while (parts.next()) |name| {
+        if (key != null) return error.KeyNotLast;
+        if (std.mem.eql(u8, name, "cmd")) chord.command = true else if (std.mem.eql(u8, name, "alt")) chord.option = true else if (std.mem.eql(u8, name, "ctrl")) chord.control = true else if (std.mem.eql(u8, name, "shift")) chord.shift = true else key = name;
+    }
+    chord.key = keyNamed(key orelse return error.NoKey) orelse return error.UnknownKey;
+    return chord;
+}
+fn keyNamed(name: []const u8) ?Key {
+    const named = [_]struct { []const u8, Key }{
+        .{ "up", .up },                     .{ "arrowup", .up },
+        .{ "down", .down },                 .{ "arrowdown", .down },
+        .{ "left", .left },                 .{ "arrowleft", .left },
+        .{ "right", .right },               .{ "arrowright", .right },
+        .{ "pageup", .page_up },            .{ "pagedown", .page_down },
+        .{ "home", .home },                 .{ "end", .end },
+        .{ "enter", .enter },               .{ "return", .enter },
+        .{ "space", .space },               .{ " ", .space },
+        .{ "escape", .escape },             .{ "esc", .escape },
+        .{ "tab", .tab },                   .{ "backspace", .backspace },
+        .{ "delete", .backspace },          .{ "slash", Key.char('/') },
+        .{ "backslash", Key.char('\\') },   .{ "bracketleft", Key.char('[') },
+        .{ "bracketright", Key.char(']') }, .{ "comma", Key.char(',') },
+        .{ "period", Key.char('.') },       .{ "semicolon", Key.char(';') },
+        .{ "minus", Key.char('-') },        .{ "equal", Key.char('=') },
+    };
+    for (named) |pair| if (std.ascii.eqlIgnoreCase(name, pair[0])) return pair[1];
+    if (name.len == 1 and name[0] > ' ' and name[0] < 0x7f) return Key.char(name[0]);
+    return null;
+}
+
+/// Decodes a physical key-down. Modifier keys alone are not chords.
+pub fn decode(name: []const u8, shift: bool, control: bool, command: bool, option: bool) ?Chord {
+    for ([_][]const u8{ "shift", "control", "ctrl", "alt", "option", "command", "meta", "super", "capslock", "fn" }) |modifier| if (std.ascii.eqlIgnoreCase(name, modifier)) return null;
+    // Shifted punctuation names its key cap, so ? is shift and /.
+    const shifted = [_][2]u8{ .{ '?', '/' }, .{ ':', ';' }, .{ '{', '[' }, .{ '}', ']' }, .{ '|', '\\' }, .{ '<', ',' }, .{ '>', '.' }, .{ '+', '=' }, .{ '_', '-' }, .{ '"', '\'' }, .{ '~', '`' } };
+    var base = name;
+    var implied_shift = false;
+    if (name.len == 1) for (shifted) |pair| if (name[0] == pair[0]) {
+        base = &[_]u8{pair[1]};
+        implied_shift = true;
+    };
+    if (name.len == 1 and std.ascii.isUpper(name[0])) implied_shift = true;
+    const key = keyNamed(base) orelse return null;
+    return .{ .key = key, .command = command, .option = option, .control = control, .shift = shift or implied_shift };
+}
+
+/// How a chord reads on a key cap, with the Mac's modifier order ⌃⌥⇧⌘.
+fn glyphs(comptime chord: Chord) []const u8 {
+    const key: []const u8 = switch (chord.key) {
+        .up => "↑",
+        .down => "↓",
+        .left => "←",
+        .right => "→",
+        .page_up => "⇞",
+        .page_down => "⇟",
+        .home => "↖",
+        .end => "↘",
+        .enter => "↩",
+        .space => "Space",
+        .escape => "Esc",
+        .tab => "⇥",
+        .backspace => "⌫",
+        _ => &[_]u8{std.ascii.toUpper(@intFromEnum(chord.key))},
+    };
+    return (if (chord.control) "⌃" else "") ++ (if (chord.option) "⌥" else "") ++ (if (chord.shift) "⇧" else "") ++ (if (chord.command) "⌘" else "") ++ key;
+}
+const labels = blk: {
+    @setEvalBranchQuota(100_000);
+    var out = [_][]const u8{""} ** @typeInfo(Action).@"enum".fields.len;
+    var first = [_][]const u8{""} ** out.len;
+    for (table) |entry| {
+        const index = @intFromEnum(entry.action);
+        const text = glyphs(entry.chord);
+        if (first[index].len == 0) first[index] = text;
+        out[index] = if (out[index].len == 0) text else out[index] ++ "  " ++ text;
+    }
+    break :blk .{ .all = out, .first = first };
+};
+/// Every key bound to an action, for Settings.
+pub fn keysFor(action: Action) []const u8 {
+    return labels.all[@intFromEnum(action)];
+}
+/// The key the palette and tooltips show for an action.
+pub fn shortcut(action: Action) []const u8 {
+    return labels.first[@intFromEnum(action)];
+}
+
+pub const Group = enum {
+    move,
+    review,
+    find,
+    view,
+    app,
+
+    pub fn title(self: Group) []const u8 {
+        return switch (self) {
+            .move => "Move",
+            .review => "Review",
+            .find => "Find",
+            .view => "View",
+            .app => "Patch",
+        };
+    }
+};
+pub const Command = struct { action: Action, id: []const u8, title: []const u8, group: Group, icon: []const u8 = "right", document: bool = true };
 pub const commands = [_]Command{
-    .{ .action = .files, .id = "patch.files", .title = "Go to file", .shortcut = "⌘P", .icon = "file" },
-    .{ .action = .change_next, .id = "patch.change-next", .title = "Next change", .shortcut = "]c" },
-    .{ .action = .change_previous, .id = "patch.change-previous", .title = "Previous change", .shortcut = "[c", .icon = "left" },
-    .{ .action = .file_next, .id = "patch.file-next", .title = "Next file", .shortcut = "J / ]f", .icon = "file" },
-    .{ .action = .file_previous, .id = "patch.file-previous", .title = "Previous file", .shortcut = "K / [f", .icon = "file" },
-    .{ .action = .unreviewed_next, .id = "patch.unreviewed-next", .title = "Next unreviewed file", .shortcut = "]u", .icon = "checkbox" },
-    .{ .action = .unreviewed_previous, .id = "patch.unreviewed-previous", .title = "Previous unreviewed file", .shortcut = "[u", .icon = "checkbox" },
-    .{ .action = .reviewed, .id = "patch.reviewed", .title = "Toggle reviewed", .shortcut = "r", .icon = "check" },
-    .{ .action = .review_next, .id = "patch.review-next", .title = "Mark reviewed and advance", .shortcut = "R", .icon = "check" },
-    .{ .action = .hunk_reviewed, .id = "patch.hunk-reviewed", .title = "Toggle hunk reviewed", .shortcut = "v", .icon = "check" },
-    .{ .action = .hunk_review_next, .id = "patch.hunk-review-next", .title = "Mark hunk reviewed and advance", .shortcut = "V", .icon = "check" },
-    .{ .action = .hunk_next, .id = "patch.hunk-next", .title = "Next unreviewed hunk", .shortcut = "]h", .icon = "checkbox" },
-    .{ .action = .hunk_previous, .id = "patch.hunk-previous", .title = "Previous unreviewed hunk", .shortcut = "[h", .icon = "checkbox" },
-    .{ .action = .expand_context, .id = "patch.expand-context", .title = "Show more context around hunk", .shortcut = "e", .icon = "expand-all" },
-    .{ .action = .whole_file, .id = "patch.whole-file", .title = "Show whole file or changes only", .shortcut = "E", .icon = "expand-all" },
-    .{ .action = .find_symbol, .id = "patch.find-symbol", .title = "Find symbol definitions and uses", .shortcut = "gd", .icon = "symbol" },
-    .{ .action = .blame, .id = "patch.blame", .title = "Blame current line", .shortcut = "gb", .icon = "history" },
-    .{ .action = .undo, .id = "patch.undo-review", .title = "Undo reviewed state", .shortcut = "u", .icon = "left" },
-    .{ .action = .comment_line, .id = "patch.comment-line", .title = "Comment on current line", .shortcut = "c / i", .icon = "add" },
-    .{ .action = .comment_file, .id = "patch.comment-file", .title = "Comment on file", .shortcut = "C", .icon = "comment" },
-    .{ .action = .search, .id = "patch.search", .title = "Find in diff", .shortcut = "/ / ⌘F", .icon = "search" },
-    .{ .action = .match_next, .id = "patch.match-next", .title = "Next search match", .shortcut = "n", .icon = "search" },
-    .{ .action = .match_previous, .id = "patch.match-previous", .title = "Previous search match", .shortcut = "N", .icon = "search" },
-    .{ .action = .line_down, .id = "patch.line-down", .title = "Move down", .shortcut = "j" },
-    .{ .action = .line_up, .id = "patch.line-up", .title = "Move up", .shortcut = "k", .icon = "left" },
-    .{ .action = .old_side, .id = "patch.old-side", .title = "Focus old side", .shortcut = "h", .icon = "split" },
-    .{ .action = .new_side, .id = "patch.new-side", .title = "Focus new side", .shortcut = "l", .icon = "split" },
-    .{ .action = .half_down, .id = "patch.half-down", .title = "Half page down", .shortcut = "⌃D" },
-    .{ .action = .half_up, .id = "patch.half-up", .title = "Half page up", .shortcut = "⌃U", .icon = "left" },
-    .{ .action = .page_down, .id = "patch.page-down", .title = "Page down", .shortcut = "⌃F" },
-    .{ .action = .page_up, .id = "patch.page-up", .title = "Page up", .shortcut = "⌃B", .icon = "left" },
-    .{ .action = .first, .id = "patch.first", .title = "First line", .shortcut = "gg" },
-    .{ .action = .last, .id = "patch.last", .title = "Last line", .shortcut = "G" },
-    .{ .action = .viewport_top, .id = "patch.viewport-top", .title = "Top of visible diff", .shortcut = "H" },
-    .{ .action = .viewport_middle, .id = "patch.viewport-middle", .title = "Middle of visible diff", .shortcut = "M" },
-    .{ .action = .viewport_bottom, .id = "patch.viewport-bottom", .title = "Bottom of visible diff", .shortcut = "L" },
-    .{ .action = .center, .id = "patch.center", .title = "Center current line", .shortcut = "zz" },
-    .{ .action = .align_top, .id = "patch.align-top", .title = "Align current line to top", .shortcut = "zt" },
-    .{ .action = .align_bottom, .id = "patch.align-bottom", .title = "Align current line to bottom", .shortcut = "zb" },
-    .{ .action = .collapse_toggle, .id = "patch.collapse", .title = "Collapse or expand file", .shortcut = "za", .icon = "collapsed" },
-    .{ .action = .collapse_all, .id = "patch.collapse-all", .title = "Collapse all files", .shortcut = "zM", .icon = "collapsed" },
-    .{ .action = .expand_all, .id = "patch.expand-all", .title = "Expand all files", .shortcut = "zR", .icon = "expanded" },
-    .{ .action = .split, .id = "patch.split", .title = "Toggle split or unified diff", .shortcut = "⌘\\", .icon = "split" },
-    .{ .action = .whitespace, .id = "patch.whitespace", .title = "Toggle ignore whitespace", .icon = "modified", .document = false },
-    .{ .action = .since_review, .id = "patch.since-review", .title = "Toggle changes since review", .icon = "modified" },
-    .{ .action = .commit_next, .id = "patch.commit-next", .title = "Next commit", .shortcut = "]C", .icon = "branch", .document = false },
-    .{ .action = .commit_previous, .id = "patch.commit-previous", .title = "Previous commit", .shortcut = "[C", .icon = "branch", .document = false },
-    .{ .action = .all_changes, .id = "patch.all-changes", .title = "Review all the branch's changes", .icon = "branch", .document = false },
-    .{ .action = .sidebar, .id = "patch.sidebar", .title = "Toggle file rail", .shortcut = "⌘B", .icon = "sidebar", .document = false },
-    .{ .action = .notes, .id = "patch.notes", .title = "Toggle notes", .shortcut = "⌘⇧N", .icon = "comment" },
-    .{ .action = .refresh, .id = "patch.refresh", .title = "Refresh changes", .shortcut = "⌘R", .icon = "refresh", .document = false },
-    .{ .action = .open_repo, .id = "patch.open", .title = "Open repository…", .shortcut = "⌘O", .icon = "folder", .document = false },
-    .{ .action = .open_patch, .id = "patch.import", .title = "Open patch…", .icon = "file", .document = false },
-    .{ .action = .settings, .id = "patch.settings", .title = "Settings…", .shortcut = "⌘,", .icon = "gear", .document = false },
-    .{ .action = .copy, .id = "patch.copy", .title = "Copy review as Markdown", .icon = "copy" },
-    .{ .action = .export_review, .id = "patch.export", .title = "Export review…", .icon = "export" },
-    .{ .action = .working, .id = "patch.working", .title = "Review working changes", .icon = "branch", .document = false },
-    .{ .action = .staged, .id = "patch.staged", .title = "Review staged changes", .icon = "branch", .document = false },
-    .{ .action = .branch, .id = "patch.branch", .title = "Compare branch", .icon = "branch", .document = false },
+    .{ .action = .files, .id = "patch.files", .title = "Go to file", .group = .find, .icon = "file" },
+    .{ .action = .go_line, .id = "patch.go-line", .title = "Go to line", .group = .find },
+    .{ .action = .change_next, .id = "patch.change-next", .title = "Next change", .group = .move },
+    .{ .action = .change_previous, .id = "patch.change-previous", .title = "Previous change", .group = .move, .icon = "left" },
+    .{ .action = .file_next, .id = "patch.file-next", .title = "Next file", .group = .move, .icon = "file" },
+    .{ .action = .file_previous, .id = "patch.file-previous", .title = "Previous file", .group = .move, .icon = "file" },
+    .{ .action = .unreviewed_next, .id = "patch.unreviewed-next", .title = "Next unreviewed file", .group = .move, .icon = "checkbox" },
+    .{ .action = .unreviewed_previous, .id = "patch.unreviewed-previous", .title = "Previous unreviewed file", .group = .move, .icon = "checkbox" },
+    .{ .action = .hunk_next, .id = "patch.hunk-next", .title = "Next unreviewed hunk", .group = .move, .icon = "checkbox" },
+    .{ .action = .hunk_previous, .id = "patch.hunk-previous", .title = "Previous unreviewed hunk", .group = .move, .icon = "checkbox" },
+    .{ .action = .review_next, .id = "patch.review-next", .title = "Mark reviewed and advance", .group = .review, .icon = "check" },
+    .{ .action = .reviewed, .id = "patch.reviewed", .title = "Toggle reviewed", .group = .review, .icon = "check" },
+    .{ .action = .hunk_review_next, .id = "patch.hunk-review-next", .title = "Mark hunk reviewed and advance", .group = .review, .icon = "check" },
+    .{ .action = .hunk_reviewed, .id = "patch.hunk-reviewed", .title = "Toggle hunk reviewed", .group = .review, .icon = "check" },
+    .{ .action = .undo, .id = "patch.undo-review", .title = "Undo reviewed state", .group = .review, .icon = "left" },
+    .{ .action = .comment_line, .id = "patch.comment-line", .title = "Comment on current line", .group = .review, .icon = "add" },
+    .{ .action = .comment_file, .id = "patch.comment-file", .title = "Comment on file", .group = .review, .icon = "comment" },
+    .{ .action = .expand_context, .id = "patch.expand-context", .title = "Show more context around hunk", .group = .review, .icon = "expand-all" },
+    .{ .action = .whole_file, .id = "patch.whole-file", .title = "Show whole file or changes only", .group = .review, .icon = "expand-all" },
+    .{ .action = .find_symbol, .id = "patch.find-symbol", .title = "Find symbol definitions and uses", .group = .find, .icon = "symbol" },
+    .{ .action = .blame, .id = "patch.blame", .title = "Blame current line", .group = .review, .icon = "history" },
+    .{ .action = .search, .id = "patch.search", .title = "Find in diff", .group = .find, .icon = "search" },
+    .{ .action = .match_next, .id = "patch.match-next", .title = "Next search match", .group = .find, .icon = "search" },
+    .{ .action = .match_previous, .id = "patch.match-previous", .title = "Previous search match", .group = .find, .icon = "search" },
+    .{ .action = .line_down, .id = "patch.line-down", .title = "Move down", .group = .move },
+    .{ .action = .line_up, .id = "patch.line-up", .title = "Move up", .group = .move, .icon = "left" },
+    .{ .action = .old_side, .id = "patch.old-side", .title = "Focus old side", .group = .move, .icon = "split" },
+    .{ .action = .new_side, .id = "patch.new-side", .title = "Focus new side", .group = .move, .icon = "split" },
+    .{ .action = .page_down, .id = "patch.page-down", .title = "Page down", .group = .move },
+    .{ .action = .page_up, .id = "patch.page-up", .title = "Page up", .group = .move, .icon = "left" },
+    .{ .action = .first, .id = "patch.first", .title = "First line", .group = .move },
+    .{ .action = .last, .id = "patch.last", .title = "Last line", .group = .move },
+    .{ .action = .center, .id = "patch.center", .title = "Center current line", .group = .move },
+    .{ .action = .collapse, .id = "patch.fold", .title = "Fold file", .group = .view, .icon = "collapsed" },
+    .{ .action = .expand, .id = "patch.unfold", .title = "Unfold file", .group = .view, .icon = "expanded" },
+    .{ .action = .collapse_toggle, .id = "patch.collapse", .title = "Fold or unfold file", .group = .view, .icon = "collapsed" },
+    .{ .action = .collapse_all, .id = "patch.collapse-all", .title = "Fold all files", .group = .view, .icon = "collapsed" },
+    .{ .action = .expand_all, .id = "patch.expand-all", .title = "Unfold all files", .group = .view, .icon = "expanded" },
+    .{ .action = .split, .id = "patch.split", .title = "Toggle split or unified diff", .group = .view, .icon = "split" },
+    .{ .action = .whitespace, .id = "patch.whitespace", .title = "Toggle ignore whitespace", .group = .view, .icon = "modified", .document = false },
+    .{ .action = .since_review, .id = "patch.since-review", .title = "Toggle changes since review", .group = .view, .icon = "modified" },
+    .{ .action = .commit_next, .id = "patch.commit-next", .title = "Next commit", .group = .move, .icon = "branch", .document = false },
+    .{ .action = .commit_previous, .id = "patch.commit-previous", .title = "Previous commit", .group = .move, .icon = "branch", .document = false },
+    .{ .action = .all_changes, .id = "patch.all-changes", .title = "Review all the branch's changes", .group = .app, .icon = "branch", .document = false },
+    .{ .action = .sidebar, .id = "patch.sidebar", .title = "Toggle file rail", .group = .view, .icon = "sidebar", .document = false },
+    .{ .action = .notes, .id = "patch.notes", .title = "Toggle notes", .group = .view, .icon = "comment" },
+    .{ .action = .refresh, .id = "patch.refresh", .title = "Refresh changes", .group = .app, .icon = "refresh", .document = false },
+    .{ .action = .open_repo, .id = "patch.open", .title = "Open repository…", .group = .app, .icon = "folder", .document = false },
+    .{ .action = .open_patch, .id = "patch.import", .title = "Open patch…", .group = .app, .icon = "file", .document = false },
+    .{ .action = .settings, .id = "patch.settings", .title = "Settings…", .group = .app, .icon = "gear", .document = false },
+    .{ .action = .shortcuts, .id = "patch.shortcuts", .title = "Keyboard shortcuts", .group = .app, .icon = "command", .document = false },
+    .{ .action = .copy, .id = "patch.copy", .title = "Copy review as Markdown", .group = .app, .icon = "copy" },
+    .{ .action = .export_review, .id = "patch.export", .title = "Export review…", .group = .app, .icon = "export" },
+    .{ .action = .working, .id = "patch.working", .title = "Review working changes", .group = .app, .icon = "branch", .document = false },
+    .{ .action = .staged, .id = "patch.staged", .title = "Review staged changes", .group = .app, .icon = "branch", .document = false },
+    .{ .action = .branch, .id = "patch.branch", .title = "Compare branch", .group = .app, .icon = "branch", .document = false },
 };
 pub fn byId(name: []const u8) ?Action {
     if (std.mem.eql(u8, name, "patch.commands") or std.mem.eql(u8, name, "patch.help")) return .commands;
@@ -331,68 +390,74 @@ pub fn score(query: []const u8, text: []const u8) ?u32 {
     return result + @as(u32, @intCast(@min(100, text.len)));
 }
 
-test "counts, shifted keys, and multi-key commands follow Vim conventions" {
-    var state = State{};
-    try std.testing.expect(state.feed(.{ .character = '3' }) == null);
-    try std.testing.expectEqual(Invocation{ .action = .line_down, .count = 3 }, state.feed(.{ .character = 'j' }).?);
-    try std.testing.expect(state.feed(.{ .character = ']' }) == null);
-    try std.testing.expectEqual(Action.change_next, state.feed(.{ .character = 'c' }).?.action);
-    _ = state.feed(.{ .character = 'g' });
-    try std.testing.expectEqual(Action.first, state.feed(.{ .character = 'g' }).?.action);
-    _ = state.feed(.{ .character = '1' });
-    _ = state.feed(.{ .character = '2' });
-    try std.testing.expectEqual(Invocation{ .action = .go_line, .count = 12 }, state.feed(.{ .character = 'G' }).?);
-    try std.testing.expectEqual(Key{ .character = 'J' }, decode("j", true, false, false, false).?);
-    try std.testing.expectEqual(Key{ .character = '?' }, decode("/", true, false, false, false).?);
-    try std.testing.expect(decode("k", false, false, true, false) == null);
+/// A file picker query may end in `:line`, as `view.zig:120` or `:120`.
+pub const Target = struct { query: []const u8, line: ?usize = null };
+pub fn target(query: []const u8) Target {
+    const trimmed = std.mem.trim(u8, query, " ");
+    const colon = std.mem.lastIndexOfScalar(u8, trimmed, ':') orelse return .{ .query = trimmed };
+    const digits = trimmed[colon + 1 ..];
+    const line = std.fmt.parseInt(usize, digits, 10) catch return .{ .query = std.mem.trim(u8, trimmed, ": ") };
+    return .{ .query = std.mem.trim(u8, trimmed[0..colon], " "), .line = line };
+}
+
+test "arrows move, and chords reach further without modes" {
+    const down = decode("arrowdown", false, false, false, false).?;
+    try std.testing.expectEqual(Action.line_down, match(down, .review).?);
+    try std.testing.expectEqual(Action.change_next, match(decode("arrowdown", false, false, false, true).?, .review).?);
+    try std.testing.expectEqual(Action.file_next, match(decode("arrowdown", false, false, true, true).?, .review).?);
+    try std.testing.expectEqual(Action.last, match(decode("arrowdown", false, false, true, false).?, .review).?);
+    try std.testing.expectEqual(Action.commit_next, match(decode("]", true, false, true, false).?, .review).?);
+    try std.testing.expectEqual(Action.commit_next, match(decode("}", false, false, true, false).?, .review).?);
+    try std.testing.expectEqual(Action.unreviewed_previous, match(decode("bracketleft", false, false, true, false).?, .review).?);
+    try std.testing.expectEqual(Action.comment_line, match(decode("enter", false, false, false, false).?, .review).?);
+    try std.testing.expectEqual(Action.review_next, match(decode("return", false, false, true, false).?, .review).?);
+    try std.testing.expectEqual(Action.hunk_reviewed, match(decode("enter", true, false, false, true).?, .review).?);
+    try std.testing.expectEqual(Action.page_up, match(decode("space", true, false, false, false).?, .review).?);
+}
+test "letters do nothing on their own" {
+    for ("abcdefghijklmnopqrstuvwxyz/?:[]") |char| {
+        const chord = decode(&[_]u8{char}, false, false, false, false).?;
+        try std.testing.expect(match(chord, .review) == null);
+        try std.testing.expect(match(chord, .global) == null);
+    }
     try std.testing.expect(decode("Shift", true, false, false, false) == null);
+    try std.testing.expect(decode("meta", false, false, true, false) == null);
 }
-test "fold keys collapse and expand files" {
-    var state = State{};
-    _ = state.feed(.{ .character = 'z' });
-    try std.testing.expectEqual(Action.collapse_toggle, state.feed(.{ .character = 'a' }).?.action);
-    _ = state.feed(.{ .character = ']' });
-    try std.testing.expectEqual(Action.commit_next, state.feed(.{ .character = 'C' }).?.action);
-    _ = state.feed(.{ .character = 'z' });
-    try std.testing.expectEqual(Action.collapse_all, state.feed(.{ .character = 'M' }).?.action);
-    _ = state.feed(.{ .character = 'z' });
-    try std.testing.expectEqual(Action.expand_all, state.feed(.{ .character = 'R' }).?.action);
+test "global keys keep the clipboard and text editing chords free" {
+    try std.testing.expectEqual(Action.commands, match(decode("k", false, false, true, false).?, .global).?);
+    try std.testing.expectEqual(Action.commands, match(decode("p", true, false, true, false).?, .global).?);
+    try std.testing.expectEqual(Action.files, match(decode("p", false, false, true, false).?, .global).?);
+    try std.testing.expectEqual(Action.split, match(decode("\\", false, false, true, false).?, .global).?);
+    try std.testing.expectEqual(Action.split, match(decode("backslash", false, false, true, false).?, .global).?);
+    try std.testing.expectEqual(Action.open_repo, match(decode("o", false, false, true, false).?, .global).?);
+    try std.testing.expect(match(decode("o", true, false, true, false).?, .global) == null);
+    for ("acvxz") |char| try std.testing.expect(match(decode(&[_]u8{char}, false, false, true, false).?, .global) == null);
+    for (table) |entry| if (entry.scope == .global) try std.testing.expect(entry.chord.command);
 }
-test "escape and invalid sequences clear pending counts without triggering actions" {
-    var state = State{};
-    _ = state.feed(.{ .character = '9' });
-    _ = state.feed(.{ .character = 'z' });
-    try std.testing.expect(state.feed(.{ .character = 'x' }) == null);
-    try std.testing.expect(!state.pending());
-    _ = state.feed(.{ .character = 'g' });
-    try std.testing.expectEqual(Action.escape, state.feed(.escape).?.action);
-    for (0..12) |_| _ = state.feed(.{ .character = '9' });
-    try std.testing.expectEqual(@as(usize, 9999), state.feed(.{ .character = 'j' }).?.count);
+test "every chord does one thing" {
+    for (table, 0..) |entry, index| for (table[index + 1 ..]) |other| {
+        try std.testing.expect(!entry.chord.eql(other.chord));
+    };
+}
+test "labels read as key caps" {
+    try std.testing.expectEqualStrings("⌥⌘↓", shortcut(.file_next));
+    try std.testing.expectEqualStrings("⇧⌘]", shortcut(.commit_next));
+    try std.testing.expectEqualStrings("⇟  Space", keysFor(.page_down));
+    try std.testing.expectEqualStrings("⌘K  ⇧⌘P", keysFor(.commands));
+    try std.testing.expectEqualStrings("⌘\\", shortcut(.split));
+    try std.testing.expectEqualStrings("⌥⇧↩", shortcut(.hunk_reviewed));
+}
+test "file picker queries can name a line" {
+    try std.testing.expectEqualStrings("view.zig", target("view.zig:120").query);
+    try std.testing.expectEqual(@as(?usize, 120), target("view.zig:120").line);
+    try std.testing.expectEqual(@as(?usize, 42), target(":42").line);
+    try std.testing.expectEqualStrings("", target(":42").query);
+    try std.testing.expectEqualStrings("view", target(" view: ").query);
+    try std.testing.expect(target("view").line == null);
 }
 test "fuzzy commands rank contiguous words and reject unrelated input" {
     try std.testing.expect(score("next change", "Next change").? < score("next change", "Next unreviewed change").?);
     try std.testing.expect(score("srnvw", "src/native/view.zig") != null);
     try std.testing.expect(score("xyz", "src/native/view.zig") == null);
     for (commands, 0..) |command, index| for (commands[index + 1 ..]) |other| try std.testing.expect(!std.mem.eql(u8, command.id, other.id));
-}
-
-pub fn primary(name: []const u8, shift: bool) ?Action {
-    if (std.ascii.eqlIgnoreCase(name, "k") or (shift and std.ascii.eqlIgnoreCase(name, "p"))) return .commands;
-    if (std.ascii.eqlIgnoreCase(name, "p")) return .files;
-    if (std.ascii.eqlIgnoreCase(name, "f")) return .search;
-    if (std.ascii.eqlIgnoreCase(name, "b")) return .sidebar;
-    if (std.ascii.eqlIgnoreCase(name, "o")) return .open_repo;
-    if (std.ascii.eqlIgnoreCase(name, "r")) return .refresh;
-    if (shift and std.ascii.eqlIgnoreCase(name, "n")) return .notes;
-    if (std.mem.eql(u8, name, "\\") or std.ascii.eqlIgnoreCase(name, "backslash")) return .split;
-    return null;
-}
-test "primary shortcuts preserve native clipboard and text editing chords" {
-    try std.testing.expectEqual(Action.commands, primary("k", false).?);
-    try std.testing.expectEqual(Action.commands, primary("p", true).?);
-    try std.testing.expectEqual(Action.files, primary("p", false).?);
-    try std.testing.expectEqual(Action.split, primary("\\", false).?);
-    try std.testing.expect(primary("c", false) == null);
-    try std.testing.expect(primary("v", false) == null);
-    try std.testing.expect(primary("z", false) == null);
 }
