@@ -103,11 +103,16 @@ fn bandIcons(ui: *AppUi, model: *const Model) AppUi.Node {
     }
     return ui.row(.{ .height = 28, .padding = 0, .gap = 2, .cross = .center }, ui.arena.dupe(AppUi.Node, nodes[0..count]) catch &.{});
 }
-/// Files the change touches, leaving out those opened for reference.
+/// Files the change touches, leaving out those opened for reference; when
+/// browsing, the project's files.
 fn changedFiles(model: *const Model) usize {
     var count: usize = 0;
-    for (model.files) |file| count += @intFromBool(!file.reference);
+    for (model.files) |file| count += @intFromBool(!file.reference or file.listed);
     return count;
+}
+/// Browsing every file of the project rather than reviewing a change.
+fn browsing(model: *const Model) bool {
+    return model.mode == .files and !model.imported;
 }
 fn band(ui: *AppUi) AppUi.Node {
     return ui.row(.{ .height = theme.band_height, .padding = 0, .gap = 0, .window_drag = true }, .{});
@@ -141,15 +146,15 @@ fn headerLayer(ui: *AppUi, model: *const Model) AppUi.Node {
             bandIcons(ui, model),
             space(ui, @max(0, title_x - group_left - bandWidth(model)), 0),
             ui.row(.{ .width = @max(0, model.canvas_width - title_x - reserved), .height = 24, .padding = 0, .gap = 0, .cross = .center }, .{
-                ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.sidebar_ink } }, if (model.imported) "document" else "branch"),
+                ui.appIcon(.{ .width = 14, .height = 14, .style = .{ .foreground = theme.sidebar_ink } }, if (model.imported) "document" else if (browsing(model)) "folder" else "branch"),
                 space(ui, 8, 0),
                 ui.text(.{ .style = .{ .foreground = if (model.active) theme.ink else theme.inactive_ink } }, reviewTitle(ui, model)),
                 space(ui, 8, 0),
                 ui.text(.{ .style = .{ .foreground = theme.tertiary } }, if (changedFiles(model) == 1) "1 file" else ui.fmt("{d} files", .{changedFiles(model)})),
                 space(ui, 10, 0),
-                if (model.files.len > 0) smallText(ui, ui.fmt("+{d}", .{totals.additions}), theme.green) else ui.spacer(0),
+                if (model.files.len > 0 and !browsing(model)) smallText(ui, ui.fmt("+{d}", .{totals.additions}), theme.green) else ui.spacer(0),
                 space(ui, 4, 0),
-                if (model.files.len > 0) smallText(ui, ui.fmt("−{d}", .{totals.deletions}), theme.red) else ui.spacer(0),
+                if (model.files.len > 0 and !browsing(model)) smallText(ui, ui.fmt("−{d}", .{totals.deletions}), theme.red) else ui.spacer(0),
             }),
         }),
     });
@@ -271,6 +276,7 @@ fn scopeBar(ui: *AppUi, model: *const Model) AppUi.Node {
             .working => "Working",
             .staged => "Staged",
             .branch => head,
+            .files => "All files",
         };
         var items: [3]AppUi.Node = undefined;
         for ([_]@import("git.zig").Mode{ .working, .staged, .branch }, 0..) |mode, index| {
@@ -279,6 +285,7 @@ fn scopeBar(ui: *AppUi, model: *const Model) AppUi.Node {
                 .working => "Working",
                 .staged => "Staged",
                 .branch => head,
+                .files => unreachable,
             }, .icon = if (active) "app:check" else "app:blank", .height = 30, .on_press = if (active and mode == .branch) Msg.open_base else Msg{ .mode = mode }, .disabled = model.busy }, .{});
         }
         break :blk ui.stack(.{ .grow = 1, .height = 24, .padding = 0 }, .{
@@ -399,8 +406,8 @@ fn fileRail(ui: *AppUi, model: *const Model) AppUi.Node {
             const active = index == model.selected;
             // Reviewed files are checked; those reviewed in another version are marked changed.
             const changed = !file.reviewed and (file.prior == .changed or file.prior == .base);
-            const icon = if (file.reviewed) "check" else if (changed) "modified" else if (file.message) "note" else if (file.reference) "symbol" else if (file.binary and app.isImage(file.path)) "image" else "document";
-            const tint = if (file.reviewed) theme.green else if (changed) theme.note else theme.sidebar_ink;
+            const icon = if (file.reviewed) "check" else if (changed) "modified" else if (file.message) "note" else if (file.listed) (if (app.isImage(file.path)) "image" else "document") else if (file.reference) "symbol" else if (file.binary and app.isImage(file.path)) "image" else "document";
+            const tint = if (file.reviewed) theme.green else if (changed) theme.note else if (file.listed and !file.collapsed) theme.ink else if (file.listed) theme.tertiary else theme.sidebar_ink;
             // Rex's selection: a quiet capsule with a hairline edge, inset from the sidebar.
             const item = ui.row(.{ .key = .{ .str = "file" }, .grow = 1, .height = theme.row_height, .padding = 0, .gap = 0, .cross = .center, .on_press = .{ .select = index }, .semantics = .{ .label = file.path, .role = .listitem }, .style = .{ .background = if (active) theme.selected else theme.clear, .border = if (active) theme.selected_edge else theme.clear, .stroke_width = 0.5, .radius = theme.row_height / 2, .quiet_hover = active } }, .{
                 space(ui, 11.5, 0),
@@ -674,7 +681,7 @@ fn headerRow(ui: *AppUi, model: *const Model, index: usize, current: bool, heigh
         notes += 1;
     };
     // What kind of change it is, or what an earlier review makes of it.
-    const label: []const u8 = if (file.reference) "Reference · unchanged" else if (file.whitespace_only) "Whitespace only" else if (file.generated) "Generated" else switch (file.prior) {
+    const label: []const u8 = if (file.listed) (if (file.unreadable) "Could not be read" else if (file.unread or file.binary) "" else if (file.unified.len == 1) "1 line" else ui.fmt("{d} lines", .{file.unified.len})) else if (file.reference) "Reference · unchanged" else if (file.whitespace_only) "Whitespace only" else if (file.generated) "Generated" else switch (file.prior) {
         .rebased => "Reviewed on another base",
         .changed => if (file.showing_since) (if (file.since.?.base_moved) "Since review · base moved too" else "Since review") else "Changed since review",
         .base => "Base changed since review",
@@ -698,8 +705,8 @@ fn headerRow(ui: *AppUi, model: *const Model, index: usize, current: bool, heigh
         if (file.additions > 0 and file.deletions > 0) space(ui, 6, 0) else ui.spacer(0),
         if (file.deletions > 0) smallText(ui, ui.fmt("−{d}", .{file.deletions}), theme.red) else ui.spacer(0),
         space(ui, 8, 0),
-        ui.button(.{ .key = .{ .str = "file-note" }, .width = 24, .height = height, .icon = "app:comment", .size = .icon, .variant = .ghost, .on_press = .{ .note_file = index }, .style = .{ .foreground = if (notes > 0) theme.note else theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Add note to {s}", .{file.path}) } }, ""),
-        if (file.reference) ui.button(.{ .key = .{ .str = "close-reference" }, .width = 24, .height = height, .icon = "app:close", .size = .icon, .variant = .ghost, .on_press = .{ .close_reference = index }, .style = .{ .foreground = theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Close {s}", .{file.path}) } }, "") else ui.button(.{ .key = .{ .str = "file-reviewed" }, .width = 24, .height = height, .icon = if (file.reviewed) "app:check" else "app:checkbox", .size = .icon, .variant = .ghost, .on_press = .{ .reviewed_file = index }, .style = .{ .foreground = if (file.reviewed) theme.green else theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Mark {s} reviewed", .{file.path}) } }, ""),
+        if (file.listed) ui.spacer(0) else ui.button(.{ .key = .{ .str = "file-note" }, .width = 24, .height = height, .icon = "app:comment", .size = .icon, .variant = .ghost, .on_press = .{ .note_file = index }, .style = .{ .foreground = if (notes > 0) theme.note else theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Add note to {s}", .{file.path}) } }, ""),
+        if (file.listed) ui.button(.{ .key = .{ .str = "close-file" }, .width = 24, .height = height, .icon = "app:close", .size = .icon, .variant = .ghost, .on_press = .{ .collapse_file = index }, .style = .{ .foreground = theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Close {s}", .{file.path}) } }, "") else if (file.reference) ui.button(.{ .key = .{ .str = "close-reference" }, .width = 24, .height = height, .icon = "app:close", .size = .icon, .variant = .ghost, .on_press = .{ .close_reference = index }, .style = .{ .foreground = theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Close {s}", .{file.path}) } }, "") else ui.button(.{ .key = .{ .str = "file-reviewed" }, .width = 24, .height = height, .icon = if (file.reviewed) "app:check" else "app:checkbox", .size = .icon, .variant = .ghost, .on_press = .{ .reviewed_file = index }, .style = .{ .foreground = if (file.reviewed) theme.green else theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Mark {s} reviewed", .{file.path}) } }, ""),
         space(ui, 7, 0),
     });
     header.widget.layout.clip_content = true;
@@ -906,9 +913,15 @@ fn rowSlice(ui: *AppUi, node: AppUi.Node, top: f32, bottom: f32) AppUi.Node {
     return ui.column(.{ .height = 24, .padding = 0, .gap = 0 }, .{ space(ui, 0, from), slice, space(ui, 0, 24 - to) });
 }
 fn review(ui: *AppUi, model: *const Model) AppUi.Node {
+    // Browsing with no file open: the rail lists them.
+    if (browsing(model) and model.files.len > 0 and model.display.len == 0) return ui.column(.{ .grow = 1, .main = .center, .cross = .center, .gap = 12 }, .{
+        ui.appIcon(.{ .width = 28, .height = 28, .style = .{ .foreground = theme.muted } }, "folder"),
+        smallText(ui, "Choose a file in the rail to read it", theme.muted),
+        ui.button(.{ .icon = "app:search", .size = .sm, .variant = .ghost, .on_press = .{ .action = .{ .action = .files } } }, "Go to file · ⌘P"),
+    });
     if (model.files.len == 0) return ui.column(.{ .grow = 1, .main = .center, .cross = .center, .gap = 12 }, .{
         ui.appIcon(.{ .width = 28, .height = 28, .style = .{ .foreground = theme.muted } }, if (model.busy) "refresh" else "check"),
-        smallText(ui, if (model.busy) "Loading…" else "No changes", theme.muted),
+        smallText(ui, if (model.busy) "Loading…" else if (browsing(model)) "No files" else "No changes", theme.muted),
         ui.button(.{ .icon = "app:folder", .size = .sm, .variant = .ghost, .on_press = .open_repo }, "Open repository"),
     });
     const options = AppUi.VirtualListOptions{ .id = ui.fmt("review-{d}", .{model.generation}), .item_count = model.display.len, .item_extent = 24, .overscan = 1, .grow = 1, .semantics = .{ .label = "Changes" }, .on_scroll = AppUi.scrollMsg(.scrolled) };
@@ -1139,6 +1152,7 @@ fn reviewTitle(ui: *AppUi, model: *const Model) []const u8 {
     return switch (model.mode) {
         .working => "Working changes",
         .staged => "Staged changes",
+        .files => "All files",
         // A commit under review on its own is titled by its subject.
         .branch => if (model.commit) |index| (if (index < model.commits.len) model.commits[index].subject() else "Commit") else if (model.head.len > 0 or model.compare_head.len > 0) ui.fmt("{s} since {s}", .{ headName(model), model.base.text() }) else ui.fmt("Changes since {s}", .{model.base.text()}),
     };
@@ -1161,7 +1175,7 @@ fn paneHeader(ui: *AppUi, model: *const Model) AppUi.Node {
         if (changed > 0 or model.since_review) ui.button(.{ .key = .{ .str = "since-review" }, .height = 24, .size = .sm, .variant = .ghost, .on_press = .toggle_since, .semantics = .{ .label = if (model.since_review) "Show all changes" else "Show changes since review" }, .style = .{ .foreground = if (model.since_review) theme.ink else theme.note, .background = if (model.since_review) theme.segment_on else theme.clear, .border = if (model.since_review) theme.selected_edge else theme.clear, .stroke_width = 0.5, .radius = 12, .quiet_hover = true } }, if (model.since_review) "Since review" else if (changed == 1) "1 changed since review" else ui.fmt("{d} changed since review", .{changed})) else ui.spacer(0),
         space(ui, 12, 0),
         // Review progress: the check brightens once every file is done.
-        if (model.files.len > 0) ui.row(.{ .padding = 0, .gap = 5, .cross = .center, .semantics = .{ .label = "Review progress" } }, .{
+        if (model.files.len > 0 and !browsing(model)) ui.row(.{ .padding = 0, .gap = 5, .cross = .center, .semantics = .{ .label = "Review progress" } }, .{
             ui.appIcon(.{ .width = 13, .height = 13, .style = .{ .foreground = if (totals.reviewed == totals.files) theme.green else theme.tertiary } }, "check"),
             smallText(ui, ui.fmt("{d}/{d}", .{ totals.reviewed, totals.files }), theme.secondary),
         }) else ui.spacer(0),
@@ -1498,7 +1512,7 @@ fn settingsBody(ui: *AppUi, model: *const Model) AppUi.Node {
             }),
             heading(ui, "Comparison"),
             card(ui, &.{
-                settingRow(ui, "Open with", "What Patch reviews when it opens a repository.", choices(ui, .{ choice(ui, "Working", model.default_mode == .working, .{ .default_mode = .working }), choice(ui, "Staged", model.default_mode == .staged, .{ .default_mode = .staged }), choice(ui, "Branch", model.default_mode == .branch, .{ .default_mode = .branch }) })),
+                settingRow(ui, "Open with", "What Patch shows when it opens a repository: a comparison to review, or all its files to read.", choices(ui, .{ choice(ui, "Working", model.default_mode == .working, .{ .default_mode = .working }), choice(ui, "Staged", model.default_mode == .staged, .{ .default_mode = .staged }), choice(ui, "Branch", model.default_mode == .branch, .{ .default_mode = .branch }), choice(ui, "Files", model.default_mode == .files, .{ .default_mode = .files }) })),
                 settingRow(ui, "Ignore whitespace", "Hide changes that only add, remove or re-indent whitespace. Also in the command palette.", toggle(ui, "Ignore whitespace", model.ignore_whitespace, .toggle_whitespace)),
                 settingRow(ui, "Diff algorithm", "Histogram often lines up rewritten code more readably than Git's default.", choices(ui, .{ choice(ui, "Default", model.algorithm == .default, .{ .set_algorithm = .default }), choice(ui, "Histogram", model.algorithm == .histogram, .{ .set_algorithm = .histogram }), choice(ui, "Patience", model.algorithm == .patience, .{ .set_algorithm = .patience }) })),
                 settingRow(ui, "Base branch", "Branch comparisons start from the merge base with this branch.", ui.row(.{ .width = 150, .height = 26, .padding = 0, .gap = 0, .cross = .center, .style = .{ .background = theme.field, .radius = 13 } }, .{

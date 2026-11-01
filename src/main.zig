@@ -420,6 +420,18 @@ const Job = struct {
             break :blk try git.read(alloc, self.io, self.repo, self.mode, self.base, self.head, self.options);
         };
         const result = self.result.?;
+        // Every file of the project, to read: each listed, folded, and read
+        // from the working tree as it opens. There is nothing to review, so
+        // no progress is read or saved.
+        if (self.mode == .files and self.imported == null) {
+            var files: std.ArrayList(patch.File) = .empty;
+            var names = std.mem.tokenizeScalar(u8, result.paths, 0);
+            while (names.next()) |name| try files.append(alloc, patch.listedFile(name));
+            self.files = files.items;
+            self.sources_done.store(true, .release);
+            self.highlights_done.store(true, .release);
+            return;
+        }
         self.files = try patch.parse(alloc, result.patch);
         if (result.identity.len > 0) self.files = try withWhitespaceOnly(alloc, self.files, result.identity);
         std.mem.sort(patch.File, self.files, {}, struct {
@@ -784,6 +796,9 @@ const Session = struct {
     /// the symbol search must run again for a query typed meanwhile.
     lookup: ?*Lookup = null,
     lookup_again: bool = false,
+    /// Listed files read as the rows were laid out started highlighting,
+    /// which needs the timer that takes their highlights in.
+    shading: bool = false,
     /// Images registered for the review shown, to let go of on the next.
     registered: std.ArrayList(canvas.ImageId) = .empty,
     /// The output the shown blame and symbol hits point into, owned by `gpa`.
@@ -957,7 +972,52 @@ fn reindex(model: *Model) void {
     }
     model.rail_rows = rail_rows.toOwnedSlice(gpa) catch &.{};
 }
+/// Reads the listed files that have opened since the rows were last laid
+/// out, from the working tree, and starts highlighting them.
+fn readOpened(model: *Model) void {
+    const job = session.document orelse return;
+    const result = job.result orelse return;
+    const alloc = job.arena.allocator();
+    for (model.files) |*file| {
+        if (!file.unread or file.collapsed) continue;
+        const full = std.fs.path.join(alloc, &.{ result.root, file.path }) catch continue;
+        const text = std.Io.Dir.cwd().readFileAlloc(session.io, full, alloc, .limited(16 * 1024 * 1024)) catch {
+            file.unread = false;
+            file.unreadable = true;
+            continue;
+        };
+        patch.readListed(alloc, file, text) catch continue;
+        if (file.binary) continue;
+        if (highlight.languageFor(file.path)) |language| session.shading = startShade(job, language, file.path, text) or session.shading;
+    }
+}
+/// Whether a file has rows in the review: all do but the project's files
+/// not open while browsing.
+pub fn onPage(file: patch.File) bool {
+    return !(file.listed and file.collapsed);
+}
+/// The file `count` files on from `from` that has rows in the review, or
+/// the last one there is that way.
+fn stepFile(model: *const Model, from: usize, forward: bool, count: usize) usize {
+    var at = @min(from, model.files.len -| 1);
+    var found = at;
+    var left = count;
+    while (left > 0) {
+        if (forward) {
+            if (at + 1 >= model.files.len) break;
+            at += 1;
+        } else {
+            if (at == 0) break;
+            at -= 1;
+        }
+        if (!onPage(model.files[at])) continue;
+        found = at;
+        left -= 1;
+    }
+    return found;
+}
 fn layoutRows(model: *Model) void {
+    readOpened(model);
     if (model.display.len > 0) gpa.free(model.display);
     if (model.starts.len > 0) gpa.free(model.starts);
     const alloc = gpa;
@@ -969,6 +1029,9 @@ fn layoutRows(model: *Model) void {
     defer model.max_cols = cols;
     for (model.files, 0..) |file, index| {
         starts.append(alloc, rows.items.len) catch return;
+        // Browsing, the rail lists the files and the review holds only those
+        // opened: a closed file has no row (its start is the next file's).
+        if (!onPage(file)) continue;
         rows.append(alloc, .{ .file = index }) catch return;
         if (file.collapsed) continue;
         if (file.binary) {
@@ -1044,6 +1107,12 @@ fn requestScroll(model: *Model, fx: *Effects, offset: f32) void {
 }
 fn jump(model: *Model, fx: *Effects, index: usize) void {
     if (index >= model.starts.len) return;
+    // Browsing, going to a file (from the rail or the picker) opens it.
+    if (!onPage(model.files[index])) {
+        model.files[index].collapsed = false;
+        layoutRows(model);
+        findMatches(model);
+    }
     model.selected = index;
     model.cursor = seekCode(model, model.starts[index], true) orelse model.starts[index];
     // Keyboard file navigation can keep the focused pane and its native
@@ -1170,7 +1239,7 @@ fn persist(model: *Model) void {
 /// Where a file folds by default: reviewed ones (when that setting is on),
 /// whitespace-only ones, and generated ones (when that one is).
 fn defaultFold(model: *const Model, file: patch.File) bool {
-    return (file.reviewed and model.collapse_reviewed) or file.whitespace_only or (file.generated and model.fold_generated);
+    return file.listed or (file.reviewed and model.collapse_reviewed) or file.whitespace_only or (file.generated and model.fold_generated);
 }
 /// Shows, or stops showing, only what changed since review: a file reviewed
 /// in an earlier version shows the diff from that version, and files whose
@@ -1551,7 +1620,7 @@ fn sideRevision(model: *const Model, alloc: std.mem.Allocator, old: bool) ?[]con
     const result = job.result orelse return null;
     if (model.imported or result.root.len == 0) return null;
     return switch (model.mode) {
-        .working, .staged => if (old) "HEAD" else "",
+        .working, .staged, .files => if (old) "HEAD" else "",
         .branch => if (job.options.commit.len > 0)
             (if (old) std.fmt.allocPrint(alloc, "{s}^", .{job.options.commit}) catch null else job.options.commit)
         else if (old) result.merge_base else result.tip,
@@ -1717,7 +1786,7 @@ fn openLocation(model: *Model, fx: *Effects, path: []const u8, line_number: u32)
     const result = job.result orelse return;
     const alloc = job.arena.allocator();
     const text = switch (model.mode) {
-        .working => blk: {
+        .working, .files => blk: {
             const full = std.fs.path.join(alloc, &.{ result.root, path }) catch return;
             break :blk std.Io.Dir.cwd().readFileAlloc(session.io, full, alloc, .limited(16 * 1024 * 1024)) catch return notify(model, fx, "Could not read that file");
         },
@@ -1754,14 +1823,22 @@ fn openLocation(model: *Model, fx: *Effects, path: []const u8, line_number: u32)
 /// Highlights a file opened for reference off the main thread; its lines
 /// keep the line-by-line colors until then.
 fn shadeReference(fx: *Effects, job: *Job, language: highlight.Language, path: []const u8, text: []const u8) void {
-    const shade = gpa.create(Shade) catch return;
+    if (startShade(job, language, path, text)) startShadeTimer(fx);
+}
+/// Starts highlighting a reference file; its highlights are taken in on
+/// the timer `startShadeTimer` runs.
+fn startShade(job: *Job, language: highlight.Language, path: []const u8, text: []const u8) bool {
+    const shade = gpa.create(Shade) catch return false;
     shade.* = .{ .language = language, .path = path, .text = text, .stop = &job.stopping };
     job.shades.append(gpa, shade) catch {
         gpa.destroy(shade);
-        return;
+        return false;
     };
     shade.thread = std.Thread.spawn(.{}, Shade.work, .{shade}) catch null;
     if (shade.thread == null) shade.work();
+    return true;
+}
+fn startShadeTimer(fx: *Effects) void {
     fx.startTimer(.{ .key = 13, .interval_ms = 16, .mode = .repeating, .on_fire = Effects.timerMsg(.shade_tick) });
 }
 /// Takes in reference files' highlights as they finish.
@@ -1898,6 +1975,14 @@ fn exportMarkdown(alloc: std.mem.Allocator, model: *const Model) ![]const u8 {
     return output.toOwnedSlice();
 }
 pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
+    handle(model, msg, fx);
+    // Files opened while handling it are highlighting off the main thread.
+    if (session.shading) {
+        session.shading = false;
+        startShadeTimer(fx);
+    }
+}
+fn handle(model: *Model, msg: Msg, fx: *Effects) void {
     switch (msg) {
         .key => |chord| {
             if (model.palette != .closed) return;
@@ -2302,11 +2387,11 @@ pub fn update(model: *Model, msg: Msg, fx: *Effects) void {
         },
         .next => {
             focusReview(model);
-            jump(model, fx, @min(model.selected + 1, model.files.len -| 1));
+            jump(model, fx, stepFile(model, model.selected, true, 1));
         },
         .previous => {
             focusReview(model);
-            jump(model, fx, model.selected -| 1);
+            jump(model, fx, stepFile(model, model.selected, false, 1));
         },
         .reviewed => if (model.selected < model.files.len) {
             markReviewed(model, fx, model.selected, !model.files[model.selected].reviewed);
@@ -2870,6 +2955,15 @@ fn refold(model: *Model, fx: *Effects, index: usize) void {
         return;
     }
     model.selected = file;
+    // A file closed while browsing leaves the review: the reader goes on to
+    // the file now in its place.
+    if (!onPage(model.files[file])) {
+        model.cursor = seekCode(model, model.starts[file], true) orelse seekCode(model, model.starts[file], false) orelse 0;
+        if (model.cursor < model.display.len) model.selected = model.display[model.cursor].file;
+        if (model.focus != .review) focusReview(model);
+        requestScroll(model, fx, @as(f32, @floatFromInt(model.cursor)) * 24 - screen);
+        return;
+    }
     // A folded file keeps the reader: the cursor parks on its header.
     model.cursor = if (model.files[file].collapsed) model.starts[file] else seekCode(model, model.starts[file], true) orelse model.starts[file];
     if (model.focus != .review) focusReview(model);
@@ -3074,11 +3168,11 @@ fn perform(model: *Model, fx: *Effects, invocation: keyboard.Invocation) void {
             if (ensureCursor(model)) model.cursor_old = invocation.action == .old_side;
         },
         .file_next => {
-            jump(model, fx, @min(model.selected + 1, model.files.len -| 1));
+            jump(model, fx, stepFile(model, model.selected, true, 1));
             model.cursor_active = true;
         },
         .file_previous => {
-            jump(model, fx, model.selected -| 1);
+            jump(model, fx, stepFile(model, model.selected, false, 1));
             model.cursor_active = true;
         },
         .change_next, .change_previous => moveIndex(model, fx, model.changes, invocation.action == .change_next, 1, false),
@@ -3173,6 +3267,7 @@ fn perform(model: *Model, fx: *Effects, invocation: keyboard.Invocation) void {
         .working => update(model, .{ .mode = .working }, fx),
         .staged => update(model, .{ .mode = .staged }, fx),
         .branch => update(model, .{ .mode = .branch }, fx),
+        .all_files => update(model, .{ .mode = .files }, fx),
         .settings => update(model, .open_settings, fx),
         .shortcuts => {
             model.settings_section = .keyboard;
@@ -3284,6 +3379,7 @@ fn openNotesNow(model: *Model) void {
 }
 fn beginNote(model: *Model, fx: *Effects, file: usize, anchor: Anchor) void {
     if (file >= model.files.len) return;
+    if (model.files[file].listed) return notify(model, fx, "Notes go on a review · browsing files keeps none");
     // Lines on the old side of the changes since review are the reviewed
     // version's, which no later review shows; notes go on the new side.
     if (anchor.old and anchor.line > 0 and model.files[file].showing_since) {

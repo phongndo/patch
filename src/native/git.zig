@@ -5,7 +5,9 @@
 const std = @import("std");
 
 pub const max_patch_bytes = 64 * 1024 * 1024;
-pub const Mode = enum { working, staged, branch };
+/// What Patch shows: a comparison to review, or (`files`) every file in the
+/// working tree, unchanged, to read.
+pub const Mode = enum { working, staged, branch, files };
 /// `default` leaves the choice to Git (its `diff.algorithm`, else Myers).
 pub const Algorithm = enum { default, histogram, patience };
 pub const Options = struct {
@@ -52,6 +54,9 @@ pub const Review = struct {
     commits: []const Commit = &.{},
     merge_base: []const u8 = "",
     tip: []const u8 = "",
+    /// Files mode: every file in the working tree, tracked or not (ignored
+    /// ones aside), NUL-separated. `patch` is empty.
+    paths: []const u8 = "",
 };
 pub const RawFile = struct { path: []const u8, old: []const u8, new: []const u8, mode: []const u8 };
 pub const Commit = struct {
@@ -379,6 +384,7 @@ pub fn read(gpa: std.mem.Allocator, io: std.Io, path: []const u8, mode: Mode, ba
     var commits: []const Commit = &.{};
     var merge_base: []const u8 = "";
     var tip: []const u8 = "";
+    var listed: []const u8 = "";
     switch (mode) {
         .branch => {
             if (head_raw == null) return error.NoInitialCommit;
@@ -453,6 +459,10 @@ pub fn read(gpa: std.mem.Allocator, io: std.Io, path: []const u8, mode: Mode, ba
             patch = output.items;
             if (keyed != null) identity = keyed_output.items;
         },
+        .files => {
+            patch = "";
+            listed = try projectFiles(gpa, io, root);
+        },
     }
     return .{
         .patch = patch,
@@ -462,9 +472,10 @@ pub fn read(gpa: std.mem.Allocator, io: std.Io, path: []const u8, mode: Mode, ba
         .commits = commits,
         .merge_base = merge_base,
         .tip = tip,
+        .paths = listed,
         .repository = std.fs.path.basename(root),
         .branch = switch (mode) {
-            .working => "working tree",
+            .working, .files => "working tree",
             .staged => "index",
             .branch => branch,
         },
@@ -475,9 +486,39 @@ pub fn read(gpa: std.mem.Allocator, io: std.Io, path: []const u8, mode: Mode, ba
             .working => "Working changes",
             .staged => "Staged changes",
             .branch => "Branch changes",
+            .files => "All files",
         },
         .mode = @tagName(mode),
     };
+}
+
+/// Every file in the working tree, NUL-separated and sorted: those Git
+/// tracks and those it would add (ignored files aside), less tracked files
+/// deleted from the tree. Submodules are listed as their paths.
+fn projectFiles(gpa: std.mem.Allocator, io: std.Io, root: []const u8) ![]const u8 {
+    const listed = try command(gpa, io, root, &.{ "ls-files", "--cached", "--others", "--exclude-standard", "--deduplicate", "-z" }, false);
+    const deleted = try command(gpa, io, root, &.{ "ls-files", "--deleted", "-z" }, false);
+    return keepFiles(gpa, listed, deleted);
+}
+/// The NUL-separated paths in `listed` not in `deleted`, sorted.
+fn keepFiles(gpa: std.mem.Allocator, listed: []const u8, deleted: []const u8) ![]const u8 {
+    var gone: std.StringHashMapUnmanaged(void) = .empty;
+    var removed = std.mem.tokenizeScalar(u8, deleted, 0);
+    while (removed.next()) |name| try gone.put(gpa, name, {});
+    var kept: std.ArrayList([]const u8) = .empty;
+    var names = std.mem.tokenizeScalar(u8, listed, 0);
+    while (names.next()) |name| if (!gone.contains(name)) try kept.append(gpa, name);
+    std.mem.sort([]const u8, kept.items, {}, struct {
+        fn less(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.lessThan(u8, a, b);
+        }
+    }.less);
+    var out: std.ArrayList(u8) = .empty;
+    for (kept.items) |name| {
+        try out.appendSlice(gpa, name);
+        try out.append(gpa, 0);
+    }
+    return out.items;
 }
 
 /// The commits in `range`, oldest first (at most 500, the newest), each with
@@ -742,6 +783,15 @@ test "check-attr answers mark generated paths, explicit opt-outs, and silence" {
 test "only supported comparison modes are accepted" {
     try std.testing.expect(std.meta.stringToEnum(Mode, "working") == .working);
     try std.testing.expect(std.meta.stringToEnum(Mode, "--exec") == null);
+    try std.testing.expect(std.meta.stringToEnum(Mode, "files") == .files);
+}
+
+test "the project's files leave out those deleted from the tree, sorted" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const kept = try keepFiles(arena.allocator(), "src/b.zig\x00README.md\x00gone.txt\x00new file.txt\x00", "gone.txt\x00");
+    try std.testing.expectEqualStrings("README.md\x00new file.txt\x00src/b.zig\x00", kept);
+    try std.testing.expectEqualStrings("", try keepFiles(arena.allocator(), "", ""));
 }
 
 test "commits list their files, and merges none" {

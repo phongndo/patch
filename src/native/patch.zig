@@ -91,6 +91,14 @@ pub const File = struct {
     binary: bool = false,
     /// Not part of the change: a file opened to read code the change uses.
     reference: bool = false,
+    /// One of the project's files, listed to read rather than review (Files
+    /// mode); it is a reference file too. `unread` until it is first opened,
+    /// when its lines are read from the working tree.
+    listed: bool = false,
+    unread: bool = false,
+    /// A listed file the working tree would not give up (a submodule, or
+    /// one removed since it was listed).
+    unreadable: bool = false,
     prior: Prior = .none,
     /// The changes since the version last reviewed, when it is at hand.
     since: ?*Since = null,
@@ -342,6 +350,22 @@ pub fn referenceFile(gpa: std.mem.Allocator, path_name: []const u8, text: []cons
     for (1..source.count() + 1) |line_number| try rows.append(gpa, .{ .new = @intCast(line_number), .right = source.line(@intCast(line_number)) });
     offsets(rows.items);
     return .{ .path = try gpa.dupe(u8, path_name), .status = .added, .unified = rows.items, .split = try gpa.dupe(Row, rows.items), .reference = true };
+}
+/// One of the project's files, listed and folded, its lines not yet read.
+pub fn listedFile(path_name: []const u8) File {
+    return .{ .path = path_name, .status = .added, .unified = &.{}, .split = &.{}, .reference = true, .listed = true, .unread = true, .collapsed = true };
+}
+/// A listed file's lines, read: the whole file on the new side, or nothing
+/// for a binary file, which says so.
+pub fn readListed(gpa: std.mem.Allocator, file: *File, text: []const u8) !void {
+    if (looksBinary(text)) {
+        file.binary = true;
+    } else {
+        const read = try referenceFile(gpa, file.path, text);
+        file.unified = read.unified;
+        file.split = read.split;
+    }
+    file.unread = false;
 }
 /// Git's id for a blob of these bytes.
 pub fn blobId(bytes: []const u8) [40]u8 {
@@ -844,4 +868,19 @@ test "blocks moved between places are found, and edits in place are not" {
     var found = false;
     for (files[1].split) |row| found = found or row.moved_new == 1;
     try std.testing.expect(found);
+}
+
+test "a listed file reads whole, or as binary" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var file = listedFile("src/a.zig");
+    try std.testing.expect(file.unread and file.collapsed and file.reference);
+    try readListed(arena.allocator(), &file, "one\ntwo\n");
+    try std.testing.expect(!file.unread and !file.binary);
+    try std.testing.expectEqual(@as(usize, 2), file.unified.len);
+    try std.testing.expectEqual(@as(u32, 2), file.unified[1].new);
+    try std.testing.expectEqualStrings("two", file.unified[1].right);
+    var picture = listedFile("logo.png");
+    try readListed(arena.allocator(), &picture, "\x89PNG\x00\x00");
+    try std.testing.expect(picture.binary and picture.unified.len == 0);
 }
