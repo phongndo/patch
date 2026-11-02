@@ -33,6 +33,9 @@
               pkgs.nodejs_24
               pkgs.pnpm
               pkgs.zig_0_16
+              # The highlighter's tokenizer, syntaxmate (src/native/syntaxmate).
+              pkgs.rustc
+              pkgs.cargo
             ]
             ++ lib.optionals isLinux [
               pkgs.pkg-config
