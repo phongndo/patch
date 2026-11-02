@@ -143,7 +143,7 @@ fn headerLayer(ui: *AppUi, model: *const Model) AppUi.Node {
     const title_open = model.sidebar_width + theme.pane_inset + 12;
     const title_closed = @max(theme.sidebar_width + 12, group_closed + bandWidth(model) + 25);
     const title_x = @max(group_left + bandWidth(model) + 8, title_closed + (title_open - title_closed) * open_t);
-    const reserved = (if (model.notes_open) model.notes_width + theme.pane_inset else 0) + 150;
+    const reserved = (if (model.notes_open) model.notes_width + theme.pane_inset else 0) + 150 + (if (finding(model)) find_width else 0);
     return ui.column(.{ .padding = 0, .gap = 0, .cross = .start }, .{
         ui.row(.{ .height = 50, .padding = 0, .gap = 0, .cross = .center }, .{
             space(ui, 92, 0),
@@ -1142,32 +1142,47 @@ fn paneSurface(ui: *AppUi, key: []const u8, width: f32, children: anytype) AppUi
     edged.widget.layout.grow = if (width == 0) 1 else 0;
     return edged;
 }
-/// The status pill's content. Left: the find field or where the cursor is;
-/// right: panning and match counts.
+/// The status pill's content: where the cursor is, and how far the code is
+/// panned.
 fn statusRow(ui: *AppUi, model: *const Model) AppUi.Node {
+    const column_text = if (model.scroll_x > 0) ui.fmt("From column {d}", .{@as(usize, @intFromFloat(model.scroll_x / app.code_advance)) + 1}) else "";
+    const position = model.cursor_active and !app.onFoldedHeader(model);
+    return ui.row(.{ .grow = 1, .height = app.pill_height, .padding = 0, .gap = 0, .cross = .center }, .{
+        space(ui, 12, 0),
+        if (position) smallText(ui, ui.fmt("Line {d} · {s}", .{ app.cursorNumber(model), if (app.cursorIsOld(model)) "old" else "new" }), theme.muted) else ui.spacer(0),
+        ui.spacer(1),
+        if (column_text.len > 0) smallText(ui, column_text, theme.tertiary) else ui.spacer(0),
+        space(ui, 12, 0),
+    });
+}
+/// Find in the diff sits at the review's top right, as in most apps, while
+/// its field is focused or a query is kept.
+fn finding(model: *const Model) bool {
+    return model.display.len > 0 and (model.focus == .search or model.search_query.len > 0);
+}
+const find_width: f32 = 280;
+/// The find capsule: the field, which match the cursor is on, steps between
+/// matches, and a close that drops the query.
+fn findBar(ui: *AppUi, model: *const Model) AppUi.Node {
     const matches = model.search_matches;
     var match_index: usize = 0;
     for (matches, 0..) |index, position| {
         if (index <= model.cursor) match_index = position + 1 else break;
     }
-    const column_text = if (model.scroll_x > 0) ui.fmt("From column {d}", .{@as(usize, @intFromFloat(model.scroll_x / app.code_advance)) + 1}) else "";
-    const position = model.cursor_active and !app.onFoldedHeader(model);
-    const searching = model.focus == .search;
-    const height = app.pill_height;
-    return ui.row(.{ .grow = 1, .height = height, .padding = 0, .gap = 0, .cross = .center }, .{
-        space(ui, 12, 0),
-        if (searching) ui.row(.{ .grow = 1, .height = height, .padding = 0, .gap = 0, .cross = .center }, .{
-            ui.appIcon(.{ .width = 13, .height = 13, .style = .{ .foreground = theme.secondary } }, "find"),
-            space(ui, 4, 0),
-            ui.textField(.{ .key = .{ .str = "diff-search" }, .grow = 1, .height = height - 2, .text = model.search_query.text(), .placeholder = "Find in diff…", .autofocus = true, .on_input = AppUi.inputMsg(.search_edit), .on_submit = .search_accept, .semantics = .{ .label = "Find in diff" }, .variant = .ghost, .style = .{ .background = theme.clear, .border = theme.clear, .focus_ring = theme.clear, .radius = 0 } }),
-        }) else if (position) smallText(ui, ui.fmt("Line {d} · {s}", .{ app.cursorNumber(model), if (app.cursorIsOld(model)) "old" else "new" }), theme.muted) else ui.spacer(0),
-        if (searching) space(ui, 12, 0) else ui.spacer(1),
-        if (column_text.len > 0) smallText(ui, column_text, theme.tertiary) else ui.spacer(0),
-        if (column_text.len > 0 and model.search_query.len > 0) space(ui, 12, 0) else ui.spacer(0),
-        if (model.search_query.len > 0) smallText(ui, ui.fmt("{d}/{d}", .{ match_index, matches.len }), if (matches.len == 0) theme.red else theme.muted) else ui.spacer(0),
-        if (model.search_query.len > 0 and !searching) space(ui, 10, 0) else ui.spacer(0),
-        if (model.search_query.len > 0 and !searching) smallText(ui, ui.fmt("{s} / {s}", .{ app.keyboard.shortcut(.match_next), app.keyboard.shortcut(.match_previous) }), theme.muted) else ui.spacer(0),
-        space(ui, 12, 0),
+    const none = matches.len == 0;
+    // The steps stay live (with no match, a step says so) and only quieten.
+    const step = if (none) theme.muted else theme.tertiary;
+    return ui.row(.{ .width = find_width, .height = 26, .padding = 0, .gap = 0, .cross = .center, .semantics = .{ .role = .group, .label = "Find" }, .style = .{ .background = theme.field, .radius = 13 } }, .{
+        space(ui, 10, 0),
+        ui.appIcon(.{ .width = 13, .height = 13, .style = .{ .foreground = theme.tertiary } }, "find"),
+        space(ui, 1, 0),
+        ui.textField(.{ .key = .{ .str = ui.fmt("diff-search-{d}", .{model.focus_epoch}) }, .grow = 1, .height = 24, .text = model.search_query.text(), .placeholder = "Find in diff…", .autofocus = model.focus == .search, .on_input = AppUi.inputMsg(.search_edit), .on_submit = .search_accept, .semantics = .{ .label = "Find in diff" }, .variant = .ghost, .style = .{ .background = theme.clear, .border = theme.clear, .focus_ring = theme.clear, .radius = 0 } }),
+        if (model.search_query.len > 0) smallText(ui, ui.fmt("{d}/{d}", .{ match_index, matches.len }), if (none) theme.red else theme.muted) else ui.spacer(0),
+        space(ui, 4, 0),
+        tinted(ui, "match-previous", "up", ui.fmt("Previous match · {s}", .{app.keyboard.shortcut(.match_previous)}), .{ .action = .{ .action = .match_previous } }, step, false, 22),
+        tinted(ui, "match-next", "expanded", ui.fmt("Next match · {s}", .{app.keyboard.shortcut(.match_next)}), .{ .action = .{ .action = .match_next } }, step, false, 22),
+        tinted(ui, "close-find", "close", "Close find", .close_search, theme.tertiary, false, 22),
+        space(ui, 2, 0),
     });
 }
 fn reviewTitle(ui: *AppUi, model: *const Model) []const u8 {
@@ -1202,7 +1217,7 @@ fn paneHeader(ui: *AppUi, model: *const Model) AppUi.Node {
             ui.appIcon(.{ .width = 13, .height = 13, .style = .{ .foreground = if (totals.reviewed == totals.files) theme.green else theme.tertiary } }, "check"),
             smallText(ui, ui.fmt("{d}/{d}", .{ totals.reviewed, totals.files }), theme.secondary),
         }) else ui.spacer(0),
-        space(ui, 14, 0),
+        if (finding(model)) ui.row(.{ .padding = 0, .gap = 0, .cross = .center }, .{ space(ui, 12, 0), findBar(ui, model), space(ui, 4, 0) }) else space(ui, 14, 0),
     });
 }
 fn reviewPane(ui: *AppUi, model: *const Model) AppUi.Node {
@@ -1680,7 +1695,7 @@ fn toast(ui: *AppUi, model: *const Model) AppUi.Node {
     return ui.column(.{ .padding = 0, .gap = 0 }, .{
         ui.spacer(1),
         ui.row(.{ .padding = 0, .gap = 0 }, .{ space(ui, left, 0), ui.row(.{ .grow = 1, .padding = 0, .main = .center }, .{pill}), space(ui, right, 0) }),
-        // Clear of the review's status pill, so it never covers the find field.
+        // Clear of the review's status pill.
         space(ui, 0, theme.pane_inset + app.pill_height + 10),
     });
 }

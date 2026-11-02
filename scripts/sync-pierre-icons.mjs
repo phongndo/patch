@@ -51,6 +51,7 @@ const local = [
   "rows",
   "expanded",
   "collapsed",
+  "up",
   "blank",
   "swap",
   "note",

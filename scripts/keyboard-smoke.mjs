@@ -106,11 +106,29 @@ try {
   await setText("Find in diff", "needle");
   await key("enter");
   await waitFor("Line 2 · new");
+  // The find field sits at the review's top right, above the diff.
+  const findState = await snapshot();
+  const findBounds = (pattern) =>
+    findState
+      .split("\n")
+      .find((entry) => entry.includes(pattern))
+      .match(/bounds=\(([-\d.]+),([-\d.]+) ([-\d.]+)x([-\d.]+)\)/)
+      .slice(1)
+      .map(Number);
+  const field = findBounds('role=textbox name="Find in diff"');
+  const changes = findBounds('role=list name="Changes"');
+  assert.ok(field[1] + field[3] <= changes[1], "Find field must sit above the diff");
+  assert.ok(field[0] > changes[0] + changes[2] / 2, "Find field must sit at the right");
   await key("cmd+g");
   await waitFor("Line 21 · new");
   await key("cmd+shift+g");
   await waitFor("Line 2 · new");
+  await key("cmd+f");
+  await waitFor('role=textbox name="Find in diff"');
   await key("escape");
+  await waitFor('role=textbox name="Find in diff"');
+  await key("escape");
+  await absent('role=textbox name="Find in diff"');
 
   await key("cmd+k");
   await waitFor('role=textbox name="Command search"');

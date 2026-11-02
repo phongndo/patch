@@ -37,6 +37,7 @@ pub const all = [_]canvas.icons.Entry{
     entry("rows", "icons/rows.svg"),
     entry("expanded", "icons/expanded.svg"),
     entry("collapsed", "icons/collapsed.svg"),
+    entry("up", "icons/up.svg"),
     entry("blank", "icons/blank.svg"),
     entry("swap", "icons/swap.svg"),
     entry("note", "icons/note.svg"),

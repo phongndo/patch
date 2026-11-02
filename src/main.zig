@@ -246,6 +246,7 @@ pub const Msg = union(enum) {
     close_palette,
     search_edit: canvas.TextInputEvent,
     search_accept,
+    close_search,
     filter_accept,
     open_repo,
     open_patch,
@@ -907,11 +908,11 @@ pub fn pinnedFile(model: *const Model, offset: f32) ?usize {
     if (start > top or (start == top and @mod(offset, 24) == 0)) return null;
     return file;
 }
-/// Whether the status has something to say: where the cursor is, the find
-/// field or its matches, or how far the code is panned.
+/// Whether the status has something to say: where the cursor is, or how
+/// far the code is panned.
 pub fn statusShown(model: *const Model) bool {
     const position = model.cursor_active and !onFoldedHeader(model);
-    return model.focus == .search or position or model.scroll_x > 0 or model.search_query.len > 0;
+    return position or model.scroll_x > 0;
 }
 /// The pill at the review's foot shows while the status has something to
 /// say or a pane runs past the bottom edge, so the cut pane still ends round.
@@ -1115,6 +1116,12 @@ fn wheelMsg(wheel: sdk.platform.WheelEvent) ?Msg {
 }
 fn focusReview(model: *Model) void {
     model.focus = .review;
+    model.focus_epoch += 1;
+}
+/// The find field stays up while a query is kept, so focusing it again
+/// remounts it under a new key for its autofocus to take.
+fn focusSearch(model: *Model) void {
+    model.focus = .search;
     model.focus_epoch += 1;
 }
 fn requestScroll(model: *Model, fx: *Effects, offset: f32) void {
@@ -2268,6 +2275,11 @@ fn handle(model: *Model, msg: Msg, fx: *Effects) void {
         .search_accept => {
             focusReview(model);
         },
+        .close_search => {
+            model.search_query.clear();
+            findMatches(model);
+            focusReview(model);
+        },
         .filter_accept => {
             if (model.visible.len > 0) jump(model, fx, model.visible[0]);
         },
@@ -3238,11 +3250,9 @@ fn perform(model: *Model, fx: *Effects, invocation: keyboard.Invocation) void {
             for (model.files) |*file| file.collapsed = invocation.action == .collapse_all;
             refold(model, fx, model.selected);
         },
-        .search => {
-            model.focus = .search;
-        },
+        .search => focusSearch(model),
         .match_next, .match_previous => {
-            if (model.search_query.len == 0) model.focus = .search else if (model.search_matches.len == 0) notify(model, fx, "No matches") else moveIndex(model, fx, model.search_matches, invocation.action == .match_next, 1, true);
+            if (model.search_query.len == 0) focusSearch(model) else if (model.search_matches.len == 0) notify(model, fx, "No matches") else moveIndex(model, fx, model.search_matches, invocation.action == .match_next, 1, true);
         },
         .reviewed => {
             if (ensureCursor(model)) update(model, .reviewed, fx);
