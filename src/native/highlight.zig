@@ -332,7 +332,8 @@ pub fn highlightUntil(alloc: std.mem.Allocator, language: Language, source: []co
     return highlightWithin(alloc, language, source, stop, time_budget_ns);
 }
 
-fn highlightWithin(alloc: std.mem.Allocator, language: Language, source: []const u8, stop: ?*const std.atomic.Value(bool), budget_ns: u64) !Highlights {
+/// `highlightUntil` with its own time budget; the benchmark times with none.
+pub fn highlightWithin(alloc: std.mem.Allocator, language: Language, source: []const u8, stop: ?*const std.atomic.Value(bool), budget_ns: u64) !Highlights {
     const line_count = std.mem.count(u8, source, "\n") + 1;
     const lines = try alloc.alloc(u32, line_count + 1);
     errdefer alloc.free(lines);

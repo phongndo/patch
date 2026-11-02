@@ -2,6 +2,8 @@
 //! file (ReleaseFast): the first call, which compiles the language's query,
 //! then the best and median of several more. With `--dump` first, prints
 //! each line's tokens instead; with `--scopes`, each token's TextMate scopes.
+//! `--unbounded` first times without the time budget, so large files run
+//! to the end.
 
 const std = @import("std");
 const highlight = @import("highlight.zig");
@@ -27,8 +29,14 @@ pub fn main(init: std.process.Init) !void {
         for (args[2..]) |path| try dump(gpa, io, out, path);
         return out.flush();
     }
+    var paths = args[1..];
+    var budget_ns: u64 = highlight.time_budget_ns;
+    if (paths.len > 0 and std.mem.eql(u8, paths[0], "--unbounded")) {
+        paths = paths[1..];
+        budget_ns = std.math.maxInt(u64);
+    }
     try out.print("{s:<48} {s:>8} {s:>8} {s:>10} {s:>10} {s:>10} {s:>8}\n", .{ "file", "lines", "KiB", "first ms", "best ms", "median ms", "tokens" });
-    for (args[1..]) |path| {
+    for (paths) |path| {
         const language = highlight.languageFor(path) orelse {
             try out.print("{s:<48} no language\n", .{path});
             continue;
@@ -41,7 +49,7 @@ pub fn main(init: std.process.Init) !void {
         var lines: usize = 0;
         for (0..samples.len + 1) |round| {
             const start = std.Io.Clock.awake.now(io).nanoseconds;
-            const result = try highlight.highlight(gpa, language, source);
+            const result = try highlight.highlightWithin(gpa, language, source, null, budget_ns);
             const elapsed: u64 = @intCast(std.Io.Clock.awake.now(io).nanoseconds - start);
             tokens = result.tokens.len;
             lines = result.lines.len - 1;
