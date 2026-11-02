@@ -2608,7 +2608,8 @@ fn routeEvent(context: *anyopaque, runtime: *sdk.Runtime, event: sdk.Event) anye
         // side panels, resize, and error banners.
         const layout = runtime.canvasWidgetLayout(input.window_id, "main-canvas") catch null;
         if (layout) |tree| for (tree.nodes) |node| {
-            if (!std.mem.eql(u8, node.widget.semantics.label, "Changes")) continue;
+            // The rail's Changes segment shares the label; only the list scrolls.
+            if (node.widget.kind != .scroll_view or !std.mem.eql(u8, node.widget.semantics.label, "Changes")) continue;
             state.model.review_bounds = .{ .x = node.frame.x, .y = node.frame.y, .width = node.frame.width, .height = node.frame.height };
             state.model.viewport_height = node.frame.height;
             break;
