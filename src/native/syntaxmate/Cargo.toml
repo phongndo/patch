@@ -11,7 +11,7 @@ crate-type = ["staticlib"]
 path = "src/lib.rs"
 
 [dependencies]
-syntaxmate = { git = "https://github.com/phongndo/syntaxmate", rev = "8e62c040c7f3b13a9678412977a54e2fc1434aaa", default-features = false }
+syntaxmate = { git = "https://github.com/phongndo/syntaxmate", rev = "337e55e3738977960e193d7b6970beeec4506c9a", default-features = false }
 
 [profile.release]
 opt-level = 3

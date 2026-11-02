@@ -110,8 +110,8 @@ dependencies = [
 
 [[package]]
 name = "syntaxmate"
-version = "0.2.1"
-source = "git+https://github.com/phongndo/syntaxmate?rev=8e62c040c7f3b13a9678412977a54e2fc1434aaa#8e62c040c7f3b13a9678412977a54e2fc1434aaa"
+version = "0.3.0"
+source = "git+https://github.com/phongndo/syntaxmate?rev=337e55e3738977960e193d7b6970beeec4506c9a#337e55e3738977960e193d7b6970beeec4506c9a"
 dependencies = [
  "memchr",
  "miniz_oxide",
