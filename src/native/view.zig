@@ -930,14 +930,19 @@ fn rowSlice(ui: *AppUi, node: AppUi.Node, top: f32, bottom: f32) AppUi.Node {
     slice.widget.layout.clip_content = true;
     return ui.column(.{ .height = 24, .padding = 0, .gap = 0 }, .{ space(ui, 0, from), slice, space(ui, 0, 24 - to) });
 }
+/// The review with nothing to show: still a pane, so the gap beside the rail
+/// reads as one to drag, its message centered on it.
+fn emptyPane(ui: *AppUi, children: anytype) AppUi.Node {
+    return paneSurface(ui, "empty-pane", 0, .{ui.column(.{ .grow = 1, .main = .center, .cross = .center, .gap = 12 }, children)});
+}
 fn review(ui: *AppUi, model: *const Model) AppUi.Node {
     // Browsing with no file open: the rail lists them.
-    if (browsing(model) and model.files.len > 0 and model.display.len == 0) return ui.column(.{ .grow = 1, .main = .center, .cross = .center, .gap = 12 }, .{
+    if (browsing(model) and model.files.len > 0 and model.display.len == 0) return emptyPane(ui, .{
         ui.appIcon(.{ .width = 28, .height = 28, .style = .{ .foreground = theme.muted } }, "folder"),
         smallText(ui, "Choose a file in the rail to read it", theme.muted),
         ui.button(.{ .icon = "app:search", .size = .sm, .variant = .ghost, .on_press = .{ .action = .{ .action = .files } } }, "Go to file · ⌘P"),
     });
-    if (model.files.len == 0) return ui.column(.{ .grow = 1, .main = .center, .cross = .center, .gap = 12 }, .{
+    if (model.files.len == 0) return emptyPane(ui, .{
         ui.appIcon(.{ .width = 28, .height = 28, .style = .{ .foreground = theme.muted } }, if (model.busy) "refresh" else "check"),
         smallText(ui, if (model.busy) "Loading…" else if (browsing(model)) "No files" else "No changes", theme.muted),
         ui.button(.{ .icon = "app:folder", .size = .sm, .variant = .ghost, .on_press = .open_repo }, "Open repository"),
