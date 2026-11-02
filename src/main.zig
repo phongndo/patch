@@ -498,7 +498,10 @@ const Job = struct {
         @memset(marks, .{});
         for (self.source_requests, self.sources, marks) |request, sides, *mark| {
             if (self.stopping.load(.monotonic)) break;
-            const language = highlight.languageFor(request.path) orelse continue;
+            if (request.path.len == 0) continue;
+            // A file its name doesn't place may still say what runs it (`#!`).
+            const first = if (sides.new) |text| text.bytes else if (sides.old) |text| text.bytes else "";
+            const language = highlight.languageForSource(request.path, first) orelse continue;
             if (sides.old) |text| if (!sides.old_binary) {
                 mark.old = highlight.highlightUntil(alloc, language, text.bytes, &self.stopping) catch null;
             };
@@ -1834,7 +1837,7 @@ fn openLocation(model: *Model, fx: *Effects, path: []const u8, line_number: u32)
         if (model.marks.len > 0) gpa.free(model.marks);
         model.marks = marks;
     } else |_| {}
-    if (highlight.languageFor(path)) |language| shadeReference(fx, job, language, reference.path, text);
+    if (highlight.languageForSource(path, text)) |language| shadeReference(fx, job, language, reference.path, text);
     reindex(model);
     layoutRows(model);
     findMatches(model);

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "zig build run -Dautomation=true --",
     "review": "zig build run --",
-    "test": "zig build test-native-host && zig build test-highlight && zig test src/native/selection.zig && zig test src/native/keyboard.zig && zig test src/native/patch.zig && zig test src/native/git.zig && zig test src/native/review.zig && zig test src/native/motion.zig && zig test src/native/lookup.zig && zig test src/native/words.zig && zig test src/native/regex.zig && pnpm test:native && pnpm test:web",
+    "test": "zig build test-native-host && zig build test-highlight && zig test src/native/selection.zig && zig test src/native/keyboard.zig && zig test src/native/patch.zig && zig test src/native/git.zig && zig test src/native/review.zig && zig test src/native/motion.zig && zig test src/native/lookup.zig && zig test src/native/words.zig && pnpm test:native && pnpm test:web",
     "build": "zig build",
     "preview": "zig-out/bin/patch",
     "routes:generate": "tsr generate",
@@ -40,14 +40,18 @@
   },
   "devDependencies": {
     "@native-sdk/cli": "0.11.0",
+    "@shikijs/engine-oniguruma": "4.5.0",
+    "@shikijs/vscode-textmate": "10.1.0",
     "@tanstack/router-cli": "1.167.46",
     "@tanstack/router-plugin": "1.168.48",
     "@types/node": "24.19.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitejs/plugin-react": "6.1.2",
+    "linguist-languages": "9.5.0",
     "oxfmt": "0.75.0",
     "oxlint": "1.90.0",
+    "tm-grammars": "1.32.22",
     "tsrs": "0.20.1-ts7.1.0-beta",
     "typescript": "7.0.2",
     "vite": "8.3.5"

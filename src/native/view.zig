@@ -534,6 +534,8 @@ fn wholeFileSpans(model: *const Model, file: usize, old: bool, number: u32, sour
     const entry = model.files[file];
     if (entry.showing_since and old) return null;
     const marks = (if (old) model.marks[file].old else model.marks[file].new) orelse return null;
+    // Lines past where the time budget ran out keep the lexer's colors.
+    if (!marks.covers(number - 1)) return null;
     // The row's text must be the file's line, or the offsets mean nothing.
     if (!entry.reference) {
         if (file >= model.sources.len) return null;

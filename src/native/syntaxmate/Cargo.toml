@@ -1,0 +1,21 @@
+# The TextMate tokenizer behind src/native/syntaxmate.zig: syntaxmate, built
+# by build.zig as a static library with a small C interface (src/lib.rs).
+[package]
+name = "patch-syntaxmate"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+path = "src/lib.rs"
+
+[dependencies]
+syntaxmate = { git = "https://github.com/phongndo/syntaxmate", rev = "8e62c040c7f3b13a9678412977a54e2fc1434aaa", default-features = false }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+debug = false

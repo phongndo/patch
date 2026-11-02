@@ -38,7 +38,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     }) });
     highlighter.link(highlight_tests.root_module);
-    b.step("test-highlight", "Check tree-sitter syntax highlighting").dependOn(&b.addRunArtifact(highlight_tests).step);
+    b.step("test-highlight", "Check TextMate syntax highlighting").dependOn(&b.addRunArtifact(highlight_tests).step);
     const highlight_bench = b.addExecutable(.{ .name = "highlight-bench", .root_module = b.createModule(.{
         .root_source_file = b.path("src/native/highlight_bench.zig"),
         .target = app.exe.root_module.resolved_target.?,
@@ -211,163 +211,76 @@ const blur_damage_replacement =
     \\
 ;
 
-// Tree-sitter syntax highlighting: the runtime, every grammar below and the
-// highlight and injection queries each grammar ships, pinned in
-// build.zig.zon. The parsers are huge generated tables, so they always build
-// optimized whatever the app's mode. Queries listed together are joined in
-// the order the grammar's tree-sitter.json (or, for nvim-style queries, their
-// `; inherits:` line) gives; highlight.zig explains which pattern wins.
-// src/native/queries holds the few local fixes, each appended last.
-const Query = union(enum) {
-    /// A file in the grammar's own package.
-    own: []const u8,
-    /// A file in another grammar's package.
-    dep: struct { []const u8, []const u8 },
-    /// A file vendored in this repository.
-    local: []const u8,
-};
-const Grammar = struct {
-    /// The `highlight.Language` tag; the parser exports `tree_sitter_<name>`.
-    name: []const u8,
-    dep: []const u8,
-    /// The directory holding `parser.c` and any `scanner.c`.
-    src: []const u8 = "src",
-    highlights: []const Query,
-    injections: []const Query = &.{},
-    /// The query is written for Atom's rule, where the first pattern to
-    /// capture a node wins, rather than tree-sitter-highlight's last.
-    first_wins: bool = false,
-};
-const html_injections: []const Query = &.{.{ .dep = .{ "ts_html", "queries/injections.scm" } }};
-const js_injections: []const Query = &.{.{ .dep = .{ "ts_javascript", "queries/injections.scm" } }};
-const js_highlights: Query = .{ .dep = .{ "ts_javascript", "queries/highlights.scm" } };
-const jsx_highlights: Query = .{ .dep = .{ "ts_javascript", "queries/highlights-jsx.scm" } };
-const html_quotes: Query = .{ .local = "src/native/queries/html/highlights.scm" };
-const c_highlights: Query = .{ .dep = .{ "ts_c", "queries/highlights.scm" } };
-const grammars = [_]Grammar{
-    .{ .name = "c", .dep = "ts_c", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "cpp", .dep = "ts_cpp", .highlights = &.{ c_highlights, .{ .own = "queries/highlights.scm" } } },
-    .{ .name = "objc", .dep = "ts_objc", .highlights = &.{ c_highlights, .{ .own = "queries/highlights.scm" } } },
-    .{ .name = "rust", .dep = "ts_rust", .highlights = &.{ .{ .own = "queries/highlights.scm" }, .{ .local = "src/native/queries/rust/highlights.scm" } } },
-    .{ .name = "go", .dep = "ts_go", .highlights = &.{.{ .own = "queries/highlights.scm" }}, .first_wins = true },
-    .{ .name = "python", .dep = "ts_python", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "javascript", .dep = "ts_javascript", .highlights = &.{ js_highlights, jsx_highlights, .{ .own = "queries/highlights-params.scm" } }, .injections = js_injections },
-    .{ .name = "typescript", .dep = "ts_typescript", .src = "typescript/src", .highlights = &.{ .{ .own = "queries/highlights.scm" }, js_highlights }, .injections = js_injections },
-    .{ .name = "tsx", .dep = "ts_typescript", .src = "tsx/src", .highlights = &.{ .{ .own = "queries/highlights.scm" }, jsx_highlights, js_highlights }, .injections = js_injections },
-    .{ .name = "zig", .dep = "ts_zig", .highlights = &.{ .{ .own = "queries/highlights.scm" }, .{ .local = "src/native/queries/zig/highlights.scm" } } },
-    .{ .name = "java", .dep = "ts_java", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "kotlin", .dep = "ts_kotlin", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "swift", .dep = "ts_swift", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "c_sharp", .dep = "ts_c_sharp", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "ruby", .dep = "ts_ruby", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "php", .dep = "ts_php", .src = "php/src", .highlights = &.{.{ .own = "queries/highlights.scm" }}, .injections = &.{ .{ .own = "queries/injections-text.scm" }, .{ .own = "queries/injections.scm" } } },
-    .{ .name = "lua", .dep = "ts_lua", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "bash", .dep = "ts_bash", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "nix", .dep = "ts_nix", .highlights = &.{.{ .own = "queries/highlights.scm" }}, .first_wins = true },
-    .{ .name = "json", .dep = "ts_json", .highlights = &.{ .{ .own = "queries/highlights.scm" }, .{ .local = "src/native/queries/json/highlights.scm" } } },
-    .{ .name = "yaml", .dep = "ts_yaml", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "toml", .dep = "ts_toml", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "css", .dep = "ts_css", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "scss", .dep = "ts_scss", .highlights = &.{ .{ .dep = .{ "ts_css", "queries/highlights.scm" } }, .{ .own = "queries/highlights.scm" } } },
-    .{ .name = "html", .dep = "ts_html", .highlights = &.{ .{ .own = "queries/highlights.scm" }, html_quotes }, .injections = html_injections },
-    .{ .name = "markdown", .dep = "ts_markdown", .src = "tree-sitter-markdown/src", .highlights = &.{.{ .own = "tree-sitter-markdown/queries/highlights.scm" }}, .injections = &.{.{ .own = "tree-sitter-markdown/queries/injections.scm" }} },
-    .{ .name = "markdown_inline", .dep = "ts_markdown", .src = "tree-sitter-markdown-inline/src", .highlights = &.{.{ .own = "tree-sitter-markdown-inline/queries/highlights.scm" }}, .injections = &.{.{ .own = "tree-sitter-markdown-inline/queries/injections.scm" }} },
-    .{ .name = "sql", .dep = "ts_sql", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "make", .dep = "ts_make", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "dockerfile", .dep = "ts_dockerfile", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "cmake", .dep = "ts_cmake", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "haskell", .dep = "ts_haskell", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "ocaml", .dep = "ts_ocaml", .src = "grammars/ocaml/src", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "elixir", .dep = "ts_elixir", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "scala", .dep = "ts_scala", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "dart", .dep = "ts_dart", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "proto", .dep = "ts_proto", .highlights = &.{.{ .own = "queries/highlights.scm" }} },
-    .{ .name = "graphql", .dep = "ts_graphql", .highlights = &.{.{ .own = "queries/graphql/highlights.scm" }} },
-    .{ .name = "hcl", .dep = "ts_hcl", .highlights = &.{.{ .local = "src/native/queries/hcl/highlights.scm" }} },
-    .{ .name = "vue", .dep = "ts_vue", .highlights = &.{ .{ .own = "queries/html_tags/highlights.scm" }, .{ .own = "queries/vue/highlights.scm" } }, .injections = &.{ .{ .own = "queries/html_tags/injections.scm" }, .{ .own = "queries/vue/injections.scm" } } },
-    .{ .name = "svelte", .dep = "ts_svelte", .highlights = &.{ .{ .dep = .{ "ts_html", "queries/highlights.scm" } }, html_quotes, .{ .own = "queries/highlights.scm" } }, .injections = &.{ html_injections[0], .{ .own = "queries/injections.scm" } } },
-};
+// TextMate syntax highlighting: syntaxmate (src/native/syntaxmate, which
+// cargo builds as a static library) and every grammar
+// src/native/grammars.zig lists, minified from the pinned tm-grammars package
+// (or src/native/grammars/) and embedded.
+const grammar_table = @import("src/native/grammars.zig");
 
 const Highlighter = struct {
-    library: *std.Build.Step.Compile,
-    grammars: *std.Build.Module,
+    library: std.Build.LazyPath,
+    sources: *std.Build.Module,
     fn link(self: Highlighter, module: *std.Build.Module) void {
-        module.linkLibrary(self.library);
-        module.addImport("highlight_grammars", self.grammars);
+        module.addObjectFile(self.library);
+        // Rust's standard library calls the unwinder even when panics abort;
+        // macOS has it in libSystem, elsewhere Zig builds its own.
+        if (module.resolved_target.?.result.os.tag != .macos) module.linkSystemLibrary("unwind", .{});
+        module.addImport("tm_grammar_sources", self.sources);
     }
 };
 
-fn addHighlighter(b: *std.Build, target: std.Build.ResolvedTarget) Highlighter {
-    // The grammars' tables are most of the binary (about 53 MB of 64), so a
-    // build can keep only some, e.g. -Dhighlight-languages=c -Dhighlight-languages=zig.
-    const only = b.option([]const []const u8, "highlight-languages", "Grammars to compile in (repeatable; default all); others stay plain");
-    if (only) |names| for (names) |name| {
-        for (grammars) |grammar| {
-            if (std.mem.eql(u8, grammar.name, name)) break;
-        } else std.debug.panic("-Dhighlight-languages: no grammar named '{s}'", .{name});
+/// The Rust target cargo builds the tokenizer for.
+fn rustTarget(target: std.Target) ?[]const u8 {
+    const musl = target.abi.isMusl();
+    return switch (target.os.tag) {
+        .macos => switch (target.cpu.arch) {
+            .aarch64 => "aarch64-apple-darwin",
+            .x86_64 => "x86_64-apple-darwin",
+            else => null,
+        },
+        .linux => switch (target.cpu.arch) {
+            .aarch64 => if (musl) "aarch64-unknown-linux-musl" else "aarch64-unknown-linux-gnu",
+            .x86_64 => if (musl) "x86_64-unknown-linux-musl" else "x86_64-unknown-linux-gnu",
+            else => null,
+        },
+        .windows => switch (target.cpu.arch) {
+            .aarch64 => "aarch64-pc-windows-msvc",
+            .x86_64 => if (target.abi == .msvc) "x86_64-pc-windows-msvc" else "x86_64-pc-windows-gnu",
+            else => null,
+        },
+        else => null,
     };
-    const runtime = b.dependency("tree_sitter", .{});
-    const module = b.createModule(.{ .target = target, .optimize = .ReleaseFast, .link_libc = true });
-    const library = b.addLibrary(.{ .name = "patch-highlight", .linkage = .static, .root_module = module });
-    module.addIncludePath(runtime.path("lib/include"));
-    module.addIncludePath(runtime.path("lib/src"));
-    module.addCSourceFile(.{ .file = runtime.path("lib/src/lib.c"), .flags = &.{ "-std=c11", "-D_POSIX_C_SOURCE=200112L", "-D_DEFAULT_SOURCE", "-D_DARWIN_C_SOURCE" } });
-    module.addCSourceFile(.{ .file = b.path("src/native/highlight_support.c"), .flags = &.{"-std=gnu11"} });
-
-    const files = b.addWriteFiles();
-    var zig: std.ArrayList(u8) = .empty;
-    zig.appendSlice(b.allocator,
-        \\// Generated by build.zig: each grammar's parser and its joined queries.
-        \\pub const Grammar = struct {
-        \\    /// Null when the build left the grammar out.
-        \\    language: ?*const fn () callconv(.c) *const anyopaque,
-        \\    highlights: []const u8,
-        \\    injections: []const u8,
-        \\    first_wins: bool,
-        \\};
-        \\
-    ) catch @panic("OOM");
-    for (grammars) |grammar| {
-        const wanted = if (only) |names| for (names) |name| {
-            if (std.mem.eql(u8, name, grammar.name)) break true;
-        } else false else true;
-        if (!wanted) {
-            zig.print(b.allocator, "pub const {s}: Grammar = .{{ .language = null, .highlights = \"\", .injections = \"\", .first_wins = false }};\n", .{grammar.name}) catch @panic("OOM");
-            continue;
-        }
-        const dep = b.dependency(grammar.dep, .{});
-        const src = dep.path(grammar.src);
-        // Scanners reach `tree_sitter/*.h` from shared directories too, so
-        // each grammar's sources see its own headers first.
-        const flags = b.allocator.dupe([]const u8, &.{ "-std=gnu11", b.fmt("-I{s}", .{src.getPath(b)}) }) catch @panic("OOM");
-        module.addCSourceFile(.{ .file = src.path(b, "parser.c"), .flags = flags });
-        const scanner = b.pathJoin(&.{ src.getPath(b), "scanner.c" });
-        if (std.Io.Dir.cwd().access(b.graph.io, scanner, .{})) |_| {
-            module.addCSourceFile(.{ .file = src.path(b, "scanner.c"), .flags = flags });
-        } else |_| {}
-        const highlights = embedQueries(b, files, dep, grammar.name, "highlights", grammar.highlights);
-        const injections = embedQueries(b, files, dep, grammar.name, "injections", grammar.injections);
-        zig.print(b.allocator, "extern fn tree_sitter_{s}() callconv(.c) *const anyopaque;\npub const {s}: Grammar = .{{ .language = &tree_sitter_{s}, .highlights = {s}, .injections = {s}, .first_wins = {} }};\n", .{ grammar.name, grammar.name, grammar.name, highlights, injections, grammar.first_wins }) catch @panic("OOM");
-    }
-    const source = files.add("grammars.zig", zig.items);
-    return .{ .library = library, .grammars = b.createModule(.{ .root_source_file = source }) };
 }
 
-/// Copies each query beside the generated module and returns the Zig
-/// expression that joins them.
-fn embedQueries(b: *std.Build, files: *std.Build.Step.WriteFile, dep: *std.Build.Dependency, name: []const u8, kind: []const u8, queries: []const Query) []const u8 {
-    if (queries.len == 0) return "\"\"";
-    var expression: std.ArrayList(u8) = .empty;
-    for (queries, 0..) |query, index| {
-        const file = switch (query) {
-            .own => |path| dep.path(path),
-            .dep => |pair| b.dependency(pair[0], .{}).path(pair[1]),
-            .local => |path| b.path(path),
-        };
-        const copy = b.fmt("{s}/{s}{d}.scm", .{ name, kind, index });
-        _ = files.addCopyFile(file, copy);
-        if (index > 0) expression.appendSlice(b.allocator, " ++ \"\\n\" ++ ") catch @panic("OOM");
-        expression.print(b.allocator, "@embedFile(\"{s}\")", .{copy}) catch @panic("OOM");
+fn addHighlighter(b: *std.Build, target: std.Build.ResolvedTarget) Highlighter {
+    const triple = rustTarget(target.result) orelse @panic("no Rust target for this Zig target");
+    const cargo = b.addSystemCommand(&.{ "cargo", "build", "--release", "--quiet", "--target", triple, "--manifest-path" });
+    cargo.addFileArg(b.path("src/native/syntaxmate/Cargo.toml"));
+    cargo.addFileInput(b.path("src/native/syntaxmate/Cargo.lock"));
+    cargo.addFileInput(b.path("src/native/syntaxmate/src/lib.rs"));
+    // Like the Zig code, tune for this machine's CPU when building for it.
+    if (target.query.isNativeCpu()) cargo.addArgs(&.{ "--config", "build.rustflags=[\"-C\", \"target-cpu=native\"]" });
+    if (b.option([]const u8, "syntaxmate", "Build the tokenizer against this syntaxmate checkout instead of the pinned revision")) |path| {
+        cargo.addArgs(&.{ "--config", b.fmt("paths=[\"{s}\"]", .{path}) });
+        // Cargo tracks the checkout's sources itself.
+        cargo.has_side_effects = true;
+    } else {
+        cargo.addArg("--locked");
     }
-    return expression.items;
+    const target_dir = cargo.addPrefixedOutputDirectoryArg("--target-dir=", "cargo");
+    const library = target_dir.path(b, b.fmt("{s}/release/{s}", .{ triple, if (target.result.os.tag == .windows and target.result.abi == .msvc) "patch_syntaxmate.lib" else "libpatch_syntaxmate.a" }));
+
+    const pack = b.addExecutable(.{ .name = "grammar-pack", .root_module = b.createModule(.{
+        .root_source_file = b.path("src/native/grammar_pack.zig"),
+        .target = b.graph.host,
+        .optimize = .ReleaseSafe,
+    }) });
+    const run = b.addRunArtifact(pack);
+    const out = run.addOutputDirectoryArg("grammars");
+    const tm = b.dependency("tm_grammars", .{});
+    inline for (@typeInfo(grammar_table.Language).@"enum".fields, grammar_table.grammars) |field, grammar| {
+        const file = field.name ++ ".json";
+        run.addFileArg(if (grammar.local) b.path("src/native/grammars/" ++ file) else tm.path("grammars/" ++ file));
+    }
+    return .{ .library = library, .sources = b.createModule(.{ .root_source_file = out.path(b, "sources.zig") }) };
 }

@@ -1,7 +1,7 @@
 //! `zig build bench-highlight -- FILE...` times `highlight.highlight` on each
 //! file (ReleaseFast): the first call, which compiles the language's query,
 //! then the best and median of several more. With `--dump` first, prints
-//! each line's tokens instead.
+//! each line's tokens instead; with `--scopes`, each token's TextMate scopes.
 
 const std = @import("std");
 const highlight = @import("highlight.zig");
@@ -13,6 +13,16 @@ pub fn main(init: std.process.Init) !void {
     var buffer: [4096]u8 = undefined;
     var writer = std.Io.File.stdout().writer(io, &buffer);
     const out = &writer.interface;
+    if (args.len > 1 and std.mem.eql(u8, args[1], "--scopes")) {
+        for (args[2..]) |path| {
+            const source = try std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(64 * 1024 * 1024));
+            defer gpa.free(source);
+            const language = highlight.languageForSource(path, source) orelse continue;
+            try out.print("F {s} {s}\n", .{ path, highlight.scopeName(language) });
+            try highlight.writeScopes(gpa, language, source, out);
+        }
+        return out.flush();
+    }
     if (args.len > 1 and std.mem.eql(u8, args[1], "--dump")) {
         for (args[2..]) |path| try dump(gpa, io, out, path);
         return out.flush();

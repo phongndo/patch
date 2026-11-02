@@ -54,6 +54,8 @@ for. `src/review/`, `src/routes/` and `server/` are the older React reviewer
 ## Licenses
 
 Pierre icons are Apache-2.0. The theme palettes come from their open-source
-projects (MIT). Tree-sitter and its grammars are MIT, except the Elixir and
-HCL grammars (Apache-2.0); `src/native/queries/hcl/` comes from Helix
-(MPL-2.0).
+projects (MIT). The highlighter's tokenizer, syntaxmate, is MIT, and the
+Rust crates it builds with are MIT or Apache-2.0 (unicode-general-category is
+Apache-2.0 only; unicode-ident adds Unicode-3.0). The TextMate grammars come from
+tm-grammars, each under the license its `NOTICE` gives; `src/native/grammars.zig`
+names the GPL ones left out.

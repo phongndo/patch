@@ -1,0 +1,3715 @@
+{
+  "name": "markdown-fences",
+  "scopeName": "markdown.fences.codeblock",
+  "injectTo": ["text.html.markdown"],
+  "injectionSelector": "L:text.html.markdown",
+  "patterns": [
+    {
+      "begin": "(^|\\G)(\\s*)(`{3,}|~{3,})\\s*(?=(?i:actionscript\\-3|actionscript|as3|ahk|ahk1|angular\\-expression|angular\\-html|angular\\-inline\\-style|angular\\-inline\\-template|angular\\-let\\-declaration|angular\\-template|angular\\-template\\-blocks|angular\\-ts|apache|apex|apl|applescript|ara|asciidoc|adoc|asm|astro|awk|ballerina|beancount|berry|be|bibtex|bicep|bird2|bird|blade|bsl|1c|c3|cadence|cdc|cairo|chapel|chpl|clarity|cmake|cobol|codeowners|codeql|ql|common\\-lisp|lisp|coq|cpp\\-macro|crystal|csv|cue|cypher|cql|d|dax|desktop|dotenv|dream\\-maker|edge|elm|emacs\\-lisp|elisp|erb|es\\-tag\\-css|es\\-tag\\-glsl|es\\-tag\\-html|es\\-tag\\-sql|es\\-tag\\-xml|fennel|fish|fluent|ftl|fortran\\-fixed\\-form|f|for|f77|fortran\\-free\\-form|f90|f95|f03|f08|f18|gdresource|tscn|tres|gdscript|gd|gdshader|genie|gherkin|git\\-commit|git\\-rebase|gleam|glimmer\\-js|gjs|glimmer\\-ts|gts|glsl|gn|graphql|gql|hack|haml|handlebars|hbs|haskell|hs|haxe|hcl|hjson|hlsl|html|html\\-derivative|http|hurl|hxml|hy|imba|jinja|jinja\\-html|jison|json5|jsonnet|jssm|fsl|jsx|just|justfile|kdl|kotlin|kt|kts|kusto|kql|latex|lean|lean4|liquid|llvm|log|logo|luau|markdown\\-nix|marko|matlab|mdc|mdx|mermaid|mmd|mipsasm|mips|mojo|moonbit|mbt|mbti|move|narrat|nar|nextflow|nf|nextflow\\-groovy|nim|nsis|nushell|nu|objective\\-cpp|ocaml|odin|openscad|scad|pascal|pkl|plsql|po|pot|potx|polar|postcss|powerquery|prisma|prolog|proto|protobuf|pug|jade|puppet|purescript|qml|qmldir|qss|razor|rbs|ruby\\-signature|reg|rel|riscv|ron|rosmsg|sas|sass|scheme|sdbl|1c\\-query|shaderlab|shader|shellsession|console|smalltalk|smithy|solidity|soy|closure\\-templates|sparql|splunk|spl|ssh\\-config|stata|stylus|styl|surrealql|surql|svelte|system\\-verilog|systemd|talonscript|talon|tasl|tcl|templ|terraform|tf|tfvars|tex|toml|ts\\-tags|lit|tsv|turtle|twig|typespec|tsp|typst|typ|v|vala|verilog|vhdl|viml|vim|vimscript|vue|vue\\-directives|vue\\-html|vue\\-interpolations|vue\\-sfc\\-style\\-variable\\-injection|vue\\-vine|vyper|vy|wasm|wenyan|wgsl|wikitext|mediawiki|wiki|wit|wolfram|wl|xml|xsl|zenscript|zig)((\\s+|[,:?{])[^`~]*)?$)",
+      "beginCaptures": {
+        "3": {
+          "name": "punctuation.definition.markdown"
+        }
+      },
+      "end": "(^|\\G)(\\2|\\s{0,3})(\\3)\\s*$",
+      "endCaptures": {
+        "3": {
+          "name": "punctuation.definition.markdown"
+        }
+      },
+      "name": "markup.fenced_code.block.markdown",
+      "patterns": [
+        {
+          "begin": "\\G(?i:(actionscript\\-3|actionscript|as3))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.actionscript-3",
+          "patterns": [
+            {
+              "include": "source.actionscript.3"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(ahk|ahk1))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.ahk",
+          "patterns": [
+            {
+              "include": "source.ahk"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(angular\\-expression))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.angular-expression",
+          "patterns": [
+            {
+              "include": "expression.ng"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(angular\\-html))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.angular-html",
+          "patterns": [
+            {
+              "include": "text.html.derivative.ng"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(angular\\-inline\\-style))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.angular-inline-style",
+          "patterns": [
+            {
+              "include": "inline-styles.ng"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(angular\\-inline\\-template))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.angular-inline-template",
+          "patterns": [
+            {
+              "include": "inline-template.ng"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(angular\\-let\\-declaration))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.angular-let-declaration",
+          "patterns": [
+            {
+              "include": "template.let.ng"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(angular\\-template))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.angular-template",
+          "patterns": [
+            {
+              "include": "template.ng"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(angular\\-template\\-blocks))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.angular-template-blocks",
+          "patterns": [
+            {
+              "include": "template.blocks.ng"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(angular\\-ts))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.angular-ts",
+          "patterns": [
+            {
+              "include": "source.ts.ng"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(apache))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.apache",
+          "patterns": [
+            {
+              "include": "source.apacheconf"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(apex))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.apex",
+          "patterns": [
+            {
+              "include": "source.apex"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(apl))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.apl",
+          "patterns": [
+            {
+              "include": "source.apl"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(applescript))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.applescript",
+          "patterns": [
+            {
+              "include": "source.applescript"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(ara))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.ara",
+          "patterns": [
+            {
+              "include": "source.ara"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(asciidoc|adoc))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.asciidoc",
+          "patterns": [
+            {
+              "include": "text.asciidoc"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(asm))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.asm",
+          "patterns": [
+            {
+              "include": "source.asm.x86_64"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(astro))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.astro",
+          "patterns": [
+            {
+              "include": "source.astro"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(awk))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.awk",
+          "patterns": [
+            {
+              "include": "source.awk"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(ballerina))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.ballerina",
+          "patterns": [
+            {
+              "include": "source.ballerina"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(beancount))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.beancount",
+          "patterns": [
+            {
+              "include": "text.beancount"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(berry|be))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.berry",
+          "patterns": [
+            {
+              "include": "source.berry"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(bibtex))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.bibtex",
+          "patterns": [
+            {
+              "include": "text.bibtex"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(bicep))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.bicep",
+          "patterns": [
+            {
+              "include": "source.bicep"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(bird2|bird))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.bird2",
+          "patterns": [
+            {
+              "include": "source.bird2"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(blade))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.blade",
+          "patterns": [
+            {
+              "include": "text.html.php.blade"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(bsl|1c))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.bsl",
+          "patterns": [
+            {
+              "include": "source.bsl"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(c3))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.c3",
+          "patterns": [
+            {
+              "include": "source.c3"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(cadence|cdc))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.cadence",
+          "patterns": [
+            {
+              "include": "source.cadence"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(cairo))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.cairo",
+          "patterns": [
+            {
+              "include": "source.cairo0"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(chapel|chpl))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.chapel",
+          "patterns": [
+            {
+              "include": "source.chapel"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(clarity))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.clarity",
+          "patterns": [
+            {
+              "include": "source.clar"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(cmake))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.cmake",
+          "patterns": [
+            {
+              "include": "source.cmake"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(cobol))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.cobol",
+          "patterns": [
+            {
+              "include": "source.cobol"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(codeowners))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.codeowners",
+          "patterns": [
+            {
+              "include": "text.codeowners"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(codeql|ql))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.codeql",
+          "patterns": [
+            {
+              "include": "source.ql"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(common\\-lisp|lisp))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.common-lisp",
+          "patterns": [
+            {
+              "include": "source.commonlisp"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(coq))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.coq",
+          "patterns": [
+            {
+              "include": "source.rocq"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(cpp\\-macro))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.cpp-macro",
+          "patterns": [
+            {
+              "include": "source.cpp.embedded.macro"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(crystal))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.crystal",
+          "patterns": [
+            {
+              "include": "source.crystal"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(csv))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.csv",
+          "patterns": [
+            {
+              "include": "text.csv"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(cue))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.cue",
+          "patterns": [
+            {
+              "include": "source.cue"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(cypher|cql))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.cypher",
+          "patterns": [
+            {
+              "include": "source.cypher"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(d))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.d",
+          "patterns": [
+            {
+              "include": "source.d"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(dax))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.dax",
+          "patterns": [
+            {
+              "include": "source.dax"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(desktop))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.desktop",
+          "patterns": [
+            {
+              "include": "source.desktop"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(dotenv))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.dotenv",
+          "patterns": [
+            {
+              "include": "source.dotenv"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(dream\\-maker))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.dream-maker",
+          "patterns": [
+            {
+              "include": "source.dm"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(edge))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.edge",
+          "patterns": [
+            {
+              "include": "text.html.edge"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(elm))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.elm",
+          "patterns": [
+            {
+              "include": "source.elm"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(emacs\\-lisp|elisp))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.emacs-lisp",
+          "patterns": [
+            {
+              "include": "source.emacs.lisp"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(erb))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.erb",
+          "patterns": [
+            {
+              "include": "text.html.erb"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(es\\-tag\\-css))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.es-tag-css",
+          "patterns": [
+            {
+              "include": "inline.es6-css"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(es\\-tag\\-glsl))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.es-tag-glsl",
+          "patterns": [
+            {
+              "include": "inline.es6-glsl"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(es\\-tag\\-html))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.es-tag-html",
+          "patterns": [
+            {
+              "include": "inline.es6-html"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(es\\-tag\\-sql))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.es-tag-sql",
+          "patterns": [
+            {
+              "include": "inline.tagged-template-sql"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(es\\-tag\\-xml))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.es-tag-xml",
+          "patterns": [
+            {
+              "include": "inline.es6-xml"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(fennel))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.fennel",
+          "patterns": [
+            {
+              "include": "source.fnl"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(fish))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.fish",
+          "patterns": [
+            {
+              "include": "source.fish"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(fluent|ftl))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.fluent",
+          "patterns": [
+            {
+              "include": "source.ftl"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(fortran\\-fixed\\-form|f|for|f77))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.fortran-fixed-form",
+          "patterns": [
+            {
+              "include": "source.fortran.fixed"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(fortran\\-free\\-form|f90|f95|f03|f08|f18))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.fortran-free-form",
+          "patterns": [
+            {
+              "include": "source.fortran.free"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(gdresource|tscn|tres))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.gdresource",
+          "patterns": [
+            {
+              "include": "source.gdresource"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(gdscript|gd))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.gdscript",
+          "patterns": [
+            {
+              "include": "source.gdscript"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(gdshader))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.gdshader",
+          "patterns": [
+            {
+              "include": "source.gdshader"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(genie))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.genie",
+          "patterns": [
+            {
+              "include": "source.genie"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(gherkin))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.gherkin",
+          "patterns": [
+            {
+              "include": "text.gherkin.feature"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(git\\-commit))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.git-commit",
+          "patterns": [
+            {
+              "include": "text.git-commit"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(git\\-rebase))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.git-rebase",
+          "patterns": [
+            {
+              "include": "text.git-rebase"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(gleam))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.gleam",
+          "patterns": [
+            {
+              "include": "source.gleam"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(glimmer\\-js|gjs))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.glimmer-js",
+          "patterns": [
+            {
+              "include": "source.gjs"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(glimmer\\-ts|gts))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.glimmer-ts",
+          "patterns": [
+            {
+              "include": "source.gts"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(glsl))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.glsl",
+          "patterns": [
+            {
+              "include": "source.glsl"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(gn))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.gn",
+          "patterns": [
+            {
+              "include": "source.gn"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(graphql|gql))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.graphql",
+          "patterns": [
+            {
+              "include": "source.graphql"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(hack))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.hack",
+          "patterns": [
+            {
+              "include": "source.hack"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(haml))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.haml",
+          "patterns": [
+            {
+              "include": "text.haml"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(handlebars|hbs))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.handlebars",
+          "patterns": [
+            {
+              "include": "text.html.handlebars"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(haskell|hs))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.haskell",
+          "patterns": [
+            {
+              "include": "source.haskell"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(haxe))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.haxe",
+          "patterns": [
+            {
+              "include": "source.hx"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(hcl))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.hcl",
+          "patterns": [
+            {
+              "include": "source.hcl"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(hjson))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.hjson",
+          "patterns": [
+            {
+              "include": "source.hjson"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(hlsl))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.hlsl",
+          "patterns": [
+            {
+              "include": "source.hlsl"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(html))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.html",
+          "patterns": [
+            {
+              "include": "text.html.basic"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(html\\-derivative))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.html-derivative",
+          "patterns": [
+            {
+              "include": "text.html.derivative"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(http))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.http",
+          "patterns": [
+            {
+              "include": "source.http"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(hurl))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.hurl",
+          "patterns": [
+            {
+              "include": "source.hurl"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(hxml))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.hxml",
+          "patterns": [
+            {
+              "include": "source.hxml"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(hy))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.hy",
+          "patterns": [
+            {
+              "include": "source.hy"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(imba))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.imba",
+          "patterns": [
+            {
+              "include": "source.imba"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(jinja))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.jinja",
+          "patterns": [
+            {
+              "include": "source.jinja"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(jinja\\-html))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.jinja-html",
+          "patterns": [
+            {
+              "include": "text.html.jinja"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(jison))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.jison",
+          "patterns": [
+            {
+              "include": "source.jison"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(json5))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.json5",
+          "patterns": [
+            {
+              "include": "source.json5"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(jsonnet))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.jsonnet",
+          "patterns": [
+            {
+              "include": "source.jsonnet"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(jssm|fsl))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.jssm",
+          "patterns": [
+            {
+              "include": "source.jssm"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(jsx))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.jsx",
+          "patterns": [
+            {
+              "include": "source.js.jsx"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(just|justfile))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.just",
+          "patterns": [
+            {
+              "include": "source.just"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(kdl))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.kdl",
+          "patterns": [
+            {
+              "include": "source.kdl"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(kotlin|kt|kts))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.kotlin",
+          "patterns": [
+            {
+              "include": "source.kotlin"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(kusto|kql))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.kusto",
+          "patterns": [
+            {
+              "include": "source.kusto"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(latex))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.latex",
+          "patterns": [
+            {
+              "include": "text.tex.latex"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(lean|lean4))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.lean",
+          "patterns": [
+            {
+              "include": "source.lean4"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(liquid))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.liquid",
+          "patterns": [
+            {
+              "include": "text.html.liquid"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(llvm))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.llvm",
+          "patterns": [
+            {
+              "include": "source.llvm"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(log))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.log",
+          "patterns": [
+            {
+              "include": "text.log"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(logo))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.logo",
+          "patterns": [
+            {
+              "include": "source.logo"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(luau))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.luau",
+          "patterns": [
+            {
+              "include": "source.luau"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(markdown\\-nix))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.markdown-nix",
+          "patterns": [
+            {
+              "include": "markdown.nix.codeblock"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(marko))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.marko",
+          "patterns": [
+            {
+              "include": "text.marko"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(matlab))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.matlab",
+          "patterns": [
+            {
+              "include": "source.matlab"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(mdc))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.mdc",
+          "patterns": [
+            {
+              "include": "text.markdown.mdc.standalone"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(mdx))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.mdx",
+          "patterns": [
+            {
+              "include": "source.mdx"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(mermaid|mmd))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.mermaid",
+          "patterns": [
+            {
+              "include": "markdown.mermaid.codeblock"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(mipsasm|mips))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.mipsasm",
+          "patterns": [
+            {
+              "include": "source.mips"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(mojo))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.mojo",
+          "patterns": [
+            {
+              "include": "source.mojo"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(moonbit|mbt|mbti))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.moonbit",
+          "patterns": [
+            {
+              "include": "source.moonbit"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(move))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.move",
+          "patterns": [
+            {
+              "include": "source.move"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(narrat|nar))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.narrat",
+          "patterns": [
+            {
+              "include": "source.narrat"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(nextflow|nf))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.nextflow",
+          "patterns": [
+            {
+              "include": "source.nextflow"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(nextflow\\-groovy))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.nextflow-groovy",
+          "patterns": [
+            {
+              "include": "source.nextflow-groovy"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(nim))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.nim",
+          "patterns": [
+            {
+              "include": "source.nim"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(nsis))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.nsis",
+          "patterns": [
+            {
+              "include": "source.nsis"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(nushell|nu))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.nushell",
+          "patterns": [
+            {
+              "include": "source.nushell"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(objective\\-cpp))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.objective-cpp",
+          "patterns": [
+            {
+              "include": "source.objcpp"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(ocaml))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.ocaml",
+          "patterns": [
+            {
+              "include": "source.ocaml"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(odin))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.odin",
+          "patterns": [
+            {
+              "include": "source.odin"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(openscad|scad))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.openscad",
+          "patterns": [
+            {
+              "include": "source.scad"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(pascal))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.pascal",
+          "patterns": [
+            {
+              "include": "source.pascal"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(pkl))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.pkl",
+          "patterns": [
+            {
+              "include": "source.pkl"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(plsql))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.plsql",
+          "patterns": [
+            {
+              "include": "source.plsql.oracle"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(po|pot|potx))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.po",
+          "patterns": [
+            {
+              "include": "source.po"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(polar))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.polar",
+          "patterns": [
+            {
+              "include": "source.polar"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(postcss))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.postcss",
+          "patterns": [
+            {
+              "include": "source.css.postcss"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(powerquery))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.powerquery",
+          "patterns": [
+            {
+              "include": "source.powerquery"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(prisma))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.prisma",
+          "patterns": [
+            {
+              "include": "source.prisma"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(prolog))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.prolog",
+          "patterns": [
+            {
+              "include": "source.prolog"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(proto|protobuf))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.proto",
+          "patterns": [
+            {
+              "include": "source.proto"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(pug|jade))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.pug",
+          "patterns": [
+            {
+              "include": "text.pug"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(puppet))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.puppet",
+          "patterns": [
+            {
+              "include": "source.puppet"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(purescript))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.purescript",
+          "patterns": [
+            {
+              "include": "source.purescript"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(qml))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.qml",
+          "patterns": [
+            {
+              "include": "source.qml"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(qmldir))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.qmldir",
+          "patterns": [
+            {
+              "include": "source.qmldir"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(qss))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.qss",
+          "patterns": [
+            {
+              "include": "source.qss"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(razor))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.razor",
+          "patterns": [
+            {
+              "include": "text.aspnetcorerazor"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(rbs|ruby\\-signature))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.rbs",
+          "patterns": [
+            {
+              "include": "source.rbs"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(reg))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.reg",
+          "patterns": [
+            {
+              "include": "source.reg"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(rel))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.rel",
+          "patterns": [
+            {
+              "include": "source.rel"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(riscv))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.riscv",
+          "patterns": [
+            {
+              "include": "source.riscv"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(ron))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.ron",
+          "patterns": [
+            {
+              "include": "source.ron"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(rosmsg))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.rosmsg",
+          "patterns": [
+            {
+              "include": "source.rosmsg"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(sas))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.sas",
+          "patterns": [
+            {
+              "include": "source.sas"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(sass))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.sass",
+          "patterns": [
+            {
+              "include": "source.sass"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(scheme))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.scheme",
+          "patterns": [
+            {
+              "include": "source.scheme"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(sdbl|1c\\-query))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.sdbl",
+          "patterns": [
+            {
+              "include": "source.sdbl"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(shaderlab|shader))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.shaderlab",
+          "patterns": [
+            {
+              "include": "source.shaderlab"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(shellsession|console))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.shellsession",
+          "patterns": [
+            {
+              "include": "text.shell-session"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(smalltalk))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.smalltalk",
+          "patterns": [
+            {
+              "include": "source.smalltalk.gnu"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(smithy))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.smithy",
+          "patterns": [
+            {
+              "include": "source.smithy"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(solidity))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.solidity",
+          "patterns": [
+            {
+              "include": "source.solidity"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(soy|closure\\-templates))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.soy",
+          "patterns": [
+            {
+              "include": "text.html.soy"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(sparql))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.sparql",
+          "patterns": [
+            {
+              "include": "source.sparql"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(splunk|spl))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.splunk",
+          "patterns": [
+            {
+              "include": "source.splunk_search"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(ssh\\-config))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.ssh-config",
+          "patterns": [
+            {
+              "include": "source.ssh-config"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(stata))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.stata",
+          "patterns": [
+            {
+              "include": "source.stata"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(stylus|styl))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.stylus",
+          "patterns": [
+            {
+              "include": "source.stylus"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(surrealql|surql))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.surrealql",
+          "patterns": [
+            {
+              "include": "source.surrealql"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(svelte))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.svelte",
+          "patterns": [
+            {
+              "include": "source.svelte"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(system\\-verilog))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.system-verilog",
+          "patterns": [
+            {
+              "include": "source.systemverilog"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(systemd))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.systemd",
+          "patterns": [
+            {
+              "include": "source.systemd"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(talonscript|talon))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.talonscript",
+          "patterns": [
+            {
+              "include": "source.talon"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(tasl))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.tasl",
+          "patterns": [
+            {
+              "include": "source.tasl"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(tcl))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.tcl",
+          "patterns": [
+            {
+              "include": "source.tcl"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(templ))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.templ",
+          "patterns": [
+            {
+              "include": "source.templ"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(terraform|tf|tfvars))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.terraform",
+          "patterns": [
+            {
+              "include": "source.hcl.terraform"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(tex))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.tex",
+          "patterns": [
+            {
+              "include": "text.tex"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(toml))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.toml",
+          "patterns": [
+            {
+              "include": "source.toml"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(ts\\-tags|lit))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.ts-tags",
+          "patterns": [
+            {
+              "include": "source.ts.tags"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(tsv))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.tsv",
+          "patterns": [
+            {
+              "include": "text.tsv"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(turtle))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.turtle",
+          "patterns": [
+            {
+              "include": "source.turtle"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(twig))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.twig",
+          "patterns": [
+            {
+              "include": "text.html.twig"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(typespec|tsp))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.typespec",
+          "patterns": [
+            {
+              "include": "source.tsp"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(typst|typ))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.typst",
+          "patterns": [
+            {
+              "include": "source.typst"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(v))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.v",
+          "patterns": [
+            {
+              "include": "source.v"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(vala))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.vala",
+          "patterns": [
+            {
+              "include": "source.vala"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(verilog))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.verilog",
+          "patterns": [
+            {
+              "include": "source.verilog"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(vhdl))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.vhdl",
+          "patterns": [
+            {
+              "include": "source.vhdl"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(viml|vim|vimscript))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.viml",
+          "patterns": [
+            {
+              "include": "source.viml"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(vue))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.vue",
+          "patterns": [
+            {
+              "include": "text.html.vue"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(vue\\-directives))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.vue-directives",
+          "patterns": [
+            {
+              "include": "vue.directives"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(vue\\-html))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.vue-html",
+          "patterns": [
+            {
+              "include": "text.html.vue-html"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(vue\\-interpolations))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.vue-interpolations",
+          "patterns": [
+            {
+              "include": "vue.interpolations"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(vue\\-sfc\\-style\\-variable\\-injection))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.vue-sfc-style-variable-injection",
+          "patterns": [
+            {
+              "include": "vue.sfc.style.variable.injection"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(vue\\-vine))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.vue-vine",
+          "patterns": [
+            {
+              "include": "source.vue-vine"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(vyper|vy))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.vyper",
+          "patterns": [
+            {
+              "include": "source.vyper"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(wasm))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.wasm",
+          "patterns": [
+            {
+              "include": "source.wat"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(wenyan))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.wenyan",
+          "patterns": [
+            {
+              "include": "source.wenyan"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(wgsl))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.wgsl",
+          "patterns": [
+            {
+              "include": "source.wgsl"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(wikitext|mediawiki|wiki))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.wikitext",
+          "patterns": [
+            {
+              "include": "source.wikitext"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(wit))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.wit",
+          "patterns": [
+            {
+              "include": "source.wit"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(wolfram|wl))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.wolfram",
+          "patterns": [
+            {
+              "include": "source.wolfram"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(xml))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.xml",
+          "patterns": [
+            {
+              "include": "text.xml"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(xsl))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.xsl",
+          "patterns": [
+            {
+              "include": "text.xml.xsl"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(zenscript))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.zenscript",
+          "patterns": [
+            {
+              "include": "source.zenscript"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        },
+        {
+          "begin": "\\G(?i:(zig))((\\s+|[,:?{])[^`~]*)?$",
+          "beginCaptures": {
+            "1": {
+              "name": "fenced_code.block.language.markdown"
+            },
+            "2": {
+              "name": "fenced_code.block.language.attributes.markdown"
+            }
+          },
+          "contentName": "meta.embedded.block.zig",
+          "patterns": [
+            {
+              "include": "source.zig"
+            }
+          ],
+          "while": "(^|\\G)(?!\\s*([`~]{3,})\\s*$)"
+        }
+      ]
+    }
+  ]
+}
