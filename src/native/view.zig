@@ -15,6 +15,22 @@ const spell = app.keyboard.label;
 fn space(ui: *AppUi, width: f32, height: f32) AppUi.Node {
     return ui.el(.row, .{ .width = width, .height = height, .padding = 0 }, .{});
 }
+/// The node when there is one, else nothing: an empty spacer standing in
+/// for it would still be a widget, and each view may hold only so many.
+fn opt(ui: *AppUi, node: ?AppUi.Node) []const AppUi.Node {
+    const present = node orelse return &.{};
+    return ui.arena.dupe(AppUi.Node, &.{present}) catch &.{};
+}
+/// Widgets a node lays out, itself included. A view may hold only so many
+/// (the SDK's per-view budget), and the review fills what the rest leave.
+fn nodeCount(node: AppUi.Node) usize {
+    var count: usize = 1;
+    for (node.nodes) |child| count += nodeCount(child);
+    return count;
+}
+/// Kept a little under the SDK's limit: this count runs a node or two off
+/// what the SDK lays out.
+const widget_budget = @import("native_sdk").runtime.max_canvas_widget_nodes_per_view - 16;
 fn line(ui: *AppUi, vertical: bool) AppUi.Node {
     return ui.el(.row, .{ .width = if (vertical) 1 else 0, .height = if (vertical) 0 else 1, .padding = 0, .style = .{ .background = theme.split_rule } }, .{});
 }
@@ -433,9 +449,9 @@ fn fileRail(ui: *AppUi, model: *const Model) AppUi.Node {
                 space(ui, 10.5, 0),
                 ui.text(.{ .grow = 1, .style = .{ .foreground = if (active) theme.ink else if (file.reviewed) theme.tertiary else if (model.active) theme.sidebar_ink else theme.sidebar_inactive } }, railName(ui, model, file)),
                 space(ui, 6, 0),
-                if (file.additions > 0) smallText(ui, ui.fmt("+{d}", .{file.additions}), theme.green) else ui.spacer(0),
-                if (file.additions > 0 and file.deletions > 0) space(ui, 4, 0) else ui.spacer(0),
-                if (file.deletions > 0) smallText(ui, ui.fmt("−{d}", .{file.deletions}), theme.red) else ui.spacer(0),
+                opt(ui, if (file.additions > 0) smallText(ui, ui.fmt("+{d}", .{file.additions}), theme.green) else null),
+                opt(ui, if (file.additions > 0 and file.deletions > 0) space(ui, 4, 0) else null),
+                opt(ui, if (file.deletions > 0) smallText(ui, ui.fmt("−{d}", .{file.deletions}), theme.red) else null),
                 space(ui, 11, 0),
             });
             break :blk ui.row(.{ .key = .{ .index = row_index }, .height = theme.row_pitch, .padding = 0, .gap = 0, .cross = .center }, .{ space(ui, theme.rail_left, 0), item, space(ui, theme.rail_right, 0) });
@@ -652,7 +668,7 @@ fn codeCell(ui: *AppUi, model: *const Model, source: []const u8, number: u32, ol
         // number, right-aligned in fixed-width digits, keeps the change's color.
         if (number > 0) gutter(ui, model, file, number, old, hovered, current, selected, match, wash) else space(ui, 48, 0),
         source_node,
-        if (moved_link != 0) moveLink(ui, model, moved_link, old) else ui.spacer(0),
+        opt(ui, if (moved_link != 0) moveLink(ui, model, moved_link, old) else null),
     });
 }
 /// Actions for a mouse selection: a small raised capsule floating 6 points
@@ -689,7 +705,7 @@ fn fileHeader(ui: *AppUi, model: *const Model, index: usize, current: bool) AppU
     return ui.column(.{ .height = 24, .padding = 0, .gap = 0 }, .{
         space(ui, 0, if (folded) 1 else 3),
         ui.stack(.{ .height = height, .padding = 0 }, .{ paneEdge(ui, height, true, folded), headerRow(ui, model, index, current, height) }),
-        if (folded) space(ui, 0, 1) else ui.spacer(0),
+        opt(ui, if (folded) space(ui, 0, 1) else null),
     });
 }
 /// What a file's header says: the whole row folds the file, naming it and
@@ -719,13 +735,13 @@ fn headerRow(ui: *AppUi, model: *const Model, index: usize, current: bool, heigh
         ui.paragraph(.{ .height = 16, .size = .sm, .wrap = false, .overflow = .clip, .style = .{ .foreground = if (folded) theme.sidebar_ink else theme.ink } }, name),
         space(ui, 8, 0),
         ui.text(.{ .grow = 1, .size = .sm, .style = .{ .foreground = theme.tertiary } }, std.fs.path.dirname(file.path) orelse ""),
-        if (label.len > 0) smallText(ui, label, label_color) else ui.spacer(0),
-        if (label.len > 0 and file.additions + file.deletions > 0) space(ui, 8, 0) else ui.spacer(0),
-        if (file.additions > 0) smallText(ui, ui.fmt("+{d}", .{file.additions}), theme.green) else ui.spacer(0),
-        if (file.additions > 0 and file.deletions > 0) space(ui, 6, 0) else ui.spacer(0),
-        if (file.deletions > 0) smallText(ui, ui.fmt("−{d}", .{file.deletions}), theme.red) else ui.spacer(0),
+        opt(ui, if (label.len > 0) smallText(ui, label, label_color) else null),
+        opt(ui, if (label.len > 0 and file.additions + file.deletions > 0) space(ui, 8, 0) else null),
+        opt(ui, if (file.additions > 0) smallText(ui, ui.fmt("+{d}", .{file.additions}), theme.green) else null),
+        opt(ui, if (file.additions > 0 and file.deletions > 0) space(ui, 6, 0) else null),
+        opt(ui, if (file.deletions > 0) smallText(ui, ui.fmt("−{d}", .{file.deletions}), theme.red) else null),
         space(ui, 8, 0),
-        if (file.listed) ui.spacer(0) else ui.button(.{ .key = .{ .str = "file-note" }, .width = 24, .height = height, .icon = "app:comment", .size = .icon, .variant = .ghost, .on_press = .{ .note_file = index }, .style = .{ .foreground = if (notes > 0) theme.note else theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Add note to {s}", .{file.path}) } }, ""),
+        opt(ui, if (file.listed) null else ui.button(.{ .key = .{ .str = "file-note" }, .width = 24, .height = height, .icon = "app:comment", .size = .icon, .variant = .ghost, .on_press = .{ .note_file = index }, .style = .{ .foreground = if (notes > 0) theme.note else theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Add note to {s}", .{file.path}) } }, "")),
         if (file.listed) ui.button(.{ .key = .{ .str = "close-file" }, .width = 24, .height = height, .icon = "app:close", .size = .icon, .variant = .ghost, .on_press = .{ .collapse_file = index }, .style = .{ .foreground = theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Close {s}", .{file.path}) } }, "") else if (file.reference) ui.button(.{ .key = .{ .str = "close-reference" }, .width = 24, .height = height, .icon = "app:close", .size = .icon, .variant = .ghost, .on_press = .{ .close_reference = index }, .style = .{ .foreground = theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Close {s}", .{file.path}) } }, "") else ui.button(.{ .key = .{ .str = "file-reviewed" }, .width = 24, .height = height, .icon = if (file.reviewed) "app:check" else "app:checkbox", .size = .icon, .variant = .ghost, .on_press = .{ .reviewed_file = index }, .style = .{ .foreground = if (file.reviewed) theme.green else theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Mark {s} reviewed", .{file.path}) } }, ""),
         space(ui, 7, 0),
     });
@@ -805,14 +821,14 @@ fn hunkHeader(ui: *AppUi, model: *const Model, file_index: usize, rows: []const 
         controls,
         ui.row(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0, .cross = .center, .on_press = if (hunk != null) Msg{ .collapse_hunk = at } else if (hidden > 0) Msg{ .expand = all } else null, .semantics = .{ .role = .button, .label = if (hunk != null) ui.fmt("{s} hunk {s}", .{ if (folded) "Unfold" else "Fold", text }) else text } }, .{
             paragraph,
-            if (folded and additions > 0) smallText(ui, ui.fmt("+{d}", .{additions}), theme.gutter_added) else ui.spacer(0),
-            if (folded and additions > 0 and deletions > 0) space(ui, 6, 0) else ui.spacer(0),
-            if (folded and deletions > 0) smallText(ui, ui.fmt("−{d}", .{deletions}), theme.gutter_removed) else ui.spacer(0),
-            if (folded) space(ui, 10, 0) else ui.spacer(0),
-            if (hidden > 0 and !row.tail) smallText(ui, if (hidden == 1) "1 hidden line" else ui.fmt("{d} hidden lines", .{hidden}), theme.line_number) else ui.spacer(0),
-            if (hidden > 0 and !row.tail) space(ui, 8, 0) else ui.spacer(0),
+            opt(ui, if (folded and additions > 0) smallText(ui, ui.fmt("+{d}", .{additions}), theme.gutter_added) else null),
+            opt(ui, if (folded and additions > 0 and deletions > 0) space(ui, 6, 0) else null),
+            opt(ui, if (folded and deletions > 0) smallText(ui, ui.fmt("−{d}", .{deletions}), theme.gutter_removed) else null),
+            opt(ui, if (folded) space(ui, 10, 0) else null),
+            opt(ui, if (hidden > 0 and !row.tail) smallText(ui, if (hidden == 1) "1 hidden line" else ui.fmt("{d} hidden lines", .{hidden}), theme.line_number) else null),
+            opt(ui, if (hidden > 0 and !row.tail) space(ui, 8, 0) else null),
         }),
-        if (hunk != null) ui.button(.{ .key = .{ .str = "hunk-reviewed" }, .width = 24, .height = 24, .icon = if (reviewed) "app:check" else "app:checkbox", .size = .icon, .variant = .ghost, .on_press = .{ .reviewed_hunk = at }, .style = .{ .foreground = if (reviewed) theme.green else theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Mark hunk {s} · {s}", .{ if (reviewed) "unreviewed" else "reviewed", app.keyboard.shortcut(.hunk_reviewed) }) } }, "") else ui.spacer(0),
+        opt(ui, if (hunk != null) ui.button(.{ .key = .{ .str = "hunk-reviewed" }, .width = 24, .height = 24, .icon = if (reviewed) "app:check" else "app:checkbox", .size = .icon, .variant = .ghost, .on_press = .{ .reviewed_hunk = at }, .style = .{ .foreground = if (reviewed) theme.green else theme.tertiary, .radius = 0 }, .semantics = .{ .label = ui.fmt("Mark hunk {s} · {s}", .{ if (reviewed) "unreviewed" else "reviewed", app.keyboard.shortcut(.hunk_reviewed) }) } }, "") else null),
         space(ui, 7, 0),
     });
     top.widget.layout.clip_content = true;
@@ -905,6 +921,16 @@ fn paneEdge(ui: *AppUi, height: f32, top: bool, bottom: bool) AppUi.Node {
     slice.widget.layout.clip_content = true;
     return slice;
 }
+/// A file's closing row: its pane's rounded bottom, 21 points tall, then 3
+/// points of ground. The slice spans the whole row, so the ground needs no
+/// widget of its own.
+fn paneFoot(ui: *AppUi) AppUi.Node {
+    const radius = @min(theme.pane_radius, 21.0 / 2.0);
+    const shape = ui.row(.{ .grow = 1, .height = 21 + radius, .padding = 0, .transform = canvas.Affine.translate(0, -radius), .style = .{ .background = theme.pane, .radius = radius } }, .{});
+    var slice = ui.column(.{ .grow = 1, .height = 24, .padding = 0, .gap = 0 }, .{shape});
+    slice.widget.layout.clip_content = true;
+    return slice;
+}
 /// A pill over one of the review's edges: the file being read pinned at the
 /// top once its header scrolls under it (so a long file can be folded from
 /// anywhere in it), and the status at the foot. Each is a slice of pane in
@@ -937,7 +963,10 @@ fn rowSlice(ui: *AppUi, node: AppUi.Node, top: f32, bottom: f32) AppUi.Node {
 fn emptyPane(ui: *AppUi, children: anytype) AppUi.Node {
     return paneSurface(ui, "empty-pane", 0, .{ui.column(.{ .grow = 1, .main = .center, .cross = .center, .gap = 12 }, children)});
 }
-fn review(ui: *AppUi, model: *const Model) AppUi.Node {
+/// The review's rows, using at most `budget` widgets: past it (a dense
+/// review in a very tall window) the rows stop short of the list's foot
+/// rather than overrunning the view's widget budget, which drops the frame.
+fn review(ui: *AppUi, model: *const Model, budget: usize) AppUi.Node {
     // Browsing with no file open: the rail lists them.
     if (browsing(model) and model.files.len > 0 and model.display.len == 0) return emptyPane(ui, .{
         ui.appIcon(.{ .width = 28, .height = 28, .style = .{ .foreground = theme.muted } }, "folder"),
@@ -967,13 +996,17 @@ fn review(ui: *AppUi, model: *const Model) AppUi.Node {
     const cut = @as(f32, @floatFromInt(model.display.len)) * 24 - 3 - offset > height - app.pill_height;
     const top_edge: f32 = if (pinned != null) app.pill_height else -24;
     const bottom_edge: f32 = if (bottom) height - app.pill_height else std.math.inf(f32);
+    const top_pill = if (pinned) |file| edgePill(ui, headerRow(ui, model, file, false, app.pill_height), true, false) else null;
+    const foot_pill = if (bottom) edgePill(ui, statusRow(ui, model), !cut, true) else null;
+    // The list, the ground under it, and the stack and column holding the pills.
+    var spent: usize = 5 + (if (top_pill) |pill| nodeCount(pill) else 0) + (if (foot_pill) |pill| nodeCount(pill) else 0);
     for (model.display[window.start_index..window.end_index], window.start_index..) |entry, index| {
         if (count == nodes.len) break;
         const file = model.files[entry.file];
         const rows = if (model.split) file.split else file.unified;
         // A file's closing row ends its pane: the rounded bottom, then 3
         // points of ground before the next file's header.
-        nodes[count] = if (entry.media > 0) mediaSlice(ui, model, entry.file, entry.media - 1) else if (entry.spacer) ui.column(.{ .height = 24, .padding = 0, .gap = 0 }, .{ paneEdge(ui, 21, false, true), space(ui, 0, 3) }) else if (entry.code) |code| blk: {
+        nodes[count] = if (entry.media > 0) mediaSlice(ui, model, entry.file, entry.media - 1) else if (entry.spacer) paneFoot(ui) else if (entry.code) |code| blk: {
             const row = rows[code];
             // Hunks share their file's pane, parted by their headers, in the
             // code's own face: a quiet ellipsis in the gutter and the
@@ -1011,16 +1044,19 @@ fn review(ui: *AppUi, model: *const Model) AppUi.Node {
             nodes[count].key = .{ .index = index };
             nodes[count].widget.layout.grow = 0;
         }
+        const cost = nodeCount(nodes[count]);
+        if (spent + cost > budget) break;
+        spent += cost;
         count += 1;
     }
     // The list is the review's ground; each file paints its own pane on it.
     var ground = ui.column(.{ .grow = 1, .padding = 0, .gap = 0 }, .{ui.virtualList(options, window, nodes[0..count])});
     ground.widget.layout.grow = 1;
-    if (pinned == null and !bottom) return ground;
+    if (top_pill == null and foot_pill == null) return ground;
     var stacked = ui.stack(.{ .grow = 1, .padding = 0 }, .{ ground, ui.column(.{ .grow = 1, .padding = 0, .gap = 0 }, .{
-        if (pinned) |file| edgePill(ui, headerRow(ui, model, file, false, app.pill_height), true, false) else ui.spacer(0),
+        opt(ui, top_pill),
         ui.spacer(1),
-        if (bottom) edgePill(ui, statusRow(ui, model), !cut, true) else ui.spacer(0),
+        opt(ui, foot_pill),
     }) });
     stacked.widget.layout.grow = 1;
     return stacked;
@@ -1222,18 +1258,22 @@ fn paneHeader(ui: *AppUi, model: *const Model) AppUi.Node {
         if (finding(model)) ui.row(.{ .padding = 0, .gap = 0, .cross = .center }, .{ space(ui, 12, 0), findBar(ui, model), space(ui, 4, 0) }) else space(ui, 14, 0),
     });
 }
-fn reviewPane(ui: *AppUi, model: *const Model) AppUi.Node {
+fn reviewPane(ui: *AppUi, model: *const Model, budget: usize) AppUi.Node {
     // The review is no pane of its own: its title strip and the ground
     // between files are the window itself, flat like the rail, and each file
     // below is its own pane on it, as Rex stacks its splits. It clips to its
     // rectangle so scrolled panes slide under the title strip.
+    const header = paneHeader(ui, model);
+    const failure = if (model.error_text.len > 0) ui.row(.{ .height = 32, .padding = 8, .cross = .center, .style = .{ .background = theme.removed } }, .{
+        space(ui, 4, 0), smallText(ui, model.error_text, theme.red), ui.spacer(1), paneControl(ui, "dismiss", "close", "Dismiss", .dismiss, false, false),
+    }) else ui.spacer(0);
+    // This column and the focus column below.
+    const spent = 2 + nodeCount(header) + nodeCount(failure);
     var ground = ui.column(.{ .key = .{ .str = "review-pane" }, .grow = 1, .padding = 0, .gap = 0 }, .{
-        paneHeader(ui, model),
-        if (model.error_text.len > 0) ui.row(.{ .height = 32, .padding = 8, .cross = .center, .style = .{ .background = theme.removed } }, .{
-            space(ui, 4, 0), smallText(ui, model.error_text, theme.red), ui.spacer(1), paneControl(ui, "dismiss", "close", "Dismiss", .dismiss, false, false),
-        }) else ui.spacer(0),
+        header,
+        failure,
         ui.column(.{ .key = .{ .str = ui.fmt("review-focus-{d}", .{model.focus_epoch}) }, .grow = 1, .padding = 0, .gap = 0, .autofocus = model.focus == .review, .semantics = .{ .role = .group, .label = "Review pane", .focusable = true }, .style = .{ .focus_ring = theme.clear } }, .{
-            review(ui, model),
+            review(ui, model, budget -| spent),
         }),
     });
     ground.widget.layout.clip_content = true;
@@ -1728,9 +1768,19 @@ pub fn view(ui: *AppUi, model: *const Model) AppUi.Node {
     // range is two minimums: its own while it rests open, and the review's,
     // which leaves the side pane no more than its maximum.
     const idle = model.motion == null;
+    // Everything but the review is built first, so the review knows how many
+    // widgets the view has left for its rows.
+    const side = withMin(drawer(ui, model.notes_open, if (!model.notes_open and !model.notes_mounted) ui.spacer(0) else ui.row(.{ .width = model.notes_width + inset, .padding = 0, .gap = 0 }, .{ notePanel(ui, model), space(ui, inset, 0) })), if (model.notes_open and idle) theme.notes_min + inset else 0);
+    const rail_node = withMin(drawer(ui, model.sidebar, if (!model.sidebar and !model.rail_mounted) ui.spacer(0) else fileRail(ui, model)), if (model.sidebar and idle) theme.rail_min else 0);
+    const header = headerLayer(ui, model);
+    const notice = if (model.notice.len > 0) toast(ui, model) else ui.spacer(0);
+    const finder = if (model.palette != .closed) palette(ui, model) else ui.spacer(0);
+    // The root stack, both splits, and the main column, its row and spacers.
+    const shell: usize = 7;
+    const used = shell + nodeCount(side) + nodeCount(rail_node) + nodeCount(header) + nodeCount(notice) + nodeCount(finder);
     const panes = ui.split(.{ .grow = 1, .gap = inset, .value = notes, .on_resize = AppUi.valueMsg(.notes_resized) }, .{
-        withMin(reviewPane(ui, model), @max(360, main_width - inset - theme.notes_max - inset)),
-        withMin(drawer(ui, model.notes_open, if (!model.notes_open and !model.notes_mounted) ui.spacer(0) else ui.row(.{ .width = model.notes_width + inset, .padding = 0, .gap = 0 }, .{ notePanel(ui, model), space(ui, inset, 0) })), if (model.notes_open and idle) theme.notes_min + inset else 0),
+        withMin(reviewPane(ui, model, widget_budget -| used), @max(360, main_width - inset - theme.notes_max - inset)),
+        side,
     });
     const main = ui.column(.{ .grow = 1, .padding = 0, .gap = 0 }, .{
         space(ui, 0, inset),
@@ -1742,12 +1792,12 @@ pub fn view(ui: *AppUi, model: *const Model) AppUi.Node {
     // elsewhere there is no layer under it, and the canvas paints it opaque.
     return ui.stack(.{ .padding = 0, .style = .{ .background = theme.windowFill(), .foreground = theme.ink, .radius = 0 } }, .{
         ui.split(.{ .grow = 1, .gap = inset, .value = rail, .on_resize = AppUi.valueMsg(.sidebar_resized) }, .{
-            withMin(drawer(ui, model.sidebar, if (!model.sidebar and !model.rail_mounted) ui.spacer(0) else fileRail(ui, model)), if (model.sidebar and idle) theme.rail_min else 0),
+            rail_node,
             withMin(main, @max(480, span - theme.rail_max)),
         }),
-        headerLayer(ui, model),
-        if (model.notice.len > 0) toast(ui, model) else ui.spacer(0),
-        if (model.palette != .closed) palette(ui, model) else ui.spacer(0),
+        header,
+        notice,
+        finder,
     });
 }
 fn withMin(node: AppUi.Node, width: f32) AppUi.Node {
