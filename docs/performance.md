@@ -57,6 +57,6 @@ So nobody retries these without a new idea:
 - Splitting the rounded pane fill into interior plus edge bands: faster, but
   CoreGraphics antialiases a clipped straight edge differently (off by one
   level).
-- Moving rasters on scroll instead of redrawing: correct, but scroll latency
-  didn't change.
-- Not tried yet: scrolling by copying retained pixels.
+- Moving rasters on scroll instead of redrawing, on its own: correct, but
+  scroll latency didn't change. It took copying the retained pixels as well
+  (`src/native/packet_scroll.h`).

@@ -14,7 +14,8 @@ pub fn build(b: *std.Build) void {
         const opaque_blur = b.option(bool, "opaque-blur", "Copy fully opaque native blur results without blending") orelse true;
         const coretext = b.option(bool, "coretext-lines", "Draw complete printable ASCII packet lines through CoreText") orelse true;
         const retain_identical = b.option(bool, "retain-identical-commands", "Preserve native rasters when a decoded command is unchanged") orelse true;
-        if (canonical or opaque_blur or coretext or retain_identical) patchMacHost(b, dependency, app.exe.root_module, canonical, opaque_blur, coretext, retain_identical);
+        const scroll_copy = b.option(bool, "scroll-copy", "Scroll by shifting retained pixels, redrawing only what the shift cannot give") orelse true;
+        if (canonical or opaque_blur or coretext or retain_identical or scroll_copy) patchMacHost(b, dependency, app.exe.root_module, canonical, opaque_blur, coretext, retain_identical, scroll_copy);
     }
     // The AppKit text test runs on the build machine, so it needs a Mac
     // there as well as a macOS target.
@@ -80,7 +81,7 @@ fn opaqueStartupWindow(b: *std.Build, root: *std.Build.Module) void {
 
 // Generate a build-local overlay; never mutate the fetched SDK. Fail closed
 // on an upstream source change so the workaround is reviewed with each pin.
-fn patchMacHost(b: *std.Build, dependency: *std.Build.Dependency, module: *std.Build.Module, canonical: bool, opaque_blur: bool, coretext: bool, retain_identical: bool) void {
+fn patchMacHost(b: *std.Build, dependency: *std.Build.Dependency, module: *std.Build.Module, canonical: bool, opaque_blur: bool, coretext: bool, retain_identical: bool, scroll_copy: bool) void {
     const path = dependency.path("src/platform/macos/appkit_host.m");
     const source = std.Io.Dir.cwd().readFileAlloc(b.graph.io, path.getPath(b), b.allocator, .limited(2 * 1024 * 1024)) catch @panic("cannot read pinned macOS host");
     const replacement =
@@ -98,6 +99,18 @@ fn patchMacHost(b: *std.Build, dependency: *std.Build.Dependency, module: *std.B
     // Float noise that vanishes in decoding would otherwise rebuild hundreds
     // of unchanged text rasters; every field takes part in the comparison.
     if (retain_identical) patched = replaceOnce(b, patched, "            self.canvasRetainedCommands[key] = command;", "            if ([self.canvasRetainedCommands[key] isEqualToDictionary:command]) continue;\n            self.canvasRetainedCommands[key] = command;");
+    // Scrolling by shifting the retained pixels (src/native/packet_scroll.h):
+    // each upsert and evict of a patch is noted as it is applied, and the
+    // shift happens just before the dirty redraw.
+    if (scroll_copy) {
+        patched = replaceOnce(b, patched, "    NSArray *commands = nil;", "    PatchScroll *patchScroll = nil;\n    NSArray *commands = nil;");
+        patched = replaceOnce(b, patched, "        if (!evicts || !upserts || !order) return 0;", "        if (!evicts || !upserts || !order) return 0;\n        patchScroll = [[PatchScroll alloc] init];");
+        patched = replaceOnce(b, patched, "            [self.canvasRetainedCommands removeObjectForKey:evictObject];", "            patch_scroll_note_evict(patchScroll, self.canvasRetainedCommands[evictObject]);\n            [self.canvasRetainedCommands removeObjectForKey:evictObject];");
+        patched = replaceOnce(b, patched, "            self.canvasRetainedCommands[key] = command;\n            [self rasterCacheRemoveKey:key];", scroll_copy_upsert);
+        patched = replaceOnce(b, patched, "    const uint64_t traceDrawBeginNs = NativeSdkTimestampNanoseconds();\n    NSInteger drawResult = [self drawPacketCommands:commands keys:drawKeys pixels:pixels", "    const uint64_t traceDrawBeginNs = NativeSdkTimestampNanoseconds();\n" ++ scroll_copy_plan ++ "    NSInteger drawResult = [self drawPacketCommands:commands keys:drawKeys pixels:pixels");
+        patched = replaceOnce(b, patched, "dirtyX:scissorRect.origin.x dirtyY:scissorRect.origin.y dirtyWidth:scissorRect.size.width dirtyHeight:scissorRect.size.height dirtyRects:(uploadDirtyRect ? dirtyRects : nil)", "dirtyX:patchUpload.origin.x dirtyY:patchUpload.origin.y dirtyWidth:patchUpload.size.width dirtyHeight:patchUpload.size.height dirtyRects:(uploadDirtyRect && NSEqualRects(patchUpload, scissorRect) ? dirtyRects : nil)");
+        patched = b.fmt("#include \"packet_scroll.h\"\n{s}", .{patched});
+    }
     patched = b.fmt("#include \"packet_transform.h\"\n{s}", .{patched});
     if (coretext) {
         patched = replaceOnce(b, patched, "    NSTextStorage *storage = [[NSTextStorage alloc] initWithString:value attributes:attributes];", "    if (patch_try_draw_packet_line(value, attributes, x, baseline, width, height)) return YES;\n    NSTextStorage *storage = [[NSTextStorage alloc] initWithString:value attributes:attributes];");
@@ -115,6 +128,81 @@ fn patchMacHost(b: *std.Build, dependency: *std.Build.Dependency, module: *std.B
     };
     @panic("pinned macOS host source was not linked");
 }
+
+// A command that only moved keeps its raster, moved by the same whole
+// pixels, rather than drawing it again where it lands. PATCH_VERIFY_SCROLL_
+// RASTERS=1 compares each moved raster with a fresh one.
+const scroll_copy_upsert =
+    \\            NSDictionary *patchPrevious = self.canvasRetainedCommands[key];
+    \\            double patchDy = 0;
+    \\            BOOL patchClipMoved = NO;
+    \\            if (patch_scroll_note(patchScroll, key, patchPrevious, command, &patchDy, &patchClipMoved)) {
+    \\                NativeSdkPacketCommandRaster *patchRaster = self.canvasCommandRasterCache[key];
+    \\                const double patchShift = patchDy * normalizedScale;
+    \\                const long patchPixels = lround(patchShift);
+    \\                if (patchRaster && patchRaster.command == patchPrevious && !patchRaster.texture && fabs(patchShift - (double)patchPixels) < 1e-3 &&
+    \\                    self.canvasCommandRasterCacheScale == normalizedScale && self.canvasCommandRasterCachePixelWidth == pixelWidth && self.canvasCommandRasterCachePixelHeight == pixelHeight &&
+    \\                    patch_scroll_raster_whole(patchPrevious, patchClipMoved, normalizedScale, pixelWidth, pixelHeight) &&
+    \\                    patch_scroll_raster_whole(command, patchClipMoved, normalizedScale, pixelWidth, pixelHeight)) {
+    \\                    patchRaster.command = command;
+    \\                    patchRaster.pixelY = (NSUInteger)((long)patchRaster.pixelY + patchPixels);
+    \\                    patchRaster.destination = NSMakeRect(patchRaster.destination.origin.x, (CGFloat)patchRaster.pixelY / normalizedScale, patchRaster.destination.size.width, patchRaster.destination.size.height);
+    \\                    self.canvasRetainedCommands[key] = command;
+    \\                    static int patchVerify = -1;
+    \\                    if (patchVerify < 0) patchVerify = getenv("PATCH_VERIFY_SCROLL_RASTERS") != NULL;
+    \\                    if (patchVerify) {
+    \\                        static unsigned long long patchChecks = 0, patchMismatches = 0;
+    \\                        NSString *patchKind = [command[@"kind"] isKindOfClass:[NSString class]] ? command[@"kind"] : @"";
+    \\                        NativeSdkPacketCommandRaster *fresh = [self rasterCacheBuildEntryForCommand:command kind:patchKind scale:normalizedScale pixelWidth:pixelWidth pixelHeight:pixelHeight];
+    \\                        /* As placed on the surface: noise in a command's bounds can start
+    \\                         * a fresh raster a transparent pixel over. */
+    \\                        BOOL same = fresh != nil;
+    \\                        CFDataRef moved = same ? CGDataProviderCopyData(CGImageGetDataProvider(patchRaster.image)) : NULL;
+    \\                        CFDataRef drawn = same ? CGDataProviderCopyData(CGImageGetDataProvider(fresh.image)) : NULL;
+    \\                        same = moved && drawn;
+    \\                        const long patchX0 = MIN((long)patchRaster.pixelX, (long)fresh.pixelX), patchY0 = MIN((long)patchRaster.pixelY, (long)fresh.pixelY);
+    \\                        const long patchX1 = MAX((long)(patchRaster.pixelX + patchRaster.pixelWidth), (long)(fresh.pixelX + fresh.pixelWidth));
+    \\                        const long patchY1 = MAX((long)(patchRaster.pixelY + patchRaster.pixelHeight), (long)(fresh.pixelY + fresh.pixelHeight));
+    \\                        for (long y = patchY0; same && y < patchY1; y++) {
+    \\                            for (long x = patchX0; same && x < patchX1; x++) {
+    \\                                uint32_t a = 0, b = 0;
+    \\                                long ax = x - (long)patchRaster.pixelX, ay = y - (long)patchRaster.pixelY, bx = x - (long)fresh.pixelX, by = y - (long)fresh.pixelY;
+    \\                                if (ax >= 0 && ay >= 0 && ax < (long)patchRaster.pixelWidth && ay < (long)patchRaster.pixelHeight) memcpy(&a, CFDataGetBytePtr(moved) + (ay * (long)patchRaster.pixelWidth + ax) * 4, 4);
+    \\                                if (bx >= 0 && by >= 0 && bx < (long)fresh.pixelWidth && by < (long)fresh.pixelHeight) memcpy(&b, CFDataGetBytePtr(drawn) + (by * (long)fresh.pixelWidth + bx) * 4, 4);
+    \\                                same = a == b;
+    \\                            }
+    \\                        }
+    \\                        if (moved) CFRelease(moved);
+    \\                        if (drawn) CFRelease(drawn);
+    \\                        patchChecks += 1;
+    \\                        if (!same) patchMismatches += 1;
+    \\                        if (!same || patchChecks % 500 == 0) fprintf(stderr, "patch: moved raster checks=%llu mismatches=%llu%s kind=%s\n", patchChecks, patchMismatches, same ? "" : " MISMATCH", patchKind.UTF8String);
+    \\                    }
+    \\                    continue;
+    \\                }
+    \\                patch_scroll_unmove(patchScroll, key, patchPrevious, command);
+    \\            }
+    \\            self.canvasRetainedCommands[key] = command;
+    \\            [self rasterCacheRemoveKey:key];
+;
+
+// The shifted area changed under the planner's rects, so the upload covers
+// both; the redraw takes the shift's rects in place of the planner's.
+const scroll_copy_plan =
+    \\    NSRect patchUpload = scissorRect;
+    \\    if (patchScroll && hasScissor && !fullSurfacePass) {
+    \\        NSRect patchMoved = NSZeroRect;
+    \\        NSMutableArray<NSValue *> *patchRects = patch_scroll_plan(patchScroll, commands, drawKeys, normalizedScale, pixelWidth, pixelHeight, scissorRect, dirtyRects, (uint8_t *)pixels.mutableBytes, &patchMoved);
+    \\        if (patchRects.count > 0) {
+    \\            NSRect patchScissor = patchRects[0].rectValue;
+    \\            for (NSValue *value in patchRects) patchScissor = NSUnionRect(patchScissor, value.rectValue);
+    \\            patchUpload = NSUnionRect(NSUnionRect(scissorRect, patchScissor), patchMoved);
+    \\            scissorRect = patchScissor;
+    \\            dirtyRects = patchRects;
+    \\        }
+    \\    }
+    \\
+;
 
 const opaque_blur_copy =
     \\    if (mix == 1.0) {
