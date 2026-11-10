@@ -22,7 +22,7 @@ const directory = fileURLToPath(new URL("../dist/", import.meta.url));
 try {
   await stat(resolve(directory, "index.html"));
 } catch {
-  throw new Error("Build Patch first with pnpm build.");
+  throw new Error("Build the web reviewer first with pnpm build:web.");
 }
 const api = reviewApi(repository, option("--base", "main"));
 const mime: Record<string, string> = {

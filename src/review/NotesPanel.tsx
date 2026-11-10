@@ -6,6 +6,7 @@ import { Icon } from "./Icon";
 export interface CommentTarget {
   file: string;
   range: SelectedLineRange;
+  noteId?: string;
 }
 export function locationLabel(range: SelectedLineRange) {
   return range.start === 0
@@ -34,8 +35,10 @@ export function NotesPanel({
   onDelete(id: string): void;
   onNavigate(note: Note): void;
 }) {
-  const [draft, setDraft] = useState("");
-  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState(
+    () => notes.find((note) => note.id === target?.noteId)?.text ?? "",
+  );
+  const editing = target?.noteId;
   const textarea = useRef<HTMLTextAreaElement>(null);
   const file = files.find((file) => file.id === target?.file);
   useEffect(() => {
@@ -50,7 +53,6 @@ export function NotesPanel({
       text: draft.trim(),
     });
     setDraft("");
-    setEditing(null);
     onTarget(null);
   }
   return (
@@ -96,7 +98,6 @@ export function NotesPanel({
                 onClick={() => {
                   onTarget(null);
                   setDraft("");
-                  setEditing(null);
                 }}
               >
                 Cancel
@@ -124,9 +125,7 @@ export function NotesPanel({
                 <button
                   className="text-button"
                   onClick={() => {
-                    setEditing(note.id);
-                    setDraft(note.text);
-                    onTarget({ file: note.file, range: note.range });
+                    onTarget({ file: note.file, range: note.range, noteId: note.id });
                   }}
                 >
                   Edit
@@ -134,7 +133,10 @@ export function NotesPanel({
                 <button
                   className="icon-button"
                   aria-label="Delete note"
-                  onClick={() => onDelete(note.id)}
+                  onClick={() => {
+                    if (editing === note.id) onTarget(null);
+                    onDelete(note.id);
+                  }}
                 >
                   <Icon name="trash" size={14} />
                 </button>

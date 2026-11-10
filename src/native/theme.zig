@@ -14,18 +14,13 @@ pub const Palette = struct {
     dark: bool = true,
     background: canvas.Color,
     chrome: canvas.Color,
-    raised: canvas.Color,
-    selection: canvas.Color,
-    border: canvas.Color,
     muted: canvas.Color,
     ink: canvas.Color,
     green: canvas.Color,
     red: canvas.Color,
     added: canvas.Color,
     removed: canvas.Color,
-    glass: canvas.Color,
     glass_edge: canvas.Color,
-    palette: canvas.Color,
     palette_active: canvas.Color,
     window: canvas.Color,
     pane: canvas.Color,
@@ -40,22 +35,17 @@ pub const Palette = struct {
     segment_on: canvas.Color,
     card: canvas.Color,
     hairline: canvas.Color,
-    switch_on: canvas.Color,
     accent: canvas.Color,
     settings_panel: canvas.Color,
     settings_bg: canvas.Color,
     settings_divider: canvas.Color,
-    header: canvas.Color,
-    header_current: canvas.Color,
     text_selection: canvas.Color,
     match: canvas.Color,
     current_line: canvas.Color,
     gutter_added: canvas.Color,
     gutter_removed: canvas.Color,
     line_number: canvas.Color,
-    stroke_subtle: canvas.Color,
     split_rule: canvas.Color,
-    padding_row: canvas.Color,
     palette_glass: canvas.Color,
     palette_field: canvas.Color,
     keycap: canvas.Color,
@@ -86,18 +76,13 @@ pub const Palette = struct {
 pub const noir: Palette = .{
     .background = canvas.Color.rgb8(35, 35, 35),
     .chrome = canvas.Color.rgb8(43, 43, 43),
-    .raised = canvas.Color.rgb8(50, 50, 50),
-    .selection = canvas.Color.rgb8(58, 58, 58),
-    .border = canvas.Color.rgb8(61, 61, 61),
     .muted = canvas.Color.rgb8(151, 151, 151),
     .ink = canvas.Color.rgb8(237, 237, 237),
     .green = canvas.Color.rgb8(167, 208, 141),
     .red = canvas.Color.rgb8(255, 58, 48),
     .added = canvas.Color.rgb8(31, 36, 28),
     .removed = canvas.Color.rgb8(43, 21, 18),
-    .glass = canvas.Color.rgba8(36, 36, 36, 110),
     .glass_edge = canvas.Color.rgba8(255, 255, 255, 40),
-    .palette = canvas.Color.rgba8(35, 35, 35, 220),
     .palette_active = canvas.Color.rgb8(199, 12, 8),
     .window = canvas.Color.rgba8(10, 10, 10, 156),
     .pane = canvas.Color.rgb8(10, 10, 10),
@@ -112,22 +97,17 @@ pub const noir: Palette = .{
     .segment_on = canvas.Color.rgba8(237, 237, 237, 26),
     .card = canvas.Color.rgb8(14, 14, 14),
     .hairline = canvas.Color.rgba8(237, 237, 237, 16),
-    .switch_on = canvas.Color.rgb8(150, 150, 150),
     .accent = canvas.Color.rgb8(255, 25, 20),
     .settings_panel = canvas.Color.rgb8(13, 13, 13),
     .settings_bg = canvas.Color.rgb8(7, 7, 7),
     .settings_divider = canvas.Color.rgb8(39, 39, 39),
-    .header = canvas.Color.rgb8(25, 25, 25),
-    .header_current = canvas.Color.rgb8(34, 34, 34),
     .text_selection = canvas.Color.rgb8(51, 51, 51),
     .match = canvas.Color.rgb8(38, 34, 23),
     .current_line = canvas.Color.rgba8(237, 237, 237, 20),
     .gutter_added = canvas.Color.rgb8(126, 160, 104),
     .gutter_removed = canvas.Color.rgb8(176, 88, 78),
     .line_number = canvas.Color.rgb8(88, 88, 88),
-    .stroke_subtle = canvas.Color.rgb8(44, 44, 44),
     .split_rule = canvas.Color.rgb8(30, 30, 30),
-    .padding_row = canvas.Color.rgb8(15, 15, 15),
     .palette_glass = canvas.Color.rgba8(34, 33, 33, 176),
     .palette_field = canvas.Color.rgba8(237, 237, 237, 34),
     .keycap = canvas.Color.rgba8(237, 237, 237, 32),
@@ -158,18 +138,13 @@ pub const noir: Palette = .{
 // The palette in effect. Views read these; `apply` replaces them all.
 pub var background: canvas.Color = noir.background;
 pub var chrome: canvas.Color = noir.chrome;
-pub var raised: canvas.Color = noir.raised;
-pub var selection: canvas.Color = noir.selection;
-pub var border: canvas.Color = noir.border;
 pub var muted: canvas.Color = noir.muted;
 pub var ink: canvas.Color = noir.ink;
 pub var green: canvas.Color = noir.green;
 pub var red: canvas.Color = noir.red;
 pub var added: canvas.Color = noir.added;
 pub var removed: canvas.Color = noir.removed;
-pub var glass: canvas.Color = noir.glass;
 pub var glass_edge: canvas.Color = noir.glass_edge;
-pub var palette: canvas.Color = noir.palette;
 pub var palette_active: canvas.Color = noir.palette_active;
 pub var window: canvas.Color = noir.window;
 pub var pane: canvas.Color = noir.pane;
@@ -184,22 +159,17 @@ pub var field: canvas.Color = noir.field;
 pub var segment_on: canvas.Color = noir.segment_on;
 pub var card: canvas.Color = noir.card;
 pub var hairline: canvas.Color = noir.hairline;
-pub var switch_on: canvas.Color = noir.switch_on;
 pub var accent: canvas.Color = noir.accent;
 pub var settings_panel: canvas.Color = noir.settings_panel;
 pub var settings_bg: canvas.Color = noir.settings_bg;
 pub var settings_divider: canvas.Color = noir.settings_divider;
-pub var header: canvas.Color = noir.header;
-pub var header_current: canvas.Color = noir.header_current;
 pub var text_selection: canvas.Color = noir.text_selection;
 pub var match: canvas.Color = noir.match;
 pub var current_line: canvas.Color = noir.current_line;
 pub var gutter_added: canvas.Color = noir.gutter_added;
 pub var gutter_removed: canvas.Color = noir.gutter_removed;
 pub var line_number: canvas.Color = noir.line_number;
-pub var stroke_subtle: canvas.Color = noir.stroke_subtle;
 pub var split_rule: canvas.Color = noir.split_rule;
-pub var padding_row: canvas.Color = noir.padding_row;
 pub var palette_glass: canvas.Color = noir.palette_glass;
 pub var palette_field: canvas.Color = noir.palette_field;
 pub var keycap: canvas.Color = noir.keycap;
@@ -348,18 +318,13 @@ pub fn derive(scheme: Scheme, translucent: bool) Palette {
         .dark = scheme.dark,
         .background = k(scheme, 0.11),
         .chrome = k(scheme, 0.145),
-        .raised = k(scheme, 0.176),
-        .selection = k(scheme, 0.21),
-        .border = k(scheme, 0.225),
         .muted = k(scheme, 0.62),
         .ink = fg,
         .green = scheme.green,
         .red = scheme.red,
         .added = mix(bg, scheme.green, if (light) 0.16 else 0.135),
         .removed = mix(bg, scheme.red, if (light) 0.13 else 0.14),
-        .glass = alpha(k(scheme, 0.115), 110),
         .glass_edge = if (light) alpha(black, 30) else alpha(white, 40),
-        .palette = alpha(if (light) mix(bg, white, 0.6) else k(scheme, 0.11), if (light) 240 else 220),
         .palette_active = if (light) scheme.accent else mix(scheme.accent, black, 0.22),
         // The rail sits a step from the panes (Noir: 26 against 10): lighter on
         // dark themes, darker on light ones, steady over any wallpaper.
@@ -376,22 +341,17 @@ pub fn derive(scheme: Scheme, translucent: bool) Palette {
         .segment_on = over(fg, 26, lift),
         .card = if (light) mix(bg, white, 0.7) else k(scheme, 0.0176),
         .hairline = over(fg, 16, lift),
-        .switch_on = k(scheme, 0.617),
         .accent = scheme.accent,
         .settings_panel = if (light) mix(bg, black, 0.03) else k(scheme, 0.0132),
         .settings_bg = if (light) mix(bg, black, 0.05) else k(scheme, -0.013),
         .settings_divider = k(scheme, 0.128),
-        .header = k(scheme, 0.066),
-        .header_current = k(scheme, 0.106),
         .text_selection = k(scheme, 0.18),
         .match = mix(bg, scheme.yellow, 0.18),
         .current_line = over(fg, 20, lift),
         .gutter_added = mix(bg, scheme.green, 0.75),
         .gutter_removed = mix(bg, scheme.red, 0.68),
         .line_number = k(scheme, 0.343),
-        .stroke_subtle = k(scheme, 0.15),
         .split_rule = k(scheme, 0.088),
-        .padding_row = k(scheme, 0.022),
         .palette_glass = alpha(if (light) mix(bg, white, 0.5) else k(scheme, 0.105), if (light) 225 else 176),
         .palette_field = over(fg, 34, lift),
         .keycap = over(fg, 32, lift),
@@ -426,8 +386,6 @@ pub fn derive(scheme: Scheme, translucent: bool) Palette {
         result.window = alpha(k(scheme, if (light) 0.07 else 0.075), if (light) 120 else 105);
         result.pane_edge = over(fg, 26, lift);
         result.hunk = over(fg, 9, lift);
-        result.header = over(fg, 17, lift);
-        result.header_current = over(fg, 27, lift);
         result.text_selection = over(fg, 46, lift);
         result.added = alpha(scheme.green, if (light) 46 else 38);
         result.removed = alpha(scheme.red, if (light) 40 else 38);

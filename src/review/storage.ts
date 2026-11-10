@@ -51,7 +51,7 @@ export function formatReview(review: Review, progress: ReviewProgress): string {
     "",
     `${review.source.base} → ${review.source.branch}`,
     "",
-    `${progress.reviewed.length}/${review.files.length} files reviewed · +${review.additions} −${review.deletions}`,
+    `${review.files.filter((file) => progress.reviewed.includes(file.id)).length}/${review.files.length} files reviewed · +${review.additions} −${review.deletions}`,
     "",
   ];
   for (const file of review.files) {

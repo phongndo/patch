@@ -70,7 +70,6 @@ const Settings = struct { collapse_reviewed: bool = true, split: bool = true, si
 /// Colors a person can set over any theme, in Settings › Appearance.
 pub const color_roles = [_][]const u8{ "Background", "Text", "Accent", "Added", "Removed" };
 pub const Choice = struct { index: usize, score: u32, file: bool = false };
-/// A review state taken back by undo: a file's, or one of its hunks'.
 /// A review step to undo. A file's step keeps which of its hunks were
 /// reviewed before it (in the review's arena), to give them back.
 const ReviewChange = struct { file: usize, reviewed: bool, hunk: ?u16 = null, hunks: []const bool = &.{} };
@@ -1342,11 +1341,12 @@ fn poll(model: *Model, fx: *Effects) void {
         model.commit = index;
     };
     model.repository = job.result.?.repository;
-    model.branch = if (job.result.?.kind.len == 3) job.result.?.base else "patch";
-    model.head = if (job.result.?.kind.len == 3) job.result.?.head else "";
-    model.branch_names = if (job.result.?.kind.len == 3) job.result.?.branches else "";
-    model.imported = job.result.?.kind.len != 3;
+    model.imported = !std.mem.eql(u8, job.result.?.kind, "git");
+    model.branch = if (!model.imported) job.result.?.base else "patch";
+    model.head = if (!model.imported) job.result.?.head else "";
+    model.branch_names = if (!model.imported) job.result.?.branches else "";
     model.editing = false;
+    model.edit_index = null;
     model.draft.clear();
     model.generation += 1;
     model.scroll_x = 0;
@@ -2336,6 +2336,7 @@ fn handle(model: *Model, msg: Msg, fx: *Effects) void {
         },
         .toggle_split => {
             model.band_menu = false;
+            clearSelection(model);
             model.split = !model.split;
             const line_number = cursorNumber(model);
             layoutRows(model);
@@ -2393,6 +2394,14 @@ fn handle(model: *Model, msg: Msg, fx: *Effects) void {
                 gpa.free(model.marks);
                 model.marks = marks;
             } else |_| {};
+            clearSelection(model);
+            if (model.draft_file == index) {
+                model.editing = false;
+                model.edit_index = null;
+                model.draft.clear();
+                focusReview(model);
+            } else if (model.draft_file > index) model.draft_file -= 1;
+            if (model.selected > index) model.selected -= 1;
             model.selected = @min(model.selected, files.len -| 1);
             reindex(model);
             layoutRows(model);
@@ -2460,13 +2469,16 @@ fn handle(model: *Model, msg: Msg, fx: *Effects) void {
             beginNote(model, fx, anchor.file orelse model.selected, anchor);
         },
         .edit_note => |index| {
+            if (index >= model.notes.items.len) return;
             if (model.editing and !model.draft.isEmpty()) {
                 openNotesNow(model);
                 model.focus = .note;
                 return;
             }
-            model.draft_file = model.selected;
             const note = model.notes.items[index];
+            model.draft_file = for (model.files, 0..) |file, file_index| {
+                if (std.mem.eql(u8, file.path, note.path)) break file_index;
+            } else return;
             model.edit_index = index;
             model.draft.set(note.text);
             model.anchor = .{ .line = note.line, .line_end = note.line_end, .old = note.old };
@@ -2474,7 +2486,16 @@ fn handle(model: *Model, msg: Msg, fx: *Effects) void {
             model.focus = .note;
         },
         .delete_note => |index| {
+            if (index >= model.notes.items.len) return;
             _ = model.notes.orderedRemove(index);
+            if (model.edit_index) |editing| {
+                if (editing == index) {
+                    model.edit_index = null;
+                    model.editing = false;
+                    model.draft.clear();
+                    focusReview(model);
+                } else if (editing > index) model.edit_index = editing - 1;
+            }
             persist(model);
         },
         .save_note => {
@@ -2497,12 +2518,14 @@ fn handle(model: *Model, msg: Msg, fx: *Effects) void {
             if (model.edit_index) |index| model.notes.items[index] = note else model.notes.append(alloc, note) catch return;
             if (model.commit) |index| if (index < model.commits.len) markCommit(model, index, null);
             model.editing = false;
+            model.edit_index = null;
             model.draft.clear();
             focusReview(model);
             persist(model);
         },
         .cancel_note => {
             model.editing = false;
+            model.edit_index = null;
             model.draft.clear();
             focusReview(model);
         },
@@ -2809,6 +2832,80 @@ test {
     _ = git;
     _ = keyboard;
     _ = selection;
+    _ = highlight;
+    _ = easing;
+    _ = @import("native/words.zig");
+    _ = @import("native/view.zig");
+}
+
+test "deleting notes preserves the editor's target and cancels a deleted target" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var files = [_]patch.File{
+        .{ .path = "a", .unified = &.{}, .split = &.{} },
+        .{ .path = "b", .unified = &.{}, .split = &.{} },
+    };
+    var model = Model{ .files = &files };
+    try model.notes.appendSlice(arena.allocator(), &.{ .{ .path = "a", .text = "first" }, .{ .path = "b", .text = "second" } });
+    session = .{ .io = undefined, .data_dir = "" };
+    var fx = Effects.init(std.testing.allocator);
+    defer fx.deinit();
+    update(&model, .{ .edit_note = 1 }, &fx);
+    try std.testing.expectEqual(@as(usize, 1), model.draft_file);
+    model.draft.set("edited second");
+    update(&model, .{ .delete_note = 0 }, &fx);
+    try std.testing.expectEqual(@as(?usize, 0), model.edit_index);
+    try std.testing.expectEqualStrings("second", model.notes.items[model.edit_index.?].text);
+    try std.testing.expectEqualStrings("edited second", model.draft.text());
+    update(&model, .{ .delete_note = 0 }, &fx);
+    try std.testing.expect(!model.editing);
+    try std.testing.expect(model.edit_index == null and model.draft.isEmpty());
+}
+
+test "closing a reference keeps later draft indices valid and clears selection" {
+    var job = Job{ .io = undefined, .repo = "", .mode = .working, .base = "" };
+    defer job.arena.deinit();
+    var files = [_]patch.File{
+        .{ .path = "change", .unified = &.{}, .split = &.{} },
+        .{ .path = "first", .unified = &.{}, .split = &.{}, .reference = true },
+        .{ .path = "second", .unified = &.{}, .split = &.{}, .reference = true },
+    };
+    var model = Model{ .files = &files, .selected = 2, .draft_file = 2, .editing = true, .draft = .init("draft") };
+    defer {
+        gpa.free(model.visible);
+        gpa.free(model.rail_rows);
+        gpa.free(model.display);
+        gpa.free(model.starts);
+        gpa.free(model.changes);
+    }
+    model.mouse = .{ .active = true, .range = .{ .file = 2, .old = false, .anchor = 0, .focus = 0, .first_line = 1, .last_line = 1 } };
+    session = .{ .io = undefined, .data_dir = "", .document = &job };
+    defer session.document = null;
+    var fx = Effects.init(std.testing.allocator);
+    defer fx.deinit();
+    update(&model, .{ .close_reference = 1 }, &fx);
+    try std.testing.expectEqual(@as(usize, 1), model.selected);
+    try std.testing.expectEqual(@as(usize, 1), model.draft_file);
+    try std.testing.expect(model.editing and model.mouse.range == null);
+    try std.testing.expectEqualStrings("second", model.files[1].path);
+    update(&model, .{ .close_reference = 1 }, &fx);
+    try std.testing.expect(!model.editing and model.draft.isEmpty());
+}
+
+test "reference panes do not count against a commit's review progress" {
+    var job = Job{ .io = undefined, .repo = "", .mode = .branch, .base = "" };
+    defer job.arena.deinit();
+    var files = [_]patch.File{
+        .{ .path = "change", .unified = &.{}, .split = &.{} },
+        .{ .path = "reference", .unified = &.{}, .split = &.{}, .reference = true },
+    };
+    var commits = [_]git.Commit{.{ .id = "id", .parents = "parent", .author = "A", .time = 0, .message = "Message" }};
+    var states = [_]history.CommitState{.new};
+    var model = Model{ .files = &files, .commits = &commits, .commit_states = &states, .commit = 0 };
+    session = .{ .io = undefined, .data_dir = "", .document = &job };
+    defer session.document = null;
+    recordFile(&model, 0, true);
+    try std.testing.expectEqual(history.CommitState.reviewed, model.commit_states[0]);
 }
 
 pub fn sourceRow(model: *const Model, index: usize) ?patch.Row {
@@ -3063,8 +3160,13 @@ fn recordFile(model: *Model, index: usize, value: bool) void {
     const commit_index = model.commit orelse return;
     if (commit_index >= model.commits.len or commit_index >= model.commit_states.len) return;
     var done: usize = 0;
-    for (model.files) |each| done += @intFromBool(each.reviewed);
-    const state: history.CommitState = if (done == model.files.len) .reviewed else if (done > 0) .partial else .new;
+    var total: usize = 0;
+    for (model.files) |each| {
+        if (each.reference) continue;
+        total += 1;
+        done += @intFromBool(each.reviewed);
+    }
+    const state: history.CommitState = if (done == total) .reviewed else if (done > 0) .partial else .new;
     model.commit_states[commit_index] = state;
     markCommit(model, commit_index, state == .reviewed);
 }
