@@ -62,7 +62,7 @@ function start() {
   });
 }
 async function stop() {
-  if (!app || app.exitCode !== null) return;
+  if (!app || app.exitCode !== null || app.signalCode !== null) return;
   const stopped = new Promise((resolveStopped) => app.once("exit", resolveStopped));
   app.kill("SIGTERM");
   await stopped;

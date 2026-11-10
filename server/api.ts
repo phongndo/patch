@@ -12,7 +12,17 @@ export function reviewApi(directory: string, base = "main") {
       response.writeHead(405).end(JSON.stringify({ error: "Method not allowed." }));
       return true;
     }
-    if (request.headers.origin && new URL(request.headers.origin).host !== request.headers.host) {
+    // A loopback listener can still receive a foreign Host through DNS
+    // rebinding. Check it even when the client sends no Origin header.
+    const host = request.headers.host;
+    const address = host ? URL.parse(`http://${host}`) : null;
+    const origin = request.headers.origin ? URL.parse(request.headers.origin) : null;
+    if (
+      !address ||
+      address.host !== host ||
+      !["localhost", "127.0.0.1", "[::1]"].includes(address.hostname) ||
+      (request.headers.origin && (!origin || origin.protocol !== "http:" || origin.host !== host))
+    ) {
       response.writeHead(403).end(JSON.stringify({ error: "Open Patch from its local address." }));
       return true;
     }

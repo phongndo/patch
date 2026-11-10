@@ -153,3 +153,19 @@ test("review export retains line ranges and never claims unreviewed files are re
     /No file changes/,
   );
 });
+
+test("review export counts only distinct files in the comparison", async () => {
+  const review = await parseReview({
+    patch: "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-before\n+after\n",
+    repository: "test",
+    branch: "after",
+    base: "before",
+    title: "Test",
+    kind: "patch",
+  });
+  const id = review.files[0]!.id;
+  assert.match(
+    formatReview(review, { reviewed: [id, id, "missing"], notes: [] }),
+    /1\/1 files reviewed/,
+  );
+});

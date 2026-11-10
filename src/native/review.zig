@@ -317,3 +317,26 @@ test "hunks are reviewed by their content, path by path" {
     unmarkHunk(&records, "x.c", a);
     try std.testing.expect(!hunkReviewed(records.items, "x.c", a));
 }
+
+test "reviewing a binary version does not review later binary contents" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const first = try patch.parse(alloc, "diff --git a/image b/image\nindex 1111111..2222222 100644\nBinary files a/image and b/image differ\n");
+    const next = try patch.parse(alloc, "diff --git a/image b/image\nindex 1111111..3333333 100644\nBinary files a/image and b/image differ\n");
+    var records: std.ArrayList(Record) = .empty;
+    try mark(alloc, &records, first[0]);
+    try std.testing.expectEqual(patch.Prior.same, classify(records.items, first[0]));
+    try std.testing.expectEqual(patch.Prior.changed, classify(records.items, next[0]));
+}
+
+test "renames from different paths are different changes" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    const first = try patch.parse(alloc, "diff --git a/first b/destination\nsimilarity index 100%\nrename from first\nrename to destination\n");
+    const next = try patch.parse(alloc, "diff --git a/second b/destination\nsimilarity index 100%\nrename from second\nrename to destination\n");
+    var records: std.ArrayList(Record) = .empty;
+    try mark(alloc, &records, first[0]);
+    try std.testing.expectEqual(patch.Prior.changed, classify(records.items, next[0]));
+}

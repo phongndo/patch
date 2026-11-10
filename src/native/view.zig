@@ -366,8 +366,24 @@ fn railName(ui: *AppUi, model: *const Model, file: patch.File) []const u8 {
     const fits: usize = @intFromFloat(@max(6, room / 6.6));
     if (name.len <= fits) return name;
     const tail = (fits - 1) / 2;
-    const head = fits - 1 - tail;
-    return ui.fmt("{s}…{s}", .{ name[0..head], name[name.len - tail ..] });
+    var head = fits - 1 - tail;
+    var tail_start = name.len - tail;
+    // The width estimate counts bytes; the cuts must still fall between
+    // UTF-8 characters, even when a filename is mostly multibyte text.
+    while (head > 0 and name[head] & 0xc0 == 0x80) head -= 1;
+    while (tail_start < name.len and name[tail_start] & 0xc0 == 0x80) tail_start += 1;
+    return ui.fmt("{s}…{s}", .{ name[0..head], name[tail_start..] });
+}
+
+test "middle-truncated rail names keep Unicode characters whole" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var ui = AppUi.init(arena.allocator());
+    const model = Model{ .sidebar_width = theme.rail_min };
+    const file = patch.File{ .path = "🐙" ** 20 ++ ".ts", .unified = &.{}, .split = &.{} };
+    const name = railName(&ui, &model, file);
+    try std.testing.expect(std.unicode.utf8ValidateSlice(name));
+    try std.testing.expect(std.mem.endsWith(u8, name, ".ts"));
 }
 /// How far a commit's review has come, as an icon and its color.
 fn commitMark(state: app.history.CommitState) struct { icon: []const u8, color: canvas.Color } {
@@ -379,8 +395,7 @@ fn commitMark(state: app.history.CommitState) struct { icon: []const u8, color: 
     };
 }
 /// A branch's commits, all together or one at a time: how many, or which,
-/// in the repository row's quiet ink, opening the list of them. ]C and [C
-/// step through them.
+/// in the repository row's quiet ink, opening the list of them.
 fn commitPicker(ui: *AppUi, model: *const Model) AppUi.Node {
     const count = model.commits.len;
     const label = if (model.commit) |index| ui.fmt("{d} of {d}", .{ index + 1, count }) else if (count == 1) "1 commit" else ui.fmt("{d} commits", .{count});
@@ -971,7 +986,7 @@ fn review(ui: *AppUi, model: *const Model, budget: usize) AppUi.Node {
     if (browsing(model) and model.files.len > 0 and model.display.len == 0) return emptyPane(ui, .{
         ui.appIcon(.{ .width = 28, .height = 28, .style = .{ .foreground = theme.muted } }, "folder"),
         smallText(ui, "Choose a file in the rail to read it", theme.muted),
-        ui.button(.{ .icon = "app:search", .size = .sm, .variant = .ghost, .on_press = .{ .action = .{ .action = .files } } }, "Go to file · ⌘P"),
+        ui.button(.{ .icon = "app:search", .size = .sm, .variant = .ghost, .on_press = .{ .action = .{ .action = .files } } }, spell("Go to file · ⌘P")),
     });
     if (model.files.len == 0) return emptyPane(ui, .{
         ui.appIcon(.{ .width = 28, .height = 28, .style = .{ .foreground = theme.muted } }, if (model.busy) "refresh" else "check"),
@@ -1141,7 +1156,7 @@ fn notePanel(ui: *AppUi, model: *const Model) AppUi.Node {
     if (count == 0 and !model.editing) {
         nodes[0] = ui.column(.{ .padding = 16, .gap = 6, .cross = .center }, .{
             smallText(ui, "No notes yet", theme.secondary),
-            caption(ui, "Select lines and press C to add one."),
+            caption(ui, ui.fmt("Select lines and press {s} to add one.", .{app.keyboard.shortcut(.comment_line)})),
         });
         count = 1;
     }
@@ -1666,7 +1681,7 @@ fn settingsBody(ui: *AppUi, model: *const Model) AppUi.Node {
             }),
             heading(ui, "Data"),
             card(ui, &.{
-                settingRow(ui, "Review progress and notes", "Saved on this Mac for each repository. A reviewed change stays reviewed wherever it appears again, a rebase included; notes follow their lines as files change.", ui.button(.{ .height = 26, .size = .sm, .variant = .ghost, .on_press = .copy_data_path, .semantics = .{ .label = "Copy data folder path" }, .style = .{ .foreground = theme.ink, .background = theme.segment_on, .radius = 13 } }, "Copy Path")),
+                settingRow(ui, "Review progress and notes", "Saved on this device for each repository. A reviewed change stays reviewed wherever it appears again, a rebase included; notes follow their lines as files change.", ui.button(.{ .height = 26, .size = .sm, .variant = .ghost, .on_press = .copy_data_path, .semantics = .{ .label = "Copy data folder path" }, .style = .{ .foreground = theme.ink, .background = theme.segment_on, .radius = 13 } }, "Copy Path")),
             }),
         }),
     };

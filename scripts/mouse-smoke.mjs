@@ -186,7 +186,7 @@ try {
   console.error((await snapshot().catch(() => "No snapshot")).slice(-16000));
   throw error;
 } finally {
-  if (app.exitCode === null) {
+  if (app.exitCode === null && app.signalCode === null) {
     const stopped = new Promise((resolveStopped) => app.once("exit", resolveStopped));
     app.kill("SIGTERM");
     await stopped;

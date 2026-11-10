@@ -285,7 +285,7 @@ pub fn commitStates(alloc: std.mem.Allocator, commits: []const git.Commit, recor
             break;
         };
         for (commit.files) |raw| for (records) |record| {
-            if (std.mem.eql(u8, record.path, raw.path) and std.mem.eql(u8, record.old, raw.old) and std.mem.eql(u8, record.new, raw.new)) {
+            if (std.mem.eql(u8, record.path, raw.path) and std.mem.eql(u8, record.old, raw.old) and std.mem.eql(u8, record.new, raw.new) and (raw.new.len == 0 or std.mem.eql(u8, record.mode, raw.mode))) {
                 done += 1;
                 break;
             }
@@ -302,4 +302,24 @@ pub fn commitStates(alloc: std.mem.Allocator, commits: []const git.Commit, recor
 fn marked(marks: []const review.Mark, id: []const u8) bool {
     for (marks) |mark| if (mark.reviewed and std.mem.eql(u8, mark.id, id)) return true;
     return false;
+}
+
+test "commit progress includes the file mode in its reviewed identity" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const message = "Make executable";
+    const message_blob = patch.blobId(message);
+    const commits = [_]git.Commit{.{ .id = "commit", .parents = "parent", .author = "A", .time = 0, .message = message, .files = &.{
+        .{ .path = "run", .old = "same", .new = "same", .mode = "100755" },
+        .{ .path = "deleted", .old = "old", .new = "", .mode = "000000" },
+    } }};
+    var records = [_]review.Record{
+        .{ .path = message_path, .new = &message_blob },
+        .{ .path = "run", .old = "same", .new = "same", .mode = "100644" },
+        .{ .path = "deleted", .old = "old", .new = "" },
+    };
+    const states = commitStates(arena.allocator(), &commits, &records, &.{}, &.{});
+    try std.testing.expectEqual(CommitState.partial, states[0]);
+    records[1].mode = "100755";
+    try std.testing.expectEqual(CommitState.reviewed, commitStates(arena.allocator(), &commits, &records, &.{}, &.{})[0]);
 }

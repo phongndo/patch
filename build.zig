@@ -32,6 +32,13 @@ pub fn build(b: *std.Build) void {
     if (blur_damage) overlayCanvasFrame(b, dependency, app.exe.root_module);
     const highlighter = addHighlighter(b, app.exe.root_module.resolved_target.?);
     highlighter.link(app.exe.root_module);
+    // Reuse the app's platform wiring while keeping bounds and overflow
+    // checks in the application tests, as in the standalone unit tests.
+    const test_root = b.allocator.create(std.Build.Module) catch @panic("OOM");
+    test_root.init(b, .{ .existing = app.exe.root_module });
+    test_root.optimize = .Debug;
+    const app_tests = b.addTest(.{ .root_module = test_root });
+    b.step("test-app", "Check application state transitions").dependOn(&b.addRunArtifact(app_tests).step);
     const highlight_tests = b.addTest(.{ .root_module = b.createModule(.{
         .root_source_file = b.path("src/native/highlight.zig"),
         .target = app.exe.root_module.resolved_target.?,

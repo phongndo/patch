@@ -126,8 +126,45 @@ pub const File = struct {
     }
 };
 
-fn path(raw: []const u8) []const u8 {
-    var value = std.mem.trim(u8, raw, "\r\n\t\"");
+/// Git quotes control bytes, quotes and backslashes even with quotepath off.
+/// Unified headers may append a tab and timestamp to an unquoted path.
+fn unquote(gpa: std.mem.Allocator, raw: []const u8) ![]const u8 {
+    if (raw.len == 0 or raw[0] != '"') return raw;
+    var out: std.ArrayList(u8) = .empty;
+    errdefer out.deinit(gpa);
+    var at: usize = 1;
+    while (at < raw.len) : (at += 1) {
+        const char = raw[at];
+        if (char == '"') return out.toOwnedSlice(gpa);
+        if (char != '\\') {
+            try out.append(gpa, char);
+            continue;
+        }
+        at += 1;
+        if (at >= raw.len) return error.InvalidPatch;
+        const escaped: u8 = switch (raw[at]) {
+            'a' => 7,
+            'b' => 8,
+            't' => '\t',
+            'n' => '\n',
+            'v' => 11,
+            'f' => 12,
+            'r' => '\r',
+            '"', '\\' => raw[at],
+            '0'...'7' => octal: {
+                if (at + 3 > raw.len) return error.InvalidPatch;
+                const byte = std.fmt.parseInt(u8, raw[at .. at + 3], 8) catch return error.InvalidPatch;
+                at += 2;
+                break :octal byte;
+            },
+            else => return error.InvalidPatch,
+        };
+        try out.append(gpa, escaped);
+    }
+    return error.InvalidPatch;
+}
+fn path(gpa: std.mem.Allocator, raw: []const u8) ![]const u8 {
+    var value = try unquote(gpa, raw[0 .. std.mem.indexOfScalar(u8, raw, '\t') orelse raw.len]);
     if (std.mem.startsWith(u8, value, "a/") or std.mem.startsWith(u8, value, "b/")) value = value[2..];
     return value;
 }
@@ -219,6 +256,18 @@ fn finish(gpa: std.mem.Allocator, files: *std.ArrayList(File), current: ?File, r
         file.unified = rows.items;
         file.split = try pair(gpa, rows.items);
         file.change = changeOf(file.path, rows.items);
+        // With no changed text, blobs and metadata are the change. Otherwise
+        // every binary version or rename to this path would share a review.
+        if (file.additions == 0 and file.deletions == 0) {
+            var hash = std.crypto.hash.sha2.Sha256.init(.{});
+            for ([_][]const u8{ &file.change, file.old_blob, file.new_blob, file.previous, file.mode, @tagName(file.status) }) |part| {
+                hash.update(part);
+                hash.update("\x00");
+            }
+            var digest: [32]u8 = undefined;
+            hash.final(&digest);
+            file.change = digest[0..16].*;
+        }
         try files.append(gpa, file);
         rows.* = .empty;
     }
@@ -231,63 +280,90 @@ pub fn parse(gpa: std.mem.Allocator, patch: []const u8) ![]File {
     var old: u32 = 0;
     var new: u32 = 0;
     var in_hunk = false;
+    var headers = false;
+    var old_left: u32 = 0;
+    var new_left: u32 = 0;
     var lines = std.mem.splitScalar(u8, patch, '\n');
     while (lines.next()) |raw| {
         const line = std.mem.trimEnd(u8, raw, "\r");
+        if (old_left == 0 and new_left == 0) in_hunk = false;
         if (std.mem.startsWith(u8, line, "diff --git ")) {
+            if (in_hunk) return error.InvalidHunk;
             try finish(gpa, &files, current, &rows);
-            const start = if (std.mem.lastIndexOf(u8, line, " b/")) |position| position + 1 else 11;
-            current = .{ .path = path(line[start..]), .unified = &.{}, .split = &.{} };
+            const start = if (std.mem.lastIndexOf(u8, line, " \"b/")) |position| position + 1 else if (std.mem.lastIndexOf(u8, line, " b/")) |position| position + 1 else 11;
+            current = .{ .path = try path(gpa, line[start..]), .unified = &.{}, .split = &.{} };
             in_hunk = false;
+            headers = false;
+            old_left = 0;
+            new_left = 0;
             continue;
         }
-        if (current == null and std.mem.startsWith(u8, line, "--- ")) {
-            current = .{ .path = path(line[4..]), .unified = &.{}, .split = &.{} };
+        if (!in_hunk and std.mem.startsWith(u8, line, "--- ")) {
+            if (headers) {
+                try finish(gpa, &files, current, &rows);
+                current = null;
+            }
+            const before = try path(gpa, line[4..]);
+            if (current == null) current = .{ .path = before, .unified = &.{}, .split = &.{} };
+            if (std.mem.eql(u8, before, "/dev/null")) current.?.status = .added;
+            headers = true;
+            continue;
         }
         if (current == null) continue;
         if (std.mem.startsWith(u8, line, "@@ ")) {
-            var parts = std.mem.tokenizeScalar(u8, line, ' ');
-            _ = parts.next();
-            const before = parts.next() orelse return error.InvalidHunk;
-            const after = parts.next() orelse return error.InvalidHunk;
-            old = std.fmt.parseInt(u32, before[1 .. std.mem.indexOfScalar(u8, before, ',') orelse before.len], 10) catch return error.InvalidHunk;
-            new = std.fmt.parseInt(u32, after[1 .. std.mem.indexOfScalar(u8, after, ',') orelse after.len], 10) catch return error.InvalidHunk;
+            if (in_hunk) return error.InvalidHunk;
+            const hunk = parseHunk(line) orelse return error.InvalidHunk;
+            old = hunk.old_start;
+            new = hunk.new_start;
+            old_left = hunk.old_count;
+            new_left = hunk.new_count;
             try rows.append(gpa, .{ .meta = true, .left = line, .right = line });
             in_hunk = true;
         } else if (!in_hunk) {
-            if (std.mem.startsWith(u8, line, "+++ ") and !std.mem.eql(u8, line[4..], "/dev/null")) current.?.path = path(line[4..]);
+            if (std.mem.startsWith(u8, line, "+++ ")) {
+                const after = try path(gpa, line[4..]);
+                if (std.mem.eql(u8, after, "/dev/null")) current.?.status = .deleted else current.?.path = after;
+            }
             if (std.mem.startsWith(u8, line, "index ")) blobs(&current.?, line[6..]);
             if (std.mem.startsWith(u8, line, "new file mode ")) current.?.mode = line[14..];
             if (std.mem.startsWith(u8, line, "new mode ")) current.?.mode = line[9..];
             if (std.mem.startsWith(u8, line, "new file mode")) current.?.status = .added;
             if (std.mem.startsWith(u8, line, "deleted file mode")) current.?.status = .deleted;
             if (std.mem.startsWith(u8, line, "rename from ")) {
-                current.?.previous = line[12..];
+                current.?.previous = try unquote(gpa, line[12..]);
                 current.?.status = .renamed;
             }
-            if (std.mem.startsWith(u8, line, "rename to ")) current.?.path = line[10..];
+            if (std.mem.startsWith(u8, line, "rename to ")) current.?.path = try unquote(gpa, line[10..]);
             if (std.mem.startsWith(u8, line, "GIT binary patch") or std.mem.startsWith(u8, line, "Binary files ")) current.?.binary = true;
         } else if (line.len > 0) {
             switch (line[0]) {
                 ' ' => {
+                    if (old_left == 0 or new_left == 0) return error.InvalidHunk;
                     try rows.append(gpa, .{ .old = old, .new = new, .left = line[1..], .right = line[1..] });
                     old += 1;
                     new += 1;
+                    old_left -= 1;
+                    new_left -= 1;
                 },
                 '-' => {
+                    if (old_left == 0) return error.InvalidHunk;
                     try rows.append(gpa, .{ .old = old, .left = line[1..], .removed = true });
                     old += 1;
                     current.?.deletions += 1;
+                    old_left -= 1;
                 },
                 '+' => {
+                    if (new_left == 0) return error.InvalidHunk;
                     try rows.append(gpa, .{ .new = new, .right = line[1..], .added = true });
                     new += 1;
                     current.?.additions += 1;
+                    new_left -= 1;
                 },
                 else => {},
             }
         }
     }
+    if (old_left > 0 or new_left > 0) return error.InvalidHunk;
     try finish(gpa, &files, current, &rows);
     if (patch.len > 0 and files.items.len == 0) return error.InvalidPatch;
     return files.items;
@@ -385,6 +461,7 @@ pub fn parseHunk(header: []const u8) ?Range {
     if (!std.mem.eql(u8, parts.next() orelse return null, "@@")) return null;
     const before = parts.next() orelse return null;
     const after = parts.next() orelse return null;
+    if (!std.mem.eql(u8, parts.next() orelse return null, "@@")) return null;
     if (before.len < 2 or after.len < 2 or before[0] != '-' or after[0] != '+') return null;
     const old = range(before[1..]) orelse return null;
     const new = range(after[1..]) orelse return null;
@@ -394,6 +471,8 @@ fn range(text: []const u8) ?[2]u32 {
     const comma = std.mem.indexOfScalar(u8, text, ',');
     const start = std.fmt.parseInt(u32, text[0 .. comma orelse text.len], 10) catch return null;
     const count = if (comma) |at| std.fmt.parseInt(u32, text[at + 1 ..], 10) catch return null else 1;
+    // Consumers use the exclusive end (or start + 1 for an empty side).
+    if (start > std.math.maxInt(u32) - @max(1, count)) return null;
     return .{ start, count };
 }
 fn shifted(line: u32, shift: i64) u32 {
@@ -856,8 +935,8 @@ test "blocks moved between places are found, and edits in place are not" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const alloc = arena.allocator();
-    const files = try parse(alloc, "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,6 +1,2 @@\n x = 1\n-def helper(a, b):\n-    total = a + b\n-    return total * 2\n y = 2\n-z = 3\n+z = 4\n" ++
-        "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n@@ -1,2 +1,5 @@\n q = 1\n+class K:\n+    def helper(a, b):\n+        total = a + b\n+        return total * 2\n r = 2\n");
+    const files = try parse(alloc, "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1,6 +1,3 @@\n x = 1\n-def helper(a, b):\n-    total = a + b\n-    return total * 2\n y = 2\n-z = 3\n+z = 4\n" ++
+        "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n@@ -1,2 +1,6 @@\n q = 1\n+class K:\n+    def helper(a, b):\n+        total = a + b\n+        return total * 2\n r = 2\n");
     const moves = try findMoves(alloc, files);
     try std.testing.expectEqual(@as(usize, 1), moves.len);
     try std.testing.expectEqual(Move{ .from_file = 0, .from_line = 2, .to_file = 1, .to_line = 3, .lines = 3 }, moves[0]);
@@ -883,4 +962,39 @@ test "a listed file reads whole, or as binary" {
     var picture = listedFile("logo.png");
     try readListed(arena.allocator(), &picture, "\x89PNG\x00\x00");
     try std.testing.expect(picture.binary and picture.unified.len == 0);
+}
+
+test "Git quoted paths decode escapes without trimming filename bytes" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const files = try parse(arena.allocator(), "diff --git \"a/tab\\t\\\"\\\\\\316\\273.ts\" \"b/tab\\t\\\"\\\\\\316\\273.ts\"\n--- \"a/tab\\t\\\"\\\\\\316\\273.ts\"\n+++ \"b/tab\\t\\\"\\\\\\316\\273.ts\"\n@@ -1 +1 @@\n-old\n+new\n" ++
+        "diff --git a/ space  b/ space \n--- a/ space \t\n+++ b/ space \t\n@@ -1 +1 @@\n-old\n+new\n" ++
+        "diff --git a/old b/new\nsimilarity index 100%\nrename from \"old\\tname\"\nrename to \"new\\tname\"\n");
+    try std.testing.expectEqualStrings("tab\t\"\\λ.ts", files[0].path);
+    try std.testing.expectEqualStrings(" space ", files[1].path);
+    try std.testing.expectEqualStrings("old\tname", files[2].previous);
+    try std.testing.expectEqualStrings("new\tname", files[2].path);
+}
+
+test "plain unified patches separate files and exclude mail trailers" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const files = try parse(arena.allocator(), "--- a/first\t2026-01-01\n+++ b/first\t2026-01-02\n@@ -1 +1 @@\n--- content\n+++ content\n" ++
+        "--- /dev/null\n+++ b/second\n@@ -0,0 +1 @@\n+second\n-- \n2.50.0\n");
+    try std.testing.expectEqual(@as(usize, 2), files.len);
+    try std.testing.expectEqualStrings("first", files[0].path);
+    try std.testing.expectEqualStrings("-- content", files[0].unified[1].left);
+    try std.testing.expectEqual(@as(u32, 1), files[0].deletions);
+    try std.testing.expectEqualStrings("second", files[1].path);
+    try std.testing.expectEqual(.added, files[1].status);
+    try std.testing.expectEqual(@as(u32, 0), files[1].deletions);
+}
+
+test "invalid hunk signs and overflowing ranges are rejected" {
+    try std.testing.expect(parseHunk("@@ -4294967295,1 +1 @@") == null);
+    try std.testing.expect(parseHunk("@@ -1 +1") == null);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    try std.testing.expectError(error.InvalidHunk, parse(arena.allocator(), "--- a/x\n+++ b/x\n@@ x1 y1 @@\n-a\n+b\n"));
+    try std.testing.expectError(error.InvalidHunk, parse(arena.allocator(), "--- a/x\n+++ b/x\n@@ -1,2 +1,2 @@\n-a\n+b\n"));
 }

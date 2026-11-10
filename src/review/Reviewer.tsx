@@ -42,7 +42,7 @@ export function Reviewer() {
         const response = await fetch(`/api/review?mode=${mode}`, { signal });
         if (!response.headers.get("content-type")?.includes("application/json"))
           throw new Error(
-            "The local Git server is unavailable. Start Patch with pnpm dev or pnpm review.",
+            "The local Git server is unavailable. Start the web reviewer with pnpm dev:web or pnpm review:web.",
           );
         const source = (await response.json()) as ReviewSource & { error?: string };
         if (!response.ok) throw new Error(source.error ?? "Unable to read local changes.");
@@ -619,6 +619,7 @@ function Workspace({
           </footer>
         </main>
         <NotesPanel
+          key={target?.noteId ?? "new"}
           open={notesOpen}
           files={review.files}
           notes={progress.notes}

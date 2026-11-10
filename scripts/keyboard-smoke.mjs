@@ -117,8 +117,13 @@ try {
       .map(Number);
   const field = findBounds('role=textbox name="Find in diff"');
   const changes = findBounds('role=list name="Changes"');
+  const find = findBounds('role=group name="Find"');
   assert.ok(field[1] + field[3] <= changes[1], "Find field must sit above the diff");
-  assert.ok(field[0] > changes[0] + changes[2] / 2, "Find field must sit at the right");
+  assert.ok(
+    find[0] + find[2] / 2 > changes[0] + changes[2] / 2,
+    "Find capsule must sit at the right",
+  );
+  assert.ok(find[0] + find[2] <= changes[0] + changes[2], "Find capsule must fit in the pane");
   await key("cmd+g");
   await waitFor("Line 21 · new");
   await key("cmd+shift+g");
@@ -252,7 +257,7 @@ try {
   );
   throw error;
 } finally {
-  if (app.exitCode === null) {
+  if (app.exitCode === null && app.signalCode === null) {
     const stopped = new Promise((resolveStopped) => app.once("exit", resolveStopped));
     app.kill("SIGTERM");
     await stopped;
