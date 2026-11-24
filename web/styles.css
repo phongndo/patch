@@ -867,60 +867,50 @@ input {
 .status {
   display: inline-grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
-  font: 600 var(--text-meta) var(--mono);
+  width: var(--icon);
+  height: var(--icon);
+  font: 600 var(--text) / 1 var(--mono);
 }
 
 .status .icon {
-  width: 12px;
-  height: 12px;
+  width: var(--icon);
+  height: var(--icon);
 }
 
 .status-added {
   color: var(--add);
-  background: color-mix(in srgb, var(--add) 16%, transparent);
 }
 
 .status-modified {
   color: var(--info);
-  background: color-mix(in srgb, var(--info) 16%, transparent);
 }
 
 .status-deleted {
   color: var(--del);
-  background: color-mix(in srgb, var(--del) 16%, transparent);
 }
 
 .status-renamed {
   color: #c08a2e;
-  background: color-mix(in srgb, #c08a2e 16%, transparent);
 }
 
 .status-clear {
   color: var(--muted);
-  background: var(--hover);
 }
 
 .kind-code {
   color: var(--fg);
-  background: var(--hover);
 }
 
 .kind-tests {
   color: #8b7cf6;
-  background: color-mix(in srgb, #8b7cf6 16%, transparent);
 }
 
 .kind-generated {
   color: var(--muted);
-  background: var(--hover);
 }
 
 .kind-docs {
   color: var(--info);
-  background: color-mix(in srgb, var(--info) 16%, transparent);
 }
 
 /* Lines per kind, under the totals in the bar */
