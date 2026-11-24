@@ -117,6 +117,11 @@ pub fn state_dir() -> PathBuf {
         .join("patch")
 }
 
+/// The draft behind a key, as an adapter names it once it delivered the feedback.
+pub fn draft_for(key: &str) -> Option<PathBuf> {
+    valid_key(key).then(|| state_dir().join("drafts").join(format!("{key}.json")))
+}
+
 /// Delivered feedback starts fresh next time; the last one is kept beside it.
 pub fn retire(draft: &Path) {
     let _ = std::fs::rename(draft, draft.with_extension("json.submitted"));

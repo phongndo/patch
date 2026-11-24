@@ -242,6 +242,65 @@ describe("patchr review", () => {
     }
   }, 20_000);
 
+  test("an adapter's review finds the repository near a file, and closing it prints nothing", async () => {
+    const other = await mkdtemp(join(tmpdir(), "patch-other-"));
+    Bun.spawnSync(["git", "init", "-q", other]);
+    const near = join(other, "not", "yet", "here.ts");
+    const { child, origin, stdout } = await start("--typed", "--uncommitted", "--near", near);
+    try {
+      const review = await (await fetch(`${origin}/api/review`)).json();
+      expect(review.repository).toStartWith("patch-other-");
+      expect(review.scope).toEqual({ kind: "uncommitted" });
+      const live = new AbortController();
+      await fetch(`${origin}/api/live`, { signal: live.signal });
+      await post(`${origin}/api/leave`, {});
+      live.abort();
+      expect(await stdout).toBe("");
+      expect(await child.exited).toBe(0);
+    } finally {
+      child.kill();
+      await rm(other, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  test("what the user typed cannot reach an adapter's flags", async () => {
+    for (const typed of ["--base", "--near x", "--codex t", "'unmatched"]) {
+      const child = Bun.spawnSync([...command, "review", "--typed", typed, "--near", repo], {
+        cwd: repo,
+        env: { ...process.env, XDG_STATE_HOME: state },
+      });
+      expect(child.exitCode).toBe(2);
+      expect(child.stdout.toString()).toBe("");
+    }
+  });
+
+  test("the draft holds submitted feedback until the adapter delivers it", async () => {
+    const submission = { decision: "comment", comments: [], note: "Keep me.", viewed: [] };
+    const { child, origin, stdout } = await start("--typed", "--uncommitted");
+    await post(`${origin}/api/submit`, submission);
+    const { receipt, text } = JSON.parse(await stdout);
+    expect(text).toContain("Keep me.");
+    await child.exited;
+
+    // Never delivered: the next review brings it back.
+    const again = await start("--typed", "--uncommitted");
+    const review = await (await fetch(`${again.origin}/api/review`)).json();
+    again.child.kill();
+    expect(review.draftKey).toBe(receipt);
+    expect(review.draft.note).toBe("Keep me.");
+
+    const draft = join(state, "patch", "drafts", `${receipt}.json`);
+    const delivered = (key: string) =>
+      Bun.spawnSync([...command, "hook", "delivered", key], {
+        env: { ...process.env, XDG_STATE_HOME: state },
+      });
+    delivered("../drafts/x");
+    expect(existsSync(draft)).toBe(true);
+    delivered(receipt);
+    expect(existsSync(draft)).toBe(false);
+    expect(existsSync(`${draft}.submitted`)).toBe(true);
+  }, 20_000);
+
   test("an open page hears when the repository changes", async () => {
     const { child, origin } = await start("--uncommitted");
     try {

@@ -5,6 +5,7 @@
 mod feedback;
 mod git;
 mod github;
+mod harness;
 mod install;
 mod paths;
 mod protocol;
@@ -67,6 +68,10 @@ struct Args {
     open: bool,
     port: Option<u16>,
     dev: bool,
+    /// A harness adapter runs this, so a closed review has no model to tell.
+    adapter: bool,
+    /// A path in the repository to review when the user names none.
+    near: Option<String>,
 }
 
 fn parse_review(args: &[String]) -> Result<Args, String> {
@@ -78,7 +83,24 @@ fn parse_review(args: &[String]) -> Result<Args, String> {
         open: true,
         port: std::env::var("PATCH_PORT").ok().and_then(|p| p.parse().ok()),
         dev: false,
+        adapter: false,
+        near: None,
     };
+    // What the user typed is read on its own: it can neither reach an adapter's
+    // flags nor take them as values.
+    match args.iter().position(|arg| arg == "--typed") {
+        Some(at) => {
+            parsed.adapter = true;
+            let typed = args.get(at + 1).ok_or("--typed needs a value.")?;
+            parse_words(&mut parsed, &harness::split(typed)?, false)?;
+            parse_words(&mut parsed, &[&args[..at], &args[at + 2..]].concat(), true)?;
+        }
+        None => parse_words(&mut parsed, args, false)?,
+    }
+    Ok(parsed)
+}
+
+fn parse_words(parsed: &mut Args, args: &[String], adapter: bool) -> Result<(), String> {
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         let (flag, inline) = match arg.split_once('=') {
@@ -95,12 +117,13 @@ fn parse_review(args: &[String]) -> Result<Args, String> {
             "--local" => parsed.remote = Some(false),
             "--no-open" => parsed.open = false,
             "--dev" => parsed.dev = true,
+            "--near" if adapter => parsed.near = Some(value("--near")?),
             flag if flag.starts_with('-') => return Err(format!("Unknown option {flag}.")),
             _ if parsed.directory.is_none() => parsed.directory = Some(arg.clone()),
             _ => return Err("Pass at most one directory.".into()),
         }
     }
-    Ok(parsed)
+    Ok(())
 }
 
 fn open_browser(url: &str) {
@@ -150,8 +173,14 @@ fn free_port(ip: Ipv4Addr) -> u16 {
 
 async fn review(args: &[String]) -> Result<(), String> {
     let args = parse_review(args)?;
-    let directory = PathBuf::from(args.directory.clone().unwrap_or_else(|| ".".into()));
-    let root = git::find_root(&directory).await?;
+    let near = match (&args.directory, &args.near) {
+        (None, Some(path)) => harness::repository_near(path).await,
+        _ => None,
+    };
+    let root = match near {
+        Some(root) => root,
+        None => git::find_root(&PathBuf::from(args.directory.clone().unwrap_or_else(|| ".".into()))).await?,
+    };
     if let Some(base) = &args.base {
         git::find_base(&root, Some(base)).await?;
     }
@@ -210,16 +239,20 @@ async fn review(args: &[String]) -> Result<(), String> {
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     let root_text = root.to_string_lossy().into_owned();
     let text = match outcome {
-        Outcome::Submitted(submission) => feedback::format(&submission, &git::repository_name(&root), &root_text),
+        Outcome::Submitted(submission) => Some(feedback::format(&submission, &git::repository_name(&root), &root_text)),
         Outcome::Closed => {
             // Closing ends the review; the next one starts clean.
             let _ = std::fs::remove_file(&session.draft);
-            feedback::CLOSED.to_string()
+            (!args.adapter).then(|| feedback::CLOSED.to_string())
         }
     };
-    let mut stdout = std::io::stdout().lock();
-    if writeln!(stdout, "{text}").and_then(|()| stdout.flush()).is_ok() {
-        server::retire(&session.draft);
+    if let Some(text) = text {
+        // An adapter retires the draft itself, with the receipt, once its harness took the feedback.
+        let output = if args.adapter { harness::receipt(&session.draft, &text) } else { text };
+        let mut stdout = std::io::stdout().lock();
+        if writeln!(stdout, "{output}").and_then(|()| stdout.flush()).is_ok() && !args.adapter {
+            server::retire(&session.draft);
+        }
     }
     Ok(())
 }
@@ -241,6 +274,12 @@ fn main() -> ExitCode {
         }
         "install" => install::install(rest.iter().any(|a| a == "--all"), rest.iter().any(|a| a == "--dry-run"))
             .map_err(|error| error.to_string()),
+        "hook" if rest.first().is_some_and(|name| name == "delivered") => {
+            if let Some(draft) = rest.get(1).and_then(|key| server::draft_for(key)) {
+                server::retire(&draft);
+            }
+            Ok(())
+        }
         "uninstall" => install::uninstall().map_err(|error| error.to_string()),
         _ => {
             // `patchr ../repo` and `patchr --base main` read as a review.
