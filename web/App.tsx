@@ -626,21 +626,21 @@ export function App() {
                     </Show>
                   </span>
                   <button
-                    class="button"
+                    class={{ button: true, primary: !hasFeedback() }}
                     ref={(element) => (approveButton = element)}
                     onClick={() => void send("approve")}
                   >
-                    <Icon name="check" />
                     Approve
                   </button>
-                  <button
-                    class="button primary"
-                    disabled={!hasFeedback()}
-                    ref={(element) => (sendButton = element)}
-                    onClick={() => void send("comment")}
-                  >
-                    Send feedback
-                  </button>
+                  <Show when={hasFeedback()}>
+                    <button
+                      class="button primary"
+                      ref={(element) => (sendButton = element)}
+                      onClick={() => void send("comment")}
+                    >
+                      Send feedback
+                    </button>
+                  </Show>
                 </div>
               </PopoverContent>
             </Popover>

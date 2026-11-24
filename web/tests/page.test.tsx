@@ -43,6 +43,12 @@ const clear = async () => {
 const finish = () =>
   [...document.querySelectorAll("button")].find((e) => e.textContent?.startsWith("Finish"))!;
 
+/** What Finish offers, with a star on its main button. */
+const offered = () =>
+  [...document.querySelectorAll(".finish-actions button")].map(
+    (e) => e.textContent!.trim() + (e.classList.contains("primary") ? "*" : ""),
+  );
+
 test("Finish focuses Approve with nothing written, and only Send feedback with comments", async () => {
   await clear();
   const focused: string[] = [];
@@ -52,6 +58,7 @@ test("Finish focuses Approve with nothing written, and only Send feedback with c
   });
   await click(finish());
   expect(focused).toEqual(["Approve"]);
+  expect(offered()).toEqual(["Approve*"]);
   await press(document.activeElement!, "Escape");
   expect(document.activeElement).toBe(finish());
 
@@ -59,6 +66,7 @@ test("Finish focuses Approve with nothing written, and only Send feedback with c
   focused.length = 0;
   await click(finish());
   expect(focused).toEqual(["Send feedback"]);
+  expect(offered()).toEqual(["Approve", "Send feedback*"]);
   await press(document.activeElement!, "Escape");
   await clear();
 });
