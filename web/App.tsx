@@ -12,6 +12,7 @@ import { isShown, kindOf, kinds, opensCollapsed, state, stats, type Kind, type T
 import { ScopePicker } from "./ScopePicker.tsx";
 import { defaults, preferences } from "./settings.ts";
 import { Sidebar } from "./Sidebar.tsx";
+import { Splitter } from "./splitter.ts";
 
 const SettingsDialog = lazy(() =>
   import("./SettingsDialog.tsx").then((m) => ({ default: m.SettingsDialog })),
@@ -28,26 +29,13 @@ export function App() {
   const sidebar = () => settings.sidebarOpen;
   const setSidebar = (toggle: (shown: boolean) => boolean) =>
     preferences.update({ sidebarOpen: toggle(settings.sidebarOpen) });
-  const clampWidth = (width: number) => Math.round(Math.min(Math.max(width, 180), innerWidth * 0.5));
-
-  function startResize(event: PointerEvent & { currentTarget: HTMLElement }) {
-    const handle = event.currentTarget;
-    handle.setPointerCapture(event.pointerId);
-    handle.toggleAttribute("data-dragging", true);
-    let width = settings.sidebarWidth;
-    // While dragging only the variable moves; the setting is saved once, at the end.
-    const move = (moved: PointerEvent) => {
-      width = clampWidth(settings.sidebarSide === "right" ? innerWidth - moved.clientX : moved.clientX);
-      document.documentElement.style.setProperty("--sidebar", `${width}px`);
-    };
-    const end = () => {
-      handle.removeEventListener("pointermove", move);
-      handle.toggleAttribute("data-dragging", false);
-      preferences.update({ sidebarWidth: width });
-    };
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("lostpointercapture", end, { once: true });
-  }
+  const minWidth = 180;
+  const [maxWidth, setMaxWidth] = createSignal(Math.round(innerWidth / 2));
+  // Follows a drag on its own; the setting, and every effect on it, waits for the end.
+  const [sidebarWidth, setSidebarWidth] = createSignal(() => settings.sidebarWidth);
+  createEffect(sidebarWidth, (width) =>
+    document.documentElement.style.setProperty("--sidebar", `${width}px`),
+  );
   const [finishing, setFinishing] = createSignal(false);
   const [sendError, setSendError] = createSignal("");
   let searchInput: HTMLInputElement | undefined;
@@ -189,8 +177,11 @@ export function App() {
       },
       () => setStale(true),
     );
+    const onResize = () => setMaxWidth(Math.round(innerWidth / 2));
+    addEventListener("resize", onResize);
     void state.load();
     return () => {
+      removeEventListener("resize", onResize);
       disconnect();
       diff?.destroy();
     };
@@ -446,20 +437,18 @@ export function App() {
         }}
       />
 
-      <button
-        type="button"
+      <Splitter
         class="resizer"
         aria-label="Resize the sidebar"
+        aria-controls="sidebar"
         title="Drag to resize · double-click to reset"
-        onPointerDown={startResize}
+        side={settings.sidebarSide}
+        min={minWidth}
+        max={maxWidth()}
+        value={sidebarWidth()}
+        onValueChange={setSidebarWidth}
+        onValueCommit={(width) => preferences.update({ sidebarWidth: width })}
         onDblClick={() => preferences.update({ sidebarWidth: defaults.sidebarWidth })}
-        onKeyDown={(event) => {
-          const toward = event.key === "ArrowLeft" ? -16 : event.key === "ArrowRight" ? 16 : 0;
-          if (!toward) return;
-          event.preventDefault();
-          const step = settings.sidebarSide === "right" ? -toward : toward;
-          preferences.update({ sidebarWidth: clampWidth(settings.sidebarWidth + step) });
-        }}
       />
 
       {/* The dialog and its theme catalog load the first time Settings opens. */}
