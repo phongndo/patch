@@ -669,18 +669,18 @@ function GeneralPage() {
 }
 
 const pages: Array<{ id: string; title: string; icon: IconName; words: string }> = [
+  {
+    id: "general",
+    title: "General",
+    icon: "sidebarLeft",
+    words: "layout sidebar left right split unified wrap diff change markers bars words generated fold",
+  },
   { id: "themes", title: "Themes", icon: "brush", words: "appearance color scheme dark light mode palette" },
   {
     id: "typography",
     title: "Typography",
     icon: "type",
     words: "font size weight line height ligatures interface code",
-  },
-  {
-    id: "general",
-    title: "General",
-    icon: "sidebarLeft",
-    words: "layout sidebar left right split unified wrap diff change markers bars words generated fold",
   },
   { id: "shortcuts", title: "Shortcuts", icon: "key", words: "keyboard keys bindings hotkeys" },
 ];

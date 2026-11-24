@@ -3,12 +3,224 @@ type Family = { themes: Array<{ name: string }> };
 const pick = (family: Family, name: string) => family.themes.find((theme) => theme.name === name)!;
 
 export const communityThemes: Record<string, () => Promise<object>> = {
+  "macos-classic:macos-classic-dark": () =>
+    import("./themes/community/macos-classic--macos-classic.json").then((m) =>
+      pick(m.default, "macOS Classic Dark"),
+    ),
+  "macos-classic:macos-classic-light": () =>
+    import("./themes/community/macos-classic--macos-classic.json").then((m) =>
+      pick(m.default, "macOS Classic Light"),
+    ),
+  "tokyo-night:tokyo-night-light": () =>
+    import("./themes/community/tokyo-night--tokyo-night.json").then((m) =>
+      pick(m.default, "Tokyo Night Light"),
+    ),
+  "tokyo-night:tokyo-night-moon": () =>
+    import("./themes/community/tokyo-night--tokyo-night.json").then((m) =>
+      pick(m.default, "Tokyo Night Moon"),
+    ),
+  "tokyo-night:tokyo-night-storm": () =>
+    import("./themes/community/tokyo-night--tokyo-night.json").then((m) =>
+      pick(m.default, "Tokyo Night Storm"),
+    ),
+  "github-theme:github-dark-colorblind": () =>
+    import("./themes/community/github-theme--github_theme.json").then((m) =>
+      pick(m.default, "GitHub Dark Colorblind"),
+    ),
+  "github-theme:github-dark-tritanopia": () =>
+    import("./themes/community/github-theme--github_theme.json").then((m) =>
+      pick(m.default, "GitHub Dark Tritanopia"),
+    ),
+  "github-theme:github-light-colorblind": () =>
+    import("./themes/community/github-theme--github_theme.json").then((m) =>
+      pick(m.default, "GitHub Light Colorblind"),
+    ),
+  "github-theme:github-light-tritanopia": () =>
+    import("./themes/community/github-theme--github_theme.json").then((m) =>
+      pick(m.default, "GitHub Light Tritanopia"),
+    ),
+  "nvim-nightfox:carbonfox-opaque": () =>
+    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
+      pick(m.default, "Carbonfox - opaque"),
+    ),
+  "nvim-nightfox:dawnfox-opaque": () =>
+    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
+      pick(m.default, "Dawnfox - opaque"),
+    ),
+  "nvim-nightfox:dayfox-opaque": () =>
+    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
+      pick(m.default, "Dayfox - opaque"),
+    ),
+  "nvim-nightfox:duskfox-opaque": () =>
+    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
+      pick(m.default, "Duskfox - opaque"),
+    ),
+  "nvim-nightfox:nightfox-opaque": () =>
+    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
+      pick(m.default, "Nightfox - opaque"),
+    ),
+  "nvim-nightfox:nordfox-opaque": () =>
+    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
+      pick(m.default, "Nordfox - opaque"),
+    ),
+  "nvim-nightfox:terafox-opaque": () =>
+    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
+      pick(m.default, "Terafox - opaque"),
+    ),
+  "vscode-dark-modern:vscode-dark-modern": () =>
+    import("./themes/community/vscode-dark-modern--vscode-dark-modern.json").then((m) =>
+      pick(m.default, "VSCode Dark Modern"),
+    ),
+  "dracula:dracula": () =>
+    import("./themes/community/dracula--dracula.json").then((m) => pick(m.default, "Dracula")),
+  "dracula:dracula-light-alucard": () =>
+    import("./themes/community/dracula--dracula.json").then((m) =>
+      pick(m.default, "Dracula Light (Alucard)"),
+    ),
+  "dracula:dracula-solid": () =>
+    import("./themes/community/dracula--dracula.json").then((m) => pick(m.default, "Dracula Solid")),
+  "snazzy:snazzy-theme": () =>
+    import("./themes/community/snazzy--snazzy.json").then((m) => pick(m.default, "Snazzy Theme")),
+  "the-dark-side:the-dark-side": () =>
+    import("./themes/community/the-dark-side--the-dark-side.json").then((m) =>
+      pick(m.default, "The Dark Side"),
+    ),
+  "nord:nord-dark": () =>
+    import("./themes/community/nord--nord.json").then((m) => pick(m.default, "Nord Dark")),
+  "nord:nord-darker": () =>
+    import("./themes/community/nord--nord.json").then((m) => pick(m.default, "Nord Darker")),
+  "nord:nord-light": () =>
+    import("./themes/community/nord--nord.json").then((m) => pick(m.default, "Nord Light")),
+  "material-dark:material-dark": () =>
+    import("./themes/community/material-dark--zed_material_theme.json").then((m) =>
+      pick(m.default, "Material Dark"),
+    ),
+  "new-darcula:new-darcula": () =>
+    import("./themes/community/new-darcula--newdarcula.json").then((m) => pick(m.default, "New Darcula")),
+  "new-darcula:new-darcula-darker": () =>
+    import("./themes/community/new-darcula--newdarcula.json").then((m) =>
+      pick(m.default, "New Darcula Darker"),
+    ),
+  "new-darcula:new-darcula-light": () =>
+    import("./themes/community/new-darcula--newdarcula.json").then((m) =>
+      pick(m.default, "New Darcula Light"),
+    ),
+  "everforest:everforest-dark-hard-material": () =>
+    import("./themes/community/everforest--everforest-material.json").then((m) =>
+      pick(m.default, "Everforest Dark Hard (material)"),
+    ),
+  "everforest:everforest-dark-hard-regular": () =>
+    import("./themes/community/everforest--everforest-regular.json").then((m) =>
+      pick(m.default, "Everforest Dark Hard (regular)"),
+    ),
+  "everforest:everforest-dark-medium-material": () =>
+    import("./themes/community/everforest--everforest-material.json").then((m) =>
+      pick(m.default, "Everforest Dark Medium (material)"),
+    ),
+  "everforest:everforest-dark-medium-regular": () =>
+    import("./themes/community/everforest--everforest-regular.json").then((m) =>
+      pick(m.default, "Everforest Dark Medium (regular)"),
+    ),
+  "everforest:everforest-dark-soft-material": () =>
+    import("./themes/community/everforest--everforest-material.json").then((m) =>
+      pick(m.default, "Everforest Dark Soft (material)"),
+    ),
+  "everforest:everforest-dark-soft-regular": () =>
+    import("./themes/community/everforest--everforest-regular.json").then((m) =>
+      pick(m.default, "Everforest Dark Soft (regular)"),
+    ),
+  "everforest:everforest-light-hard-material": () =>
+    import("./themes/community/everforest--everforest-material.json").then((m) =>
+      pick(m.default, "Everforest Light Hard (material)"),
+    ),
+  "everforest:everforest-light-hard-regular": () =>
+    import("./themes/community/everforest--everforest-regular.json").then((m) =>
+      pick(m.default, "Everforest Light Hard (regular)"),
+    ),
+  "everforest:everforest-light-medium-material": () =>
+    import("./themes/community/everforest--everforest-material.json").then((m) =>
+      pick(m.default, "Everforest Light Medium (material)"),
+    ),
+  "everforest:everforest-light-medium-regular": () =>
+    import("./themes/community/everforest--everforest-regular.json").then((m) =>
+      pick(m.default, "Everforest Light Medium (regular)"),
+    ),
+  "everforest:everforest-light-soft-material": () =>
+    import("./themes/community/everforest--everforest-material.json").then((m) =>
+      pick(m.default, "Everforest Light Soft (material)"),
+    ),
+  "everforest:everforest-light-soft-regular": () =>
+    import("./themes/community/everforest--everforest-regular.json").then((m) =>
+      pick(m.default, "Everforest Light Soft (regular)"),
+    ),
+  "smooth:smooth-dark": () =>
+    import("./themes/community/smooth--smooth.json").then((m) => pick(m.default, "Smooth Dark")),
+  "smooth:smooth-light": () =>
+    import("./themes/community/smooth--smooth.json").then((m) => pick(m.default, "Smooth Light")),
+  "ultimate-dark-neo:ultimate-dark-neo": () =>
+    import("./themes/community/ultimate-dark-neo--Ultimate Dark Neo.json").then((m) =>
+      pick(m.default, "Ultimate Dark Neo"),
+    ),
+  "tailwind-theme:tailwind-syntax": () =>
+    import("./themes/community/tailwind-theme--tailwind.json").then((m) =>
+      pick(m.default, "Tailwind Syntax"),
+    ),
+  "kanagawa-themes:kanagawa": () =>
+    import("./themes/community/kanagawa-themes--Kanagawa.json").then((m) => pick(m.default, "Kanagawa")),
+  "min-theme:min-dark-solid": () =>
+    import("./themes/community/min-theme--min-theme.json").then((m) => pick(m.default, "Min Dark (Solid)")),
+  "min-theme:min-light-solid": () =>
+    import("./themes/community/min-theme--min-theme.json").then((m) => pick(m.default, "Min Light (Solid)")),
+  "serendipity:serendipity-midnight": () =>
+    import("./themes/community/serendipity--serendipity.json").then((m) =>
+      pick(m.default, "Serendipity Midnight"),
+    ),
+  "serendipity:serendipity-midnight-electric": () =>
+    import("./themes/community/serendipity--serendipity.json").then((m) =>
+      pick(m.default, "Serendipity Midnight Electric"),
+    ),
+  "serendipity:serendipity-morning": () =>
+    import("./themes/community/serendipity--serendipity.json").then((m) =>
+      pick(m.default, "Serendipity Morning"),
+    ),
+  "serendipity:serendipity-sunset": () =>
+    import("./themes/community/serendipity--serendipity.json").then((m) =>
+      pick(m.default, "Serendipity Sunset"),
+    ),
+  "vercel-theme:vercel-dark": () =>
+    import("./themes/community/vercel-theme--vercel-theme.json").then((m) => pick(m.default, "Vercel Dark")),
+  "vercel-theme:vercel-light": () =>
+    import("./themes/community/vercel-theme--vercel-theme.json").then((m) => pick(m.default, "Vercel Light")),
   "0x96f:0x96f-theme": () =>
     import("./themes/community/0x96f--0x96f-theme.json").then((m) => pick(m.default, "0x96f Theme")),
-  "0x96f:0x96f-theme-lighter": () =>
-    import("./themes/community/0x96f--0x96f-theme.json").then((m) => pick(m.default, "0x96f Theme Lighter")),
   "0x96f:0x96f-theme-darker": () =>
     import("./themes/community/0x96f--0x96f-theme.json").then((m) => pick(m.default, "0x96f Theme Darker")),
+  "0x96f:0x96f-theme-lighter": () =>
+    import("./themes/community/0x96f--0x96f-theme.json").then((m) => pick(m.default, "0x96f Theme Lighter")),
+  "night-owlz:night-owl-dark": () =>
+    import("./themes/community/night-owlz--NightOwl.json").then((m) => pick(m.default, "Night Owl Dark")),
+  "modest-dark:modest-dark": () =>
+    import("./themes/community/modest-dark--modest.json").then((m) => pick(m.default, "Modest Dark")),
+  "one-dark-darkened:one-dark-darkened": () =>
+    import("./themes/community/one-dark-darkened--one-dark-darkened.json").then((m) =>
+      pick(m.default, "One Dark - Darkened"),
+    ),
+  "nightfox:carbonfox": () =>
+    import("./themes/community/nightfox--nightfox.json").then((m) => pick(m.default, "Carbonfox")),
+  "nightfox:duskfox": () =>
+    import("./themes/community/nightfox--nightfox.json").then((m) => pick(m.default, "Duskfox")),
+  "nightfox:nightfox": () =>
+    import("./themes/community/nightfox--nightfox.json").then((m) => pick(m.default, "Nightfox")),
+  "nightfox:nordfox": () =>
+    import("./themes/community/nightfox--nightfox.json").then((m) => pick(m.default, "Nordfox")),
+  "nightfox:terafox": () =>
+    import("./themes/community/nightfox--nightfox.json").then((m) => pick(m.default, "Terafox")),
+  "gentle-dark:gentle-dark": () =>
+    import("./themes/community/gentle-dark--gentledark.json").then((m) => pick(m.default, "Gentle Dark")),
+  "github-copilot-theme:github-copilot-theme-dark": () =>
+    import("./themes/community/github-copilot-theme--gh-copilot.json").then((m) =>
+      pick(m.default, "GitHub Copilot Theme - Dark"),
+    ),
   "base16:base16-3024": () =>
     import("./themes/community/base16--base16-3024.json").then((m) => pick(m.default, "Base16 3024")),
   "base16:base16-apathy": () =>
@@ -19,85 +231,85 @@ export const communityThemes: Record<string, () => Promise<object>> = {
     ),
   "base16:base16-ashes": () =>
     import("./themes/community/base16--base16-ashes.json").then((m) => pick(m.default, "Base16 Ashes")),
-  "base16:base16-atelier-cave-light": () =>
-    import("./themes/community/base16--base16-atelier-cave-light.json").then((m) =>
-      pick(m.default, "Base16 Atelier Cave Light"),
-    ),
   "base16:base16-atelier-cave": () =>
     import("./themes/community/base16--base16-atelier-cave.json").then((m) =>
       pick(m.default, "Base16 Atelier Cave"),
     ),
-  "base16:base16-atelier-dune-light": () =>
-    import("./themes/community/base16--base16-atelier-dune-light.json").then((m) =>
-      pick(m.default, "Base16 Atelier Dune Light"),
+  "base16:base16-atelier-cave-light": () =>
+    import("./themes/community/base16--base16-atelier-cave-light.json").then((m) =>
+      pick(m.default, "Base16 Atelier Cave Light"),
     ),
   "base16:base16-atelier-dune": () =>
     import("./themes/community/base16--base16-atelier-dune.json").then((m) =>
       pick(m.default, "Base16 Atelier Dune"),
     ),
-  "base16:base16-atelier-estuary-light": () =>
-    import("./themes/community/base16--base16-atelier-estuary-light.json").then((m) =>
-      pick(m.default, "Base16 Atelier Estuary Light"),
+  "base16:base16-atelier-dune-light": () =>
+    import("./themes/community/base16--base16-atelier-dune-light.json").then((m) =>
+      pick(m.default, "Base16 Atelier Dune Light"),
     ),
   "base16:base16-atelier-estuary": () =>
     import("./themes/community/base16--base16-atelier-estuary.json").then((m) =>
       pick(m.default, "Base16 Atelier Estuary"),
     ),
-  "base16:base16-atelier-forest-light": () =>
-    import("./themes/community/base16--base16-atelier-forest-light.json").then((m) =>
-      pick(m.default, "Base16 Atelier Forest Light"),
+  "base16:base16-atelier-estuary-light": () =>
+    import("./themes/community/base16--base16-atelier-estuary-light.json").then((m) =>
+      pick(m.default, "Base16 Atelier Estuary Light"),
     ),
   "base16:base16-atelier-forest": () =>
     import("./themes/community/base16--base16-atelier-forest.json").then((m) =>
       pick(m.default, "Base16 Atelier Forest"),
     ),
-  "base16:base16-atelier-heath-light": () =>
-    import("./themes/community/base16--base16-atelier-heath-light.json").then((m) =>
-      pick(m.default, "Base16 Atelier Heath Light"),
+  "base16:base16-atelier-forest-light": () =>
+    import("./themes/community/base16--base16-atelier-forest-light.json").then((m) =>
+      pick(m.default, "Base16 Atelier Forest Light"),
     ),
   "base16:base16-atelier-heath": () =>
     import("./themes/community/base16--base16-atelier-heath.json").then((m) =>
       pick(m.default, "Base16 Atelier Heath"),
     ),
-  "base16:base16-atelier-lakeside-light": () =>
-    import("./themes/community/base16--base16-atelier-lakeside-light.json").then((m) =>
-      pick(m.default, "Base16 Atelier Lakeside Light"),
+  "base16:base16-atelier-heath-light": () =>
+    import("./themes/community/base16--base16-atelier-heath-light.json").then((m) =>
+      pick(m.default, "Base16 Atelier Heath Light"),
     ),
   "base16:base16-atelier-lakeside": () =>
     import("./themes/community/base16--base16-atelier-lakeside.json").then((m) =>
       pick(m.default, "Base16 Atelier Lakeside"),
     ),
-  "base16:base16-atelier-plateau-light": () =>
-    import("./themes/community/base16--base16-atelier-plateau-light.json").then((m) =>
-      pick(m.default, "Base16 Atelier Plateau Light"),
+  "base16:base16-atelier-lakeside-light": () =>
+    import("./themes/community/base16--base16-atelier-lakeside-light.json").then((m) =>
+      pick(m.default, "Base16 Atelier Lakeside Light"),
     ),
   "base16:base16-atelier-plateau": () =>
     import("./themes/community/base16--base16-atelier-plateau.json").then((m) =>
       pick(m.default, "Base16 Atelier Plateau"),
     ),
-  "base16:base16-atelier-savanna-light": () =>
-    import("./themes/community/base16--base16-atelier-savanna-light.json").then((m) =>
-      pick(m.default, "Base16 Atelier Savanna Light"),
+  "base16:base16-atelier-plateau-light": () =>
+    import("./themes/community/base16--base16-atelier-plateau-light.json").then((m) =>
+      pick(m.default, "Base16 Atelier Plateau Light"),
     ),
   "base16:base16-atelier-savanna": () =>
     import("./themes/community/base16--base16-atelier-savanna.json").then((m) =>
       pick(m.default, "Base16 Atelier Savanna"),
     ),
-  "base16:base16-atelier-seaside-light": () =>
-    import("./themes/community/base16--base16-atelier-seaside-light.json").then((m) =>
-      pick(m.default, "Base16 Atelier Seaside Light"),
+  "base16:base16-atelier-savanna-light": () =>
+    import("./themes/community/base16--base16-atelier-savanna-light.json").then((m) =>
+      pick(m.default, "Base16 Atelier Savanna Light"),
     ),
   "base16:base16-atelier-seaside": () =>
     import("./themes/community/base16--base16-atelier-seaside.json").then((m) =>
       pick(m.default, "Base16 Atelier Seaside"),
     ),
-  "base16:base16-atelier-sulphurpool-light": () =>
-    import("./themes/community/base16--base16-atelier-sulphurpool-light.json").then((m) =>
-      pick(m.default, "Base16 Atelier Sulphurpool Light"),
+  "base16:base16-atelier-seaside-light": () =>
+    import("./themes/community/base16--base16-atelier-seaside-light.json").then((m) =>
+      pick(m.default, "Base16 Atelier Seaside Light"),
     ),
   "base16:base16-atelier-sulphurpool": () =>
     import("./themes/community/base16--base16-atelier-sulphurpool.json").then((m) =>
       pick(m.default, "Base16 Atelier Sulphurpool"),
+    ),
+  "base16:base16-atelier-sulphurpool-light": () =>
+    import("./themes/community/base16--base16-atelier-sulphurpool-light.json").then((m) =>
+      pick(m.default, "Base16 Atelier Sulphurpool Light"),
     ),
   "base16:base16-atlas": () =>
     import("./themes/community/base16--base16-atlas.json").then((m) => pick(m.default, "Base16 Atlas")),
@@ -113,6 +325,10 @@ export const communityThemes: Record<string, () => Promise<object>> = {
     ),
   "base16:base16-bespin": () =>
     import("./themes/community/base16--base16-bespin.json").then((m) => pick(m.default, "Base16 Bespin")),
+  "base16:base16-black-metal": () =>
+    import("./themes/community/base16--base16-black-metal.json").then((m) =>
+      pick(m.default, "Base16 Black Metal"),
+    ),
   "base16:base16-black-metal-bathory-dark": () =>
     import("./themes/community/base16--base16-black-metal-bathory_custom.json").then((m) =>
       pick(m.default, "Base16 Black Metal (Bathory) Dark"),
@@ -153,10 +369,6 @@ export const communityThemes: Record<string, () => Promise<object>> = {
     import("./themes/community/base16--base16-black-metal-venom.json").then((m) =>
       pick(m.default, "Base16 Black Metal (Venom)"),
     ),
-  "base16:base16-black-metal": () =>
-    import("./themes/community/base16--base16-black-metal.json").then((m) =>
-      pick(m.default, "Base16 Black Metal"),
-    ),
   "base16:base16-blue-forest": () =>
     import("./themes/community/base16--base16-blueforest.json").then((m) =>
       pick(m.default, "Base16 Blue Forest"),
@@ -171,13 +383,13 @@ export const communityThemes: Record<string, () => Promise<object>> = {
     import("./themes/community/base16--base16-brogrammer.json").then((m) =>
       pick(m.default, "Base16 Brogrammer"),
     ),
-  "base16:base16-brush-trees-dark": () =>
-    import("./themes/community/base16--base16-brushtrees-dark.json").then((m) =>
-      pick(m.default, "Base16 Brush Trees Dark"),
-    ),
   "base16:base16-brush-trees": () =>
     import("./themes/community/base16--base16-brushtrees.json").then((m) =>
       pick(m.default, "Base16 Brush Trees"),
+    ),
+  "base16:base16-brush-trees-dark": () =>
+    import("./themes/community/base16--base16-brushtrees-dark.json").then((m) =>
+      pick(m.default, "Base16 Brush Trees Dark"),
     ),
   "base16:base16-caroline": () =>
     import("./themes/community/base16--base16-caroline.json").then((m) => pick(m.default, "Base16 caroline")),
@@ -245,23 +457,23 @@ export const communityThemes: Record<string, () => Promise<object>> = {
     import("./themes/community/base16--base16-da-one-white.json").then((m) =>
       pick(m.default, "Base16 Da One White"),
     ),
+  "base16:base16-danqing": () =>
+    import("./themes/community/base16--base16-danqing.json").then((m) => pick(m.default, "Base16 DanQing")),
   "base16:base16-danqing-light": () =>
     import("./themes/community/base16--base16-danqing-light.json").then((m) =>
       pick(m.default, "Base16 DanQing Light"),
     ),
-  "base16:base16-danqing": () =>
-    import("./themes/community/base16--base16-danqing.json").then((m) => pick(m.default, "Base16 DanQing")),
   "base16:base16-darcula": () =>
     import("./themes/community/base16--base16-darcula.json").then((m) => pick(m.default, "Base16 Darcula")),
+  "base16:base16-dark-violet": () =>
+    import("./themes/community/base16--base16-darkviolet.json").then((m) =>
+      pick(m.default, "Base16 Dark Violet"),
+    ),
   "base16:base16-darkmoss": () =>
     import("./themes/community/base16--base16-darkmoss.json").then((m) => pick(m.default, "Base16 darkmoss")),
   "base16:base16-darktooth": () =>
     import("./themes/community/base16--base16-darktooth.json").then((m) =>
       pick(m.default, "Base16 Darktooth"),
-    ),
-  "base16:base16-dark-violet": () =>
-    import("./themes/community/base16--base16-darkviolet.json").then((m) =>
-      pick(m.default, "Base16 Dark Violet"),
     ),
   "base16:base16-decaf": () =>
     import("./themes/community/base16--base16-decaf.json").then((m) => pick(m.default, "Base16 Decaf")),
@@ -311,21 +523,21 @@ export const communityThemes: Record<string, () => Promise<object>> = {
     import("./themes/community/base16--base16-eris.json").then((m) => pick(m.default, "Base16 eris")),
   "base16:base16-espresso": () =>
     import("./themes/community/base16--base16-espresso.json").then((m) => pick(m.default, "Base16 Espresso")),
-  "base16:base16-eva-dim": () =>
-    import("./themes/community/base16--base16-eva-dim.json").then((m) => pick(m.default, "Base16 Eva Dim")),
   "base16:base16-eva": () =>
     import("./themes/community/base16--base16-eva.json").then((m) => pick(m.default, "Base16 Eva")),
+  "base16:base16-eva-dim": () =>
+    import("./themes/community/base16--base16-eva-dim.json").then((m) => pick(m.default, "Base16 Eva Dim")),
   "base16:base16-evenok-dark": () =>
     import("./themes/community/base16--base16-evenok-dark.json").then((m) =>
       pick(m.default, "Base16 Evenok Dark"),
     ),
-  "base16:base16-everforest-dark-hard": () =>
-    import("./themes/community/base16--base16-everforest-dark-hard.json").then((m) =>
-      pick(m.default, "Base16 Everforest Dark Hard"),
-    ),
   "base16:base16-everforest": () =>
     import("./themes/community/base16--base16-everforest.json").then((m) =>
       pick(m.default, "Base16 Everforest"),
+    ),
+  "base16:base16-everforest-dark-hard": () =>
+    import("./themes/community/base16--base16-everforest-dark-hard.json").then((m) =>
+      pick(m.default, "Base16 Everforest Dark Hard"),
     ),
   "base16:base16-flat": () =>
     import("./themes/community/base16--base16-flat.json").then((m) => pick(m.default, "Base16 Flat")),
@@ -425,13 +637,13 @@ export const communityThemes: Record<string, () => Promise<object>> = {
     import("./themes/community/base16--base16-harmonic16-light.json").then((m) =>
       pick(m.default, "Base16 Harmonic16 Light"),
     ),
-  "base16:base16-heetch-light": () =>
-    import("./themes/community/base16--base16-heetch-light.json").then((m) =>
-      pick(m.default, "Base16 Heetch Light"),
-    ),
   "base16:base16-heetch-dark": () =>
     import("./themes/community/base16--base16-heetch.json").then((m) =>
       pick(m.default, "Base16 Heetch Dark"),
+    ),
+  "base16:base16-heetch-light": () =>
+    import("./themes/community/base16--base16-heetch-light.json").then((m) =>
+      pick(m.default, "Base16 Heetch Light"),
     ),
   "base16:base16-helios": () =>
     import("./themes/community/base16--base16-helios.json").then((m) => pick(m.default, "Base16 Helios")),
@@ -481,6 +693,8 @@ export const communityThemes: Record<string, () => Promise<object>> = {
     import("./themes/community/base16--base16-kimber.json").then((m) => pick(m.default, "Base16 Kimber")),
   "base16:base16-lime": () =>
     import("./themes/community/base16--base16-lime.json").then((m) => pick(m.default, "Base16 lime")),
+  "base16:base16-london-tube": () =>
+    import("./themes/community/base16--base16-tube.json").then((m) => pick(m.default, "Base16 London Tube")),
   "base16:base16-macintosh": () =>
     import("./themes/community/base16--base16-macintosh.json").then((m) =>
       pick(m.default, "Base16 Macintosh"),
@@ -491,6 +705,8 @@ export const communityThemes: Record<string, () => Promise<object>> = {
     ),
   "base16:base16-materia": () =>
     import("./themes/community/base16--base16-materia.json").then((m) => pick(m.default, "Base16 Materia")),
+  "base16:base16-material": () =>
+    import("./themes/community/base16--base16-material.json").then((m) => pick(m.default, "Base16 Material")),
   "base16:base16-material-darker": () =>
     import("./themes/community/base16--base16-material-darker.json").then((m) =>
       pick(m.default, "Base16 Material Darker"),
@@ -507,8 +723,6 @@ export const communityThemes: Record<string, () => Promise<object>> = {
     import("./themes/community/base16--base16-material-vivid.json").then((m) =>
       pick(m.default, "Base16 Material Vivid"),
     ),
-  "base16:base16-material": () =>
-    import("./themes/community/base16--base16-material.json").then((m) => pick(m.default, "Base16 Material")),
   "base16:base16-mellow-purple": () =>
     import("./themes/community/base16--base16-mellow-purple.json").then((m) =>
       pick(m.default, "Base16 Mellow Purple"),
@@ -579,13 +793,13 @@ export const communityThemes: Record<string, () => Promise<object>> = {
     import("./themes/community/base16--base16-pop.json").then((m) => pick(m.default, "Base16 Pop")),
   "base16:base16-porple": () =>
     import("./themes/community/base16--base16-porple.json").then((m) => pick(m.default, "Base16 Porple")),
-  "base16:base16-primer-dark-dimmed": () =>
-    import("./themes/community/base16--base16-primer-dark-dimmed.json").then((m) =>
-      pick(m.default, "Base16 Primer Dark Dimmed"),
-    ),
   "base16:base16-primer-dark": () =>
     import("./themes/community/base16--base16-primer-dark.json").then((m) =>
       pick(m.default, "Base16 Primer Dark"),
+    ),
+  "base16:base16-primer-dark-dimmed": () =>
+    import("./themes/community/base16--base16-primer-dark-dimmed.json").then((m) =>
+      pick(m.default, "Base16 Primer Dark Dimmed"),
     ),
   "base16:base16-primer-light": () =>
     import("./themes/community/base16--base16-primer-light.json").then((m) =>
@@ -603,6 +817,10 @@ export const communityThemes: Record<string, () => Promise<object>> = {
     ),
   "base16:base16-rebecca": () =>
     import("./themes/community/base16--base16-rebecca.json").then((m) => pick(m.default, "Base16 Rebecca")),
+  "base16:base16-ros-pine": () =>
+    import("./themes/community/base16--base16-rose-pine.json").then((m) =>
+      pick(m.default, "Base16 Rosé Pine"),
+    ),
   "base16:base16-ros-pine-dawn": () =>
     import("./themes/community/base16--base16-rose-pine-dawn.json").then((m) =>
       pick(m.default, "Base16 Rosé Pine Dawn"),
@@ -610,10 +828,6 @@ export const communityThemes: Record<string, () => Promise<object>> = {
   "base16:base16-ros-pine-moon": () =>
     import("./themes/community/base16--base16-rose-pine-moon.json").then((m) =>
       pick(m.default, "Base16 Rosé Pine Moon"),
-    ),
-  "base16:base16-ros-pine": () =>
-    import("./themes/community/base16--base16-rose-pine.json").then((m) =>
-      pick(m.default, "Base16 Rosé Pine"),
     ),
   "base16:base16-sagelight": () =>
     import("./themes/community/base16--base16-sagelight.json").then((m) =>
@@ -669,13 +883,13 @@ export const communityThemes: Record<string, () => Promise<object>> = {
     ),
   "base16:base16-snazzy": () =>
     import("./themes/community/base16--base16-snazzy.json").then((m) => pick(m.default, "Base16 Snazzy")),
-  "base16:base16-solar-flare-light": () =>
-    import("./themes/community/base16--base16-solarflare-light.json").then((m) =>
-      pick(m.default, "Base16 Solar Flare Light"),
-    ),
   "base16:base16-solar-flare": () =>
     import("./themes/community/base16--base16-solarflare.json").then((m) =>
       pick(m.default, "Base16 Solar Flare"),
+    ),
+  "base16:base16-solar-flare-light": () =>
+    import("./themes/community/base16--base16-solarflare-light.json").then((m) =>
+      pick(m.default, "Base16 Solar Flare Light"),
     ),
   "base16:base16-solarized-dark": () =>
     import("./themes/community/base16--base16-solarized-dark.json").then((m) =>
@@ -773,26 +987,24 @@ export const communityThemes: Record<string, () => Promise<object>> = {
     import("./themes/community/base16--base16-tokyo-night-terminal-storm.json").then((m) =>
       pick(m.default, "Base16 Tokyo Night Terminal Storm"),
     ),
+  "base16:base16-tokyodark": () =>
+    import("./themes/community/base16--base16-tokyodark.json").then((m) =>
+      pick(m.default, "Base16 Tokyodark"),
+    ),
   "base16:base16-tokyodark-terminal": () =>
     import("./themes/community/base16--base16-tokyodark-terminal.json").then((m) =>
       pick(m.default, "Base16 Tokyodark Terminal"),
     ),
-  "base16:base16-tokyodark": () =>
-    import("./themes/community/base16--base16-tokyodark.json").then((m) =>
-      pick(m.default, "Base16 Tokyodark"),
+  "base16:base16-tomorrow": () =>
+    import("./themes/community/base16--base16-tomorrow.json").then((m) => pick(m.default, "Base16 Tomorrow")),
+  "base16:base16-tomorrow-night": () =>
+    import("./themes/community/base16--base16-tomorrow-night.json").then((m) =>
+      pick(m.default, "Base16 Tomorrow Night"),
     ),
   "base16:base16-tomorrow-night-eighties": () =>
     import("./themes/community/base16--base16-tomorrow-night-eighties.json").then((m) =>
       pick(m.default, "Base16 Tomorrow Night Eighties"),
     ),
-  "base16:base16-tomorrow-night": () =>
-    import("./themes/community/base16--base16-tomorrow-night.json").then((m) =>
-      pick(m.default, "Base16 Tomorrow Night"),
-    ),
-  "base16:base16-tomorrow": () =>
-    import("./themes/community/base16--base16-tomorrow.json").then((m) => pick(m.default, "Base16 Tomorrow")),
-  "base16:base16-london-tube": () =>
-    import("./themes/community/base16--base16-tube.json").then((m) => pick(m.default, "Base16 London Tube")),
   "base16:base16-twilight": () =>
     import("./themes/community/base16--base16-twilight.json").then((m) => pick(m.default, "Base16 Twilight")),
   "base16:base16-unikitty-dark": () =>
@@ -815,37 +1027,37 @@ export const communityThemes: Record<string, () => Promise<object>> = {
     import("./themes/community/base16--base16-vice.json").then((m) => pick(m.default, "Base16 vice")),
   "base16:base16-vulcan": () =>
     import("./themes/community/base16--base16-vulcan.json").then((m) => pick(m.default, "Base16 vulcan")),
-  "base16:base16-windows-10-light": () =>
-    import("./themes/community/base16--base16-windows-10-light.json").then((m) =>
-      pick(m.default, "Base16 Windows 10 Light"),
-    ),
   "base16:base16-windows-10": () =>
     import("./themes/community/base16--base16-windows-10.json").then((m) =>
       pick(m.default, "Base16 Windows 10"),
     ),
-  "base16:base16-windows-95-light": () =>
-    import("./themes/community/base16--base16-windows-95-light.json").then((m) =>
-      pick(m.default, "Base16 Windows 95 Light"),
+  "base16:base16-windows-10-light": () =>
+    import("./themes/community/base16--base16-windows-10-light.json").then((m) =>
+      pick(m.default, "Base16 Windows 10 Light"),
     ),
   "base16:base16-windows-95": () =>
     import("./themes/community/base16--base16-windows-95.json").then((m) =>
       pick(m.default, "Base16 Windows 95"),
     ),
-  "base16:base16-windows-high-contrast-light": () =>
-    import("./themes/community/base16--base16-windows-highcontrast-light.json").then((m) =>
-      pick(m.default, "Base16 Windows High Contrast Light"),
+  "base16:base16-windows-95-light": () =>
+    import("./themes/community/base16--base16-windows-95-light.json").then((m) =>
+      pick(m.default, "Base16 Windows 95 Light"),
     ),
   "base16:base16-windows-high-contrast": () =>
     import("./themes/community/base16--base16-windows-highcontrast.json").then((m) =>
       pick(m.default, "Base16 Windows High Contrast"),
     ),
-  "base16:base16-windows-nt-light": () =>
-    import("./themes/community/base16--base16-windows-nt-light.json").then((m) =>
-      pick(m.default, "Base16 Windows NT Light"),
+  "base16:base16-windows-high-contrast-light": () =>
+    import("./themes/community/base16--base16-windows-highcontrast-light.json").then((m) =>
+      pick(m.default, "Base16 Windows High Contrast Light"),
     ),
   "base16:base16-windows-nt": () =>
     import("./themes/community/base16--base16-windows-nt.json").then((m) =>
       pick(m.default, "Base16 Windows NT"),
+    ),
+  "base16:base16-windows-nt-light": () =>
+    import("./themes/community/base16--base16-windows-nt-light.json").then((m) =>
+      pick(m.default, "Base16 Windows NT Light"),
     ),
   "base16:base16-woodland": () =>
     import("./themes/community/base16--base16-woodland.json").then((m) => pick(m.default, "Base16 Woodland")),
@@ -857,286 +1069,6 @@ export const communityThemes: Record<string, () => Promise<object>> = {
     import("./themes/community/base16--base16-zenbones.json").then((m) => pick(m.default, "Base16 Zenbones")),
   "base16:base16-zenburn": () =>
     import("./themes/community/base16--base16-zenburn.json").then((m) => pick(m.default, "Base16 Zenburn")),
-  "catppuccin:catppuccin-latte-no-italics": () =>
-    import("./themes/community/catppuccin--catppuccin-no-italics-mauve.json").then((m) =>
-      pick(m.default, "Catppuccin Latte - No Italics"),
-    ),
-  "catppuccin:catppuccin-frapp-no-italics": () =>
-    import("./themes/community/catppuccin--catppuccin-no-italics-mauve.json").then((m) =>
-      pick(m.default, "Catppuccin Frappé - No Italics"),
-    ),
-  "catppuccin:catppuccin-macchiato-no-italics": () =>
-    import("./themes/community/catppuccin--catppuccin-no-italics-mauve.json").then((m) =>
-      pick(m.default, "Catppuccin Macchiato - No Italics"),
-    ),
-  "catppuccin:catppuccin-mocha-no-italics": () =>
-    import("./themes/community/catppuccin--catppuccin-no-italics-mauve.json").then((m) =>
-      pick(m.default, "Catppuccin Mocha - No Italics"),
-    ),
-  "dracula:dracula": () =>
-    import("./themes/community/dracula--dracula.json").then((m) => pick(m.default, "Dracula")),
-  "dracula:dracula-solid": () =>
-    import("./themes/community/dracula--dracula.json").then((m) => pick(m.default, "Dracula Solid")),
-  "dracula:dracula-light-alucard": () =>
-    import("./themes/community/dracula--dracula.json").then((m) =>
-      pick(m.default, "Dracula Light (Alucard)"),
-    ),
-  "everforest:everforest-dark-hard-blur": () =>
-    import("./themes/community/everforest--everforest-blur.json").then((m) =>
-      pick(m.default, "Everforest Dark Hard (blur)"),
-    ),
-  "everforest:everforest-dark-medium-blur": () =>
-    import("./themes/community/everforest--everforest-blur.json").then((m) =>
-      pick(m.default, "Everforest Dark Medium (blur)"),
-    ),
-  "everforest:everforest-dark-soft-blur": () =>
-    import("./themes/community/everforest--everforest-blur.json").then((m) =>
-      pick(m.default, "Everforest Dark Soft (blur)"),
-    ),
-  "everforest:everforest-light-hard-blur": () =>
-    import("./themes/community/everforest--everforest-blur.json").then((m) =>
-      pick(m.default, "Everforest Light Hard (blur)"),
-    ),
-  "everforest:everforest-light-medium-blur": () =>
-    import("./themes/community/everforest--everforest-blur.json").then((m) =>
-      pick(m.default, "Everforest Light Medium (blur)"),
-    ),
-  "everforest:everforest-light-soft-blur": () =>
-    import("./themes/community/everforest--everforest-blur.json").then((m) =>
-      pick(m.default, "Everforest Light Soft (blur)"),
-    ),
-  "everforest:everforest-dark-hard-material": () =>
-    import("./themes/community/everforest--everforest-material.json").then((m) =>
-      pick(m.default, "Everforest Dark Hard (material)"),
-    ),
-  "everforest:everforest-dark-medium-material": () =>
-    import("./themes/community/everforest--everforest-material.json").then((m) =>
-      pick(m.default, "Everforest Dark Medium (material)"),
-    ),
-  "everforest:everforest-dark-soft-material": () =>
-    import("./themes/community/everforest--everforest-material.json").then((m) =>
-      pick(m.default, "Everforest Dark Soft (material)"),
-    ),
-  "everforest:everforest-light-hard-material": () =>
-    import("./themes/community/everforest--everforest-material.json").then((m) =>
-      pick(m.default, "Everforest Light Hard (material)"),
-    ),
-  "everforest:everforest-light-medium-material": () =>
-    import("./themes/community/everforest--everforest-material.json").then((m) =>
-      pick(m.default, "Everforest Light Medium (material)"),
-    ),
-  "everforest:everforest-light-soft-material": () =>
-    import("./themes/community/everforest--everforest-material.json").then((m) =>
-      pick(m.default, "Everforest Light Soft (material)"),
-    ),
-  "everforest:everforest-dark-hard-regular": () =>
-    import("./themes/community/everforest--everforest-regular.json").then((m) =>
-      pick(m.default, "Everforest Dark Hard (regular)"),
-    ),
-  "everforest:everforest-dark-medium-regular": () =>
-    import("./themes/community/everforest--everforest-regular.json").then((m) =>
-      pick(m.default, "Everforest Dark Medium (regular)"),
-    ),
-  "everforest:everforest-dark-soft-regular": () =>
-    import("./themes/community/everforest--everforest-regular.json").then((m) =>
-      pick(m.default, "Everforest Dark Soft (regular)"),
-    ),
-  "everforest:everforest-light-hard-regular": () =>
-    import("./themes/community/everforest--everforest-regular.json").then((m) =>
-      pick(m.default, "Everforest Light Hard (regular)"),
-    ),
-  "everforest:everforest-light-medium-regular": () =>
-    import("./themes/community/everforest--everforest-regular.json").then((m) =>
-      pick(m.default, "Everforest Light Medium (regular)"),
-    ),
-  "everforest:everforest-light-soft-regular": () =>
-    import("./themes/community/everforest--everforest-regular.json").then((m) =>
-      pick(m.default, "Everforest Light Soft (regular)"),
-    ),
-  "gentle-dark:gentle-dark": () =>
-    import("./themes/community/gentle-dark--gentledark.json").then((m) => pick(m.default, "Gentle Dark")),
-  "github-copilot-theme:github-copilot-theme-dark": () =>
-    import("./themes/community/github-copilot-theme--gh-copilot.json").then((m) =>
-      pick(m.default, "GitHub Copilot Theme - Dark"),
-    ),
-  "github-theme:github-light-colorblind": () =>
-    import("./themes/community/github-theme--github_theme.json").then((m) =>
-      pick(m.default, "GitHub Light Colorblind"),
-    ),
-  "github-theme:github-light-tritanopia": () =>
-    import("./themes/community/github-theme--github_theme.json").then((m) =>
-      pick(m.default, "GitHub Light Tritanopia"),
-    ),
-  "github-theme:github-dark-colorblind": () =>
-    import("./themes/community/github-theme--github_theme.json").then((m) =>
-      pick(m.default, "GitHub Dark Colorblind"),
-    ),
-  "github-theme:github-dark-tritanopia": () =>
-    import("./themes/community/github-theme--github_theme.json").then((m) =>
-      pick(m.default, "GitHub Dark Tritanopia"),
-    ),
-  "gruvbox-material:gruvbox-material": () =>
-    import("./themes/community/gruvbox-material--gruvbox-material.json").then((m) =>
-      pick(m.default, "Gruvbox Material"),
-    ),
-  "kanagawa-themes:kanagawa-wave-no-italics": () =>
-    import("./themes/community/kanagawa-themes--Kanagawa-no-italics.json").then((m) =>
-      pick(m.default, "Kanagawa Wave - No Italics"),
-    ),
-  "kanagawa-themes:kanagawa-dragon-no-italics": () =>
-    import("./themes/community/kanagawa-themes--Kanagawa-no-italics.json").then((m) =>
-      pick(m.default, "Kanagawa Dragon - No Italics"),
-    ),
-  "kanagawa-themes:kanagawa-lotus-no-italics": () =>
-    import("./themes/community/kanagawa-themes--Kanagawa-no-italics.json").then((m) =>
-      pick(m.default, "Kanagawa Lotus - No Italics"),
-    ),
-  "kanagawa-themes:kanagawa": () =>
-    import("./themes/community/kanagawa-themes--Kanagawa.json").then((m) => pick(m.default, "Kanagawa")),
-  "macos-classic:macos-classic-light": () =>
-    import("./themes/community/macos-classic--macos-classic.json").then((m) =>
-      pick(m.default, "macOS Classic Light"),
-    ),
-  "macos-classic:macos-classic-dark": () =>
-    import("./themes/community/macos-classic--macos-classic.json").then((m) =>
-      pick(m.default, "macOS Classic Dark"),
-    ),
-  "material-dark:material-dark": () =>
-    import("./themes/community/material-dark--zed_material_theme.json").then((m) =>
-      pick(m.default, "Material Dark"),
-    ),
-  "melange:melange-dark": () =>
-    import("./themes/community/melange--melange.json").then((m) => pick(m.default, "Melange Dark")),
-  "melange:melange-light": () =>
-    import("./themes/community/melange--melange.json").then((m) => pick(m.default, "Melange Light")),
-  "min-theme:min-dark-solid": () =>
-    import("./themes/community/min-theme--min-theme.json").then((m) => pick(m.default, "Min Dark (Solid)")),
-  "min-theme:min-dark-blurred": () =>
-    import("./themes/community/min-theme--min-theme.json").then((m) => pick(m.default, "Min Dark (Blurred)")),
-  "min-theme:min-light-solid": () =>
-    import("./themes/community/min-theme--min-theme.json").then((m) => pick(m.default, "Min Light (Solid)")),
-  "min-theme:min-light-blurred": () =>
-    import("./themes/community/min-theme--min-theme.json").then((m) =>
-      pick(m.default, "Min Light (Blurred)"),
-    ),
-  "modest-dark:modest-dark": () =>
-    import("./themes/community/modest-dark--modest.json").then((m) => pick(m.default, "Modest Dark")),
-  "monosami:monosami-dark": () =>
-    import("./themes/community/monosami--monosami.json").then((m) => pick(m.default, "Monosami Dark")),
-  "monosami:monosami-light": () =>
-    import("./themes/community/monosami--monosami.json").then((m) => pick(m.default, "Monosami Light")),
-  "monosami:monosami-ink": () =>
-    import("./themes/community/monosami--monosami.json").then((m) => pick(m.default, "Monosami Ink")),
-  "monosami:monosami-ink-lite": () =>
-    import("./themes/community/monosami--monosami.json").then((m) => pick(m.default, "Monosami Ink Lite")),
-  "monosami:monosami-ink-light": () =>
-    import("./themes/community/monosami--monosami.json").then((m) => pick(m.default, "Monosami Ink Light")),
-  "new-darcula:new-darcula": () =>
-    import("./themes/community/new-darcula--newdarcula.json").then((m) => pick(m.default, "New Darcula")),
-  "new-darcula:new-darcula-darker": () =>
-    import("./themes/community/new-darcula--newdarcula.json").then((m) =>
-      pick(m.default, "New Darcula Darker"),
-    ),
-  "new-darcula:new-darcula-light": () =>
-    import("./themes/community/new-darcula--newdarcula.json").then((m) =>
-      pick(m.default, "New Darcula Light"),
-    ),
-  "night-owlz:night-owl-dark": () =>
-    import("./themes/community/night-owlz--NightOwl.json").then((m) => pick(m.default, "Night Owl Dark")),
-  "night-owlz:night-owl-light-no-italics": () =>
-    import("./themes/community/night-owlz--NightOwl.json").then((m) =>
-      pick(m.default, "Night Owl Light No Italics"),
-    ),
-  "night-owlz:night-owl-no-italics": () =>
-    import("./themes/community/night-owlz--NightOwl.json").then((m) =>
-      pick(m.default, "Night Owl No Italics"),
-    ),
-  "nightfox:carbonfox": () =>
-    import("./themes/community/nightfox--nightfox.json").then((m) => pick(m.default, "Carbonfox")),
-  "nightfox:duskfox": () =>
-    import("./themes/community/nightfox--nightfox.json").then((m) => pick(m.default, "Duskfox")),
-  "nightfox:nightfox": () =>
-    import("./themes/community/nightfox--nightfox.json").then((m) => pick(m.default, "Nightfox")),
-  "nightfox:nordfox": () =>
-    import("./themes/community/nightfox--nightfox.json").then((m) => pick(m.default, "Nordfox")),
-  "nightfox:terafox": () =>
-    import("./themes/community/nightfox--nightfox.json").then((m) => pick(m.default, "Terafox")),
-  "nord:nord-dark": () =>
-    import("./themes/community/nord--nord.json").then((m) => pick(m.default, "Nord Dark")),
-  "nord:nord-darker": () =>
-    import("./themes/community/nord--nord.json").then((m) => pick(m.default, "Nord Darker")),
-  "nord:nord-light": () =>
-    import("./themes/community/nord--nord.json").then((m) => pick(m.default, "Nord Light")),
-  "nord:nord-dark-no-italics": () =>
-    import("./themes/community/nord--nord.json").then((m) => pick(m.default, "Nord Dark - No Italics")),
-  "nord:nord-light-no-italics": () =>
-    import("./themes/community/nord--nord.json").then((m) => pick(m.default, "Nord Light - No Italics")),
-  "nvim-nightfox:nightfox-opaque": () =>
-    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
-      pick(m.default, "Nightfox - opaque"),
-    ),
-  "nvim-nightfox:dayfox-opaque": () =>
-    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
-      pick(m.default, "Dayfox - opaque"),
-    ),
-  "nvim-nightfox:dawnfox-opaque": () =>
-    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
-      pick(m.default, "Dawnfox - opaque"),
-    ),
-  "nvim-nightfox:duskfox-opaque": () =>
-    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
-      pick(m.default, "Duskfox - opaque"),
-    ),
-  "nvim-nightfox:nordfox-opaque": () =>
-    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
-      pick(m.default, "Nordfox - opaque"),
-    ),
-  "nvim-nightfox:terafox-opaque": () =>
-    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
-      pick(m.default, "Terafox - opaque"),
-    ),
-  "nvim-nightfox:carbonfox-opaque": () =>
-    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
-      pick(m.default, "Carbonfox - opaque"),
-    ),
-  "nvim-nightfox:nightfox-blurred": () =>
-    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
-      pick(m.default, "Nightfox - blurred"),
-    ),
-  "nvim-nightfox:dayfox-blurred": () =>
-    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
-      pick(m.default, "Dayfox - blurred"),
-    ),
-  "nvim-nightfox:dawnfox-blurred": () =>
-    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
-      pick(m.default, "Dawnfox - blurred"),
-    ),
-  "nvim-nightfox:duskfox-blurred": () =>
-    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
-      pick(m.default, "Duskfox - blurred"),
-    ),
-  "nvim-nightfox:nordfox-blurred": () =>
-    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
-      pick(m.default, "Nordfox - blurred"),
-    ),
-  "nvim-nightfox:terafox-blurred": () =>
-    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
-      pick(m.default, "Terafox - blurred"),
-    ),
-  "nvim-nightfox:carbonfox-blurred": () =>
-    import("./themes/community/nvim-nightfox--nvim-nightfox.json").then((m) =>
-      pick(m.default, "Carbonfox - blurred"),
-    ),
-  "oceanic-next:oceanic-next": () =>
-    import("./themes/community/oceanic-next--oceanic-next.json").then((m) => pick(m.default, "Oceanic Next")),
-  "oceanic-next:oceanic-next-light": () =>
-    import("./themes/community/oceanic-next--oceanic-next.json").then((m) =>
-      pick(m.default, "Oceanic Next Light"),
-    ),
-  "one-dark-darkened:one-dark-darkened": () =>
-    import("./themes/community/one-dark-darkened--one-dark-darkened.json").then((m) =>
-      pick(m.default, "One Dark - Darkened"),
-    ),
   "one-dark-pro-max:one-dark-pro-glass": () =>
     import("./themes/community/one-dark-pro-max--one-dark-pro-glass.json").then((m) =>
       pick(m.default, "One Dark Pro Glass"),
@@ -1145,96 +1077,64 @@ export const communityThemes: Record<string, () => Promise<object>> = {
     import("./themes/community/one-dark-pro-max--one-dark-pro-max.json").then((m) =>
       pick(m.default, "One Dark Pro Max"),
     ),
-  "quiet-light-theme:quiet-light": () =>
-    import("./themes/community/quiet-light-theme--quiet-light.json").then((m) =>
-      pick(m.default, "Quiet Light"),
-    ),
-  "serendipity:serendipity-morning": () =>
-    import("./themes/community/serendipity--serendipity.json").then((m) =>
-      pick(m.default, "Serendipity Morning"),
-    ),
-  "serendipity:serendipity-sunset": () =>
-    import("./themes/community/serendipity--serendipity.json").then((m) =>
-      pick(m.default, "Serendipity Sunset"),
-    ),
-  "serendipity:serendipity-midnight": () =>
-    import("./themes/community/serendipity--serendipity.json").then((m) =>
-      pick(m.default, "Serendipity Midnight"),
-    ),
-  "serendipity:serendipity-midnight-electric": () =>
-    import("./themes/community/serendipity--serendipity.json").then((m) =>
-      pick(m.default, "Serendipity Midnight Electric"),
-    ),
-  "smooth:smooth-dark": () =>
-    import("./themes/community/smooth--smooth.json").then((m) => pick(m.default, "Smooth Dark")),
-  "smooth:smooth-light": () =>
-    import("./themes/community/smooth--smooth.json").then((m) => pick(m.default, "Smooth Light")),
-  "snazzy:snazzy-theme": () =>
-    import("./themes/community/snazzy--snazzy.json").then((m) => pick(m.default, "Snazzy Theme")),
-  "snazzy:snazzy-theme-blurred": () =>
-    import("./themes/community/snazzy--snazzy.json").then((m) => pick(m.default, "Snazzy Theme - blurred")),
-  "sublime-mariana-theme:sublime-mariana": () =>
-    import("./themes/community/sublime-mariana-theme--mariana.json").then((m) =>
-      pick(m.default, "Sublime Mariana"),
+  "gruvbox-material:gruvbox-material": () =>
+    import("./themes/community/gruvbox-material--gruvbox-material.json").then((m) =>
+      pick(m.default, "Gruvbox Material"),
     ),
   "sublime-mariana-theme:sublime-breakers": () =>
     import("./themes/community/sublime-mariana-theme--mariana.json").then((m) =>
       pick(m.default, "Sublime Breakers"),
     ),
-  "synthwave:synthwave-84-dark": () =>
-    import("./themes/community/synthwave--synthwave-84.json").then((m) =>
-      pick(m.default, "SynthWave 84 Dark"),
+  "sublime-mariana-theme:sublime-mariana": () =>
+    import("./themes/community/sublime-mariana-theme--mariana.json").then((m) =>
+      pick(m.default, "Sublime Mariana"),
     ),
-  "tailwind-theme:tailwind-syntax": () =>
-    import("./themes/community/tailwind-theme--tailwind.json").then((m) =>
-      pick(m.default, "Tailwind Syntax"),
-    ),
-  "the-dark-side:the-dark-side": () =>
-    import("./themes/community/the-dark-side--the-dark-side.json").then((m) =>
-      pick(m.default, "The Dark Side"),
-    ),
-  "tokyo-night:tokyo-night-light": () =>
-    import("./themes/community/tokyo-night--tokyo-night.json").then((m) =>
-      pick(m.default, "Tokyo Night Light"),
-    ),
-  "tokyo-night:tokyo-night-storm": () =>
-    import("./themes/community/tokyo-night--tokyo-night.json").then((m) =>
-      pick(m.default, "Tokyo Night Storm"),
-    ),
-  "tokyo-night:tokyo-night-moon": () =>
-    import("./themes/community/tokyo-night--tokyo-night.json").then((m) =>
-      pick(m.default, "Tokyo Night Moon"),
-    ),
-  "tomorrow-theme:tomorrow-night": () =>
-    import("./themes/community/tomorrow-theme--tomorrow.json").then((m) => pick(m.default, "Tomorrow Night")),
+  "monosami:monosami-dark": () =>
+    import("./themes/community/monosami--monosami.json").then((m) => pick(m.default, "Monosami Dark")),
+  "monosami:monosami-ink": () =>
+    import("./themes/community/monosami--monosami.json").then((m) => pick(m.default, "Monosami Ink")),
+  "monosami:monosami-ink-light": () =>
+    import("./themes/community/monosami--monosami.json").then((m) => pick(m.default, "Monosami Ink Light")),
+  "monosami:monosami-ink-lite": () =>
+    import("./themes/community/monosami--monosami.json").then((m) => pick(m.default, "Monosami Ink Lite")),
+  "monosami:monosami-light": () =>
+    import("./themes/community/monosami--monosami.json").then((m) => pick(m.default, "Monosami Light")),
+  "melange:melange-dark": () =>
+    import("./themes/community/melange--melange.json").then((m) => pick(m.default, "Melange Dark")),
+  "melange:melange-light": () =>
+    import("./themes/community/melange--melange.json").then((m) => pick(m.default, "Melange Light")),
   "tomorrow-theme:tomorrow": () =>
     import("./themes/community/tomorrow-theme--tomorrow.json").then((m) => pick(m.default, "Tomorrow")),
-  "tomorrow-theme:tomorrow-night-out": () =>
-    import("./themes/community/tomorrow-theme--tomorrow.json").then((m) =>
-      pick(m.default, "Tomorrow Night Out"),
-    ),
-  "tomorrow-theme:tomorrow-night-blue": () =>
-    import("./themes/community/tomorrow-theme--tomorrow.json").then((m) =>
-      pick(m.default, "Tomorrow Night Blue"),
-    ),
   "tomorrow-theme:tomorrow-at-midnight": () =>
     import("./themes/community/tomorrow-theme--tomorrow.json").then((m) =>
       pick(m.default, "Tomorrow at Midnight"),
     ),
-  "ultimate-dark-neo:ultimate-dark-neo": () =>
-    import("./themes/community/ultimate-dark-neo--Ultimate Dark Neo.json").then((m) =>
-      pick(m.default, "Ultimate Dark Neo"),
+  "tomorrow-theme:tomorrow-night": () =>
+    import("./themes/community/tomorrow-theme--tomorrow.json").then((m) => pick(m.default, "Tomorrow Night")),
+  "tomorrow-theme:tomorrow-night-blue": () =>
+    import("./themes/community/tomorrow-theme--tomorrow.json").then((m) =>
+      pick(m.default, "Tomorrow Night Blue"),
     ),
-  "vercel-theme:vercel-dark": () =>
-    import("./themes/community/vercel-theme--vercel-theme.json").then((m) => pick(m.default, "Vercel Dark")),
-  "vercel-theme:vercel-light": () =>
-    import("./themes/community/vercel-theme--vercel-theme.json").then((m) => pick(m.default, "Vercel Light")),
-  "vscode-dark-modern:vscode-dark-modern": () =>
-    import("./themes/community/vscode-dark-modern--vscode-dark-modern.json").then((m) =>
-      pick(m.default, "VSCode Dark Modern"),
+  "tomorrow-theme:tomorrow-night-out": () =>
+    import("./themes/community/tomorrow-theme--tomorrow.json").then((m) =>
+      pick(m.default, "Tomorrow Night Out"),
+    ),
+  "synthwave:synthwave-84-dark": () =>
+    import("./themes/community/synthwave--synthwave-84.json").then((m) =>
+      pick(m.default, "SynthWave 84 Dark"),
+    ),
+  "quiet-light-theme:quiet-light": () =>
+    import("./themes/community/quiet-light-theme--quiet-light.json").then((m) =>
+      pick(m.default, "Quiet Light"),
     ),
   "zedwaita:zedwaita-dark": () =>
     import("./themes/community/zedwaita--zedwaita.json").then((m) => pick(m.default, "Zedwaita Dark")),
   "zedwaita:zedwaita-light": () =>
     import("./themes/community/zedwaita--zedwaita.json").then((m) => pick(m.default, "Zedwaita Light")),
+  "oceanic-next:oceanic-next": () =>
+    import("./themes/community/oceanic-next--oceanic-next.json").then((m) => pick(m.default, "Oceanic Next")),
+  "oceanic-next:oceanic-next-light": () =>
+    import("./themes/community/oceanic-next--oceanic-next.json").then((m) =>
+      pick(m.default, "Oceanic Next Light"),
+    ),
 };

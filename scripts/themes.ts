@@ -44,14 +44,22 @@ function entry(id: string, group: string, theme: ZedTheme) {
 }
 
 const entries: ReturnType<typeof entry>[] = [];
+const byName = (a: string, b: string) => a.localeCompare(b, "en", { numeric: true, sensitivity: "base" });
 
 // Pierre Highlights' bundled themes: Pierre's own first, then the rest.
 const bundled = (await readdir(bundledDir)).filter((f) => f.endsWith(".js") && !f.startsWith("loader"));
-for (const file of bundled.sort()) {
+const builtins: ReturnType<typeof entry>[] = [];
+for (const file of bundled) {
   const id = file.slice(0, -3);
   const theme = (await import(join(bundledDir, file))).default as ZedTheme;
-  entries.push(entry(id, id.startsWith("pierre-") ? "pierre" : "builtin", theme));
+  builtins.push(entry(id, id.startsWith("pierre-") ? "pierre" : "builtin", theme));
 }
+// Pierre's own first, then the rest by name, so a family's variants sit together.
+entries.push(
+  ...builtins.toSorted(
+    (a, b) => Number(b.group === "pierre") - Number(a.group === "pierre") || byName(a.name, b.name),
+  ),
+);
 
 // Community themes: one family per file, each split into its themes.
 const taken = new Set(entries.map((theme) => theme.name.toLowerCase()));
@@ -61,7 +69,15 @@ const slug = (text: string) =>
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
-const files = (await readdir(communityDir)).filter((f) => f.endsWith(".json")).sort();
+// NOTICE.md lists extensions most-downloaded first: that is their order here,
+// with each extension's themes by name. Base16 goes last, by name.
+const notice = await readFile(join(communityDir, "NOTICE.md"), "utf8");
+const rank = new Map([...notice.matchAll(/^- .*? \(([^)]+)\):/gm)].map((match, index) => [match[1]!, index]));
+const extensionOf = (file: string) => file.split("--")[0]!;
+const files = (await readdir(communityDir))
+  .filter((f) => f.endsWith(".json"))
+  .toSorted((a, b) => (rank.get(extensionOf(a)) ?? 1e9) - (rank.get(extensionOf(b)) ?? 1e9) || byName(a, b));
+const community: Array<{ theme: ReturnType<typeof entry>; loader: string }> = [];
 for (const file of files) {
   const extension = file.split("--")[0]!;
   let family: { themes?: ZedTheme[] };
@@ -72,13 +88,23 @@ for (const file of files) {
   }
   for (const theme of family.themes ?? []) {
     if (!theme?.name || !theme.style || taken.has(theme.name.toLowerCase())) continue;
+    // Variants that differ only in italics or window blur look identical as tiles.
+    if (/no italics|blurred|\bblur\b/i.test(theme.name)) continue;
     taken.add(theme.name.toLowerCase());
     const id = `${extension}:${slug(theme.name)}`;
-    entries.push(entry(id, extension === "base16" ? "base16" : "community", theme));
-    loaders.push(
-      `  ${JSON.stringify(id)}: () => import("./themes/community/${file}").then((m) => pick(m.default, ${JSON.stringify(theme.name)})),`,
-    );
+    community.push({
+      theme: entry(id, extension === "base16" ? "base16" : "community", theme),
+      loader: `  ${JSON.stringify(id)}: () => import("./themes/community/${file}").then((m) => pick(m.default, ${JSON.stringify(theme.name)})),`,
+    });
   }
+}
+// Within an extension, its themes by name; files were already in rank order.
+const extensionRank = (id: string) => rank.get(id.split(":")[0]!) ?? 1e9;
+for (const { theme, loader } of community.toSorted(
+  (a, b) => extensionRank(a.theme.id) - extensionRank(b.theme.id) || byName(a.theme.name, b.theme.name),
+)) {
+  entries.push(theme);
+  loaders.push(loader);
 }
 
 await writeFile(

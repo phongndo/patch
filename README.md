@@ -35,7 +35,7 @@ Settings (⌘, or the gear at the bottom of the sidebar) cover themes, fonts and
 sizes, layout, the diff, and every keyboard shortcut. They are kept in
 `~/.config/patch/settings.json` and apply to every review.
 
-There are 443 themes for light and dark: Pierre's own and its other built-ins,
+There are 416 themes for light and dark: Pierre's own and its other built-ins,
 the most-downloaded MIT and Apache-licensed theme extensions from Zed's
 registry (Catppuccin, Tokyo Night, GitHub, Dracula, Nord, Rosé Pine, Kanagawa,
 Everforest, Gruvbox Material and more), and 251 Base16 schemes behind a switch.
