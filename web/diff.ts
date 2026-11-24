@@ -50,7 +50,13 @@ const pool = getOrCreateWorkerPoolSingleton({
   },
 });
 
-i18n.set({ messages: { searchPlaceholder: "Find" } });
+i18n.set({
+  messages: {
+    searchPlaceholder: "Find",
+    unmodifiedLines: "{count, plural, one {# line} other {# lines}}",
+    unknownUnmodifiedLines: "More lines",
+  },
+});
 
 const chevron = (direction: "up" | "down") =>
   `url("data:image/svg+xml,${encodeURIComponent(
@@ -150,7 +156,7 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     diffStyle: "split",
     diffIndicators: startup.indicators,
     lineDiffType: startup.wordDiff ? "word-alt" : "none",
-    hunkSeparators: "line-info",
+    hunkSeparators: "line-info-basic",
     overflow: startup.wrap ? "wrap" : "scroll",
     stickyHeaders: true,
     searchOptions: { disableShortcuts: true },
@@ -179,6 +185,8 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
       "[data-diffs-header] [data-additions-count]{order:-1}",
       "[data-additions-count],[data-deletions-count]{font-family:var(--font)!important;font-variant-numeric:tabular-nums}",
       "[data-change-icon=change]{display:none}",
+      // What is folded away is a quiet line of text, not a bar.
+      "[data-separator],[data-separator] *{background:transparent!important;border-color:transparent!important}",
       // A change is an edge and a tint that runs through its line number; nothing is hatched.
       "[data-column-number],[data-gutter-buffer]{border-right-color:transparent!important}",
       "[data-indicators=bars] [data-column-number][data-line-type=change-deletion]::before{background:var(--diffs-deletion-base)}",
