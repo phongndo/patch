@@ -425,6 +425,17 @@ input {
   overflow: auto;
   padding: 0 16px;
   outline: none;
+  background: var(--page);
+}
+
+/* Each file is a card on the editor's background, set apart from the page.
+   A shadow, not a border, so the virtualized layout's heights stay exact;
+   clip, not hidden, so sticky headers keep working. */
+.diff diffs-container {
+  border-radius: 10px;
+  background: var(--bg);
+  box-shadow: 0 0 0 1px var(--line-strong);
+  overflow: clip;
 }
 
 .file-meta {

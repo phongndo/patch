@@ -9,6 +9,7 @@ import {
 } from "@ui-sdk/solid/popover";
 import { CommentsPanel } from "./CommentsPanel.tsx";
 import { Icon } from "./Icon.tsx";
+import { preferences } from "./settings.ts";
 import { kindOf, kinds, state, statuses, statusOf, type Kind, type Status } from "./state.ts";
 import { Tree } from "./Tree.tsx";
 
@@ -68,7 +69,7 @@ export function Sidebar(props: {
           ref={props.searchRef}
           type="search"
           placeholder={view() === "files" ? "Search" : "Search comments"}
-          title="Filter the list · Enter finds in the diff (/)"
+          title={preferences.hint("Filter the list · Enter finds in the diff", "search")}
           value={query()}
           onInput={(event) => setQuery(event.currentTarget.value)}
           onKeyDown={(event) => {

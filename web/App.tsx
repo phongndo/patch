@@ -147,7 +147,7 @@ export function App() {
             {count()}
           </span>
         </Show>
-        <label class="viewed" title="Viewed (v)">
+        <label class="viewed" title={preferences.hint("Viewed", "viewed")}>
           <input type="checkbox" checked={viewed()} onChange={() => toggleViewed(props.file.name)} />
           Viewed
         </label>
@@ -305,7 +305,7 @@ export function App() {
         <div class="where">
           <button
             class="icon-button"
-            title={sidebar() ? "Hide the sidebar (b)" : "Show the sidebar (b)"}
+            title={preferences.hint(sidebar() ? "Hide the sidebar" : "Show the sidebar", "sidebar")}
             onClick={() => setSidebar((shown) => !shown)}
           >
             <Icon name="sidebarLeft" />
@@ -349,21 +349,27 @@ export function App() {
           <div class="actions">
             <button
               class={{ "icon-button": true, refresh: true, stale: stale() }}
-              title={stale() ? "The repository changed · refresh (r)" : "Refresh (r)"}
+              title={preferences.hint(stale() ? "The repository changed · refresh" : "Refresh", "refresh")}
               onClick={() => void refresh()}
             >
               <Icon name="refresh" />
             </button>
             <button
               class="icon-button"
-              title={allCollapsed() ? "Expand every file (a)" : "Collapse every file (a)"}
+              title={preferences.hint(
+                allCollapsed() ? "Expand every file" : "Collapse every file",
+                "foldAll",
+              )}
               onClick={toggleAll}
             >
               <Icon name={allCollapsed() ? "chevrons" : "chevronsClose"} />
             </button>
             <button
               class="icon-button"
-              title={layout() === "split" ? "Split · switch to unified (s)" : "Unified · switch to split (s)"}
+              title={preferences.hint(
+                layout() === "split" ? "Split · switch to unified" : "Unified · switch to split",
+                "layout",
+              )}
               onClick={() => chooseLayout(layout() === "split" ? "unified" : "split")}
             >
               <Icon name={layout() === "split" ? "diffSplit" : "diffUnified"} />

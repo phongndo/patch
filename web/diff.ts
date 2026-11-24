@@ -112,9 +112,13 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     expansionLineCount: 20,
     parseDiffOptions: { preferredDiffLib: "@pierre/patches" },
     layout: { paddingTop: 12, paddingBottom: 160, gap: 12 },
-    // Comment rows sit on the editor's own background, not a grey band across both sides.
-    unsafeCSS:
+    // Comment rows sit on the editor's background; how strongly changes are
+    // tinted comes from the page (settings.ts, tint) through these variables.
+    unsafeCSS: [
       "[data-line-annotation],[data-gutter-buffer=annotation]{--diffs-annotation-bg:var(--diffs-bg)}",
+      "[data-line],[data-no-newline]{--mix-dark:var(--patch-line-dark,80%);--mix-light:var(--patch-line-light,88%)}",
+      "[data-gutter-buffer],[data-column-number]{--mix-dark:var(--patch-number-dark,85%);--mix-light:var(--patch-number-light,91%)}",
+    ].join("\n"),
     async loadDiffFiles(fileDiff) {
       const key = hooks.scopeKey();
       const [oldText, newText] = await Promise.all([

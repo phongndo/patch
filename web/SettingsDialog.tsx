@@ -649,6 +649,21 @@ function GeneralPage() {
             />
           </Row>
           <Row
+            label="Change contrast"
+            description="How strongly changed lines, their numbers and changed words are tinted."
+            keys={["contrast"]}
+          >
+            <Choose
+              name="contrast"
+              label="Change contrast"
+              options={[
+                { value: "low", label: "Low" },
+                { value: "medium", label: "Medium" },
+                { value: "high", label: "High" },
+              ]}
+            />
+          </Row>
+          <Row
             label="Highlight changed words"
             description="Mark the words that changed within a line."
             keys={["wordDiff"]}
@@ -673,7 +688,8 @@ const pages: Array<{ id: string; title: string; icon: IconName; words: string }>
     id: "general",
     title: "General",
     icon: "sidebarLeft",
-    words: "layout sidebar left right split unified wrap diff change markers bars words generated fold",
+    words:
+      "layout sidebar left right split unified wrap diff change markers bars contrast colors words generated fold",
   },
   { id: "themes", title: "Themes", icon: "brush", words: "appearance color scheme dark light mode palette" },
   {

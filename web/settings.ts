@@ -3,20 +3,21 @@
 //! and the first paint already uses them.
 
 import { createEffect, createMemo, createRoot, createSignal, createStore, snapshot } from "solid-js";
+import { formatForDisplay, type Hotkey } from "@tanstack/hotkeys";
 import type { Theme } from "./themes.gen.ts";
 import { defaultDark, defaultLight } from "./themes.defaults.gen.ts";
 
 /** Every rebindable action, in the order Settings lists them. */
 export const actions = {
-  nextFile: { label: "Next file", key: "J", group: "Navigation" },
-  previousFile: { label: "Previous file", key: "K", group: "Navigation" },
-  search: { label: "Search files and comments", key: "/", group: "Navigation" },
-  sidebar: { label: "Show or hide the sidebar", key: "B", group: "Navigation" },
-  comment: { label: "Comment on the selected lines", key: "C", group: "Review" },
-  viewed: { label: "Mark the file viewed", key: "V", group: "Review" },
-  layout: { label: "Split or unified", key: "S", group: "Review" },
-  foldAll: { label: "Collapse or expand every file", key: "A", group: "Review" },
-  refresh: { label: "Refresh the diff", key: "R", group: "Review" },
+  nextFile: { label: "Next file", key: "Alt+ArrowDown", group: "Navigation" },
+  previousFile: { label: "Previous file", key: "Alt+ArrowUp", group: "Navigation" },
+  search: { label: "Search files and comments", key: "Mod+K", group: "Navigation" },
+  sidebar: { label: "Show or hide the sidebar", key: "Mod+B", group: "Navigation" },
+  comment: { label: "Comment on the selected lines", key: "Mod+/", group: "Review" },
+  viewed: { label: "Mark the file viewed", key: "Mod+Shift+V", group: "Review" },
+  layout: { label: "Split or unified", key: "Mod+\\", group: "Review" },
+  foldAll: { label: "Collapse or expand every file", key: "Mod+Shift+ArrowUp", group: "Review" },
+  refresh: { label: "Refresh the diff", key: "Mod+R", group: "Review" },
   finish: { label: "Finish, then send", key: "Mod+Enter", group: "App" },
   settings: { label: "Settings", key: "Mod+,", group: "App" },
 } as const;
@@ -63,6 +64,8 @@ export interface Settings {
   layout: "auto" | "split" | "unified";
   wrap: boolean;
   indicators: "bars" | "classic";
+  /** How strongly changed lines and words are tinted. */
+  contrast: "low" | "medium" | "high";
   wordDiff: boolean;
   foldGenerated: boolean;
   /** Bindings that differ from the defaults. */
@@ -89,6 +92,7 @@ export const defaults: Settings = {
   layout: "auto",
   wrap: true,
   indicators: "bars",
+  contrast: "medium",
   wordDiff: true,
   foldGenerated: true,
   keys: {},
@@ -115,6 +119,7 @@ function sanitize(saved: unknown): Settings {
   settings.lineHeight = clamp(settings.lineHeight, 14, 32);
   settings.uiWeight = clamp(settings.uiWeight / 100, 1, 9) * 100;
   settings.codeWeight = clamp(settings.codeWeight / 100, 1, 9) * 100;
+  if (!["low", "medium", "high"].includes(settings.contrast)) settings.contrast = defaults.contrast;
   return settings;
 }
 
@@ -130,6 +135,8 @@ function paint(root: HTMLElement, c: Theme["colors"], isDark: boolean) {
   const set = (name: string, value: string) => root.style.setProperty(name, value);
   set("--bg", editor);
   set("--panel", chrome);
+  // Behind the file cards: lifted from the chrome so the cards stand apart.
+  set("--page", `color-mix(in srgb, ${text} ${theme.dark ? 4 : 3}%, ${chrome})`);
   set("--fg", text);
   set("--muted", `color-mix(in srgb, ${text} 58%, ${chrome})`);
   set("--line", `color-mix(in srgb, ${text} 12%, ${chrome})`);
@@ -142,6 +149,37 @@ function paint(root: HTMLElement, c: Theme["colors"], isDark: boolean) {
   set("--del", hex(c.del) ?? (theme.dark ? "#f87171" : "#dc2626"));
   set("--info", hex(c.accent) ?? "#3b9ee0");
   root.style.colorScheme = theme.dark ? "dark" : "light";
+}
+
+// Percent of the change color mixed into a changed line and into its line
+// number, and the alpha of a changed word's highlight, per contrast level.
+// "low" is Pierre's own look.
+const tints = {
+  dark: { low: [20, 15, 0.2], medium: [28, 40, 0.34], high: [38, 55, 0.48] },
+  light: { low: [12, 9, 0.15], medium: [18, 28, 0.26], high: [26, 40, 0.38] },
+} as const;
+
+/**
+ * Sets how strongly changes are tinted. The diff's own CSS (diff.ts) reads the
+ * mix variables, which inherit into its shadow roots; a changed word's
+ * highlight is a final color, so Pierre's override is set directly.
+ */
+function tint(root: HTMLElement, contrast: Settings["contrast"], isDark: boolean) {
+  const set = (name: string, value: string) => root.style.setProperty(name, value);
+  for (const mode of ["dark", "light"] as const) {
+    const [line, number] = tints[mode][contrast];
+    set(`--patch-line-${mode}`, `${100 - line}%`);
+    set(`--patch-number-${mode}`, `${100 - number}%`);
+  }
+  const word = tints[isDark ? "dark" : "light"][contrast][2];
+  for (const [kind, color] of [
+    ["addition", "var(--add)"],
+    ["deletion", "var(--del)"],
+  ] as const)
+    set(
+      `--diffs-bg-${kind}-emphasis-override`,
+      `color-mix(in srgb, ${color} ${Math.round(word * 100)}%, transparent)`,
+    );
 }
 
 function createSettings() {
@@ -161,6 +199,7 @@ function createSettings() {
     (current) => {
       const root = document.documentElement;
       paint(root, current.colors, current.isDark);
+      tint(root, current.contrast, current.isDark);
       const set = (name: string, value: string) => root.style.setProperty(name, value);
       set("--font", current.uiFont);
       set("--mono", current.codeFont);
@@ -190,6 +229,14 @@ function createSettings() {
   }
 
   const keyFor = (action: Action): string => settings.keys[action] ?? actions[action].key;
+  /** A button's tooltip with the action's current shortcut, as in "Refresh (⌘R)". */
+  const hint = (text: string, action: Action) => {
+    try {
+      return `${text} (${formatForDisplay(keyFor(action) as Hotkey)})`;
+    } catch {
+      return text;
+    }
+  };
 
   function bind(action: Action, key: string | undefined) {
     const keys = { ...snapshot(settings).keys };
@@ -212,6 +259,7 @@ function createSettings() {
     reset: () => update(structuredClone(defaults)),
     dark,
     keyFor,
+    hint,
     bind,
     chooseTheme,
   };
