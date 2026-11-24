@@ -27,8 +27,12 @@ command to escalate, or run Codex with a sandbox that permits loopback.
 
 `patchr review [dir] [--base <ref>] [--uncommitted | --staged] [--remote | --local]`
 is what the command runs. By default it shows what a pull request would: the branch since
-it left its base, plus uncommitted and untracked files. Comments are saved as a
-draft while you write, so a rerun after a timeout picks up where you left off.
+it left its base, plus uncommitted and untracked files. A review is one pass:
+comment, send, and the next `/patch` starts fresh. A draft only carries comments
+over a run that was cut off (an agent's timeout), for 12 hours.
+
+Settings (the gear at the bottom of the sidebar) are kept in
+`~/.config/patch/settings.json` and apply to every review.
 
 ## Remote review
 

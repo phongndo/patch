@@ -185,8 +185,47 @@ describe("patchr review", () => {
     }
   });
 
-  test("a page that leaves ends the review as closed, not approved", async () => {
+  test("settings are saved for the next review and written into the page", async () => {
+    const first = await start("--uncommitted");
+    try {
+      const saved = await fetch(`${first.origin}/api/settings`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ colorScheme: "dark", sidebarSide: "right" }),
+      });
+      expect(saved.ok).toBe(true);
+      const bad = await fetch(`${first.origin}/api/settings`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: "[1, 2]",
+      });
+      expect(bad.status).toBe(400);
+    } finally {
+      first.child.kill();
+    }
+    const second = await start("--uncommitted");
+    try {
+      expect(await (await fetch(`${second.origin}/api/settings`)).json()).toEqual({
+        colorScheme: "dark",
+        sidebarSide: "right",
+      });
+      const page = await (await fetch(`${second.origin}/`)).text();
+      expect(page).toContain('window.__PATCH_SETTINGS__={"colorScheme":"dark","sidebarSide":"right"}');
+    } finally {
+      second.child.kill();
+    }
+  });
+
+  test("a page that leaves ends the review as closed, not approved, and drops the draft", async () => {
     const { child, origin, stdout } = await start("--uncommitted");
+    const review = await (await fetch(`${origin}/api/review`)).json();
+    await fetch(`${origin}/api/draft?key=${review.draftKey}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ comments: [], note: "", viewed: ["a.ts"] }),
+    });
+    const draft = join(state, "patch", "drafts", `${review.draftKey}.json`);
+    expect(existsSync(draft)).toBe(true);
     try {
       const live = new AbortController();
       const stream = await fetch(`${origin}/api/live`, { signal: live.signal });
@@ -196,6 +235,8 @@ describe("patchr review", () => {
       const started = performance.now();
       expect(await stdout).toContain("closed without feedback");
       expect(performance.now() - started).toBeLessThan(15_000);
+      await child.exited;
+      expect(existsSync(draft)).toBe(false);
     } finally {
       child.kill();
     }

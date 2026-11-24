@@ -13,6 +13,7 @@ import { getOrCreateWorkerPoolSingleton } from "@pierre/diffs/worker";
 import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import { render, type JSX } from "@solidjs/web";
 import { loadSide } from "./api.ts";
+import { diffTheme, preferences, type Settings } from "./settings.ts";
 import type { Target } from "./state.ts";
 
 export type Note = { kind: "comment"; id: string } | { kind: "composer"; target: Target };
@@ -27,7 +28,9 @@ export interface DiffViewHooks {
   scopeKey(): string;
 }
 
-const theme = { dark: "pierre-dark", light: "pierre-light" } as const;
+const startup = preferences.settings;
+// What the highlighter workers were last told, so they are re-told only on a change.
+let workers = { palette: startup.palette, wordDiff: startup.wordDiff };
 
 const pool = getOrCreateWorkerPoolSingleton({
   poolOptions: {
@@ -35,10 +38,10 @@ const pool = getOrCreateWorkerPoolSingleton({
     poolSize: Math.max(2, Math.min(6, (navigator.hardwareConcurrency || 4) - 1)),
   },
   highlighterOptions: {
-    theme,
+    theme: diffTheme(startup.palette),
     preferredHighlighter: "highlights",
     preferredDiffLib: "@pierre/patches",
-    lineDiffType: "word-alt",
+    lineDiffType: startup.wordDiff ? "word-alt" : "none",
   },
 });
 
@@ -89,15 +92,14 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
   };
 
   const options = {
-    theme,
-    themeType: "system",
+    theme: diffTheme(startup.palette),
+    themeType: startup.colorScheme,
     preferredHighlighter: "highlights",
     diffStyle: "split",
-    diffIndicators: "bars",
-    lineDiffType: "word-alt",
+    diffIndicators: startup.indicators,
+    lineDiffType: startup.wordDiff ? "word-alt" : "none",
     hunkSeparators: "line-info",
-    // Wrapping keeps both split columns readable and never scrolls sideways.
-    overflow: "wrap",
+    overflow: startup.wrap ? "wrap" : "scroll",
     stickyHeaders: true,
     enableGutterUtility: true,
     enableLineSelection: true,
@@ -164,6 +166,22 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     },
     setLayout(diffStyle: "split" | "unified") {
       options.diffStyle = diffStyle;
+      view.setOptions({ ...options });
+    },
+    /** Applies the reviewer's settings to the diff, including the highlighter workers. */
+    configure(settings: Settings) {
+      const theme = diffTheme(settings.palette);
+      const lineDiffType = settings.wordDiff ? "word-alt" : "none";
+      const workersChanged = settings.palette !== workers.palette || settings.wordDiff !== workers.wordDiff;
+      workers = { palette: settings.palette, wordDiff: settings.wordDiff };
+      Object.assign(options, {
+        theme,
+        themeType: settings.colorScheme,
+        diffIndicators: settings.indicators,
+        lineDiffType,
+        overflow: settings.wrap ? "wrap" : "scroll",
+      });
+      if (workersChanged) void pool.setRenderOptions({ theme, lineDiffType });
       view.setOptions({ ...options });
     },
     scrollToFile(name: string) {

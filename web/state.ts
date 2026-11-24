@@ -47,8 +47,9 @@ const generated =
   /(^|\/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|bun\.lockb?|Cargo\.lock|flake\.lock|go\.sum|poetry\.lock|uv\.lock|Gemfile\.lock|composer\.lock|[^/]*\.min\.(js|css)|[^/]*\.map|[^/]*\.snap)$/;
 const largeLines = 1500;
 
-export const opensCollapsed = (file: FileDiffMetadata) =>
-  generated.test(file.name) || file.unifiedLineCount > largeLines;
+/** Very large files open folded, and generated ones too unless the reviewer turned that off. */
+export const opensCollapsed = (file: FileDiffMetadata, foldGenerated = true) =>
+  (foldGenerated && generated.test(file.name)) || file.unifiedLineCount > largeLines;
 
 export const stats = (file: FileDiffMetadata) => {
   let additions = 0;
@@ -250,15 +251,6 @@ function createReviewState() {
 
   const deleteComment = (id: string) => deleteComments([id]);
 
-  /** Resolved comments stay in the draft, drawn small, and are not sent. */
-  function setResolved(ids: Iterable<string>, resolved: boolean) {
-    const chosen = new Set(ids);
-    setStore((s) => {
-      for (const comment of s.comments) if (chosen.has(comment.id)) comment.resolved = resolved || undefined;
-    });
-    persist();
-  }
-
   function setNote(note: string) {
     setStore((s) => {
       s.note = note;
@@ -303,7 +295,6 @@ function createReviewState() {
     saveGeneral,
     deleteComment,
     deleteComments,
-    setResolved,
     setNote,
     toggleViewed,
     finish,

@@ -41,8 +41,6 @@ export interface Comment {
   excerpt: string[];
   /** What was under review when the comment was written, when not the working tree. */
   scope?: string;
-  /** Resolved comments stay in the draft but are not sent. */
-  resolved?: boolean;
   /** Milliseconds since the epoch. */
   createdAt?: number;
 }

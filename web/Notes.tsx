@@ -10,41 +10,20 @@ export function CommentCard(props: { id: string }) {
   return (
     <Show when={comment()}>
       {(comment) => (
-        <Show
-          when={!comment().resolved}
-          fallback={
-            <article class="note resolved">
-              <Icon name="checkCircle" />
-              <span class="note-where">{lineLabel(comment().start, comment().end, comment().side)}</span>
-              <span class="resolved-body">{comment().body}</span>
-              <button class="button quiet" onClick={() => state.setResolved([comment().id], false)}>
-                Reopen
+        <article class="note">
+          <header>
+            <span class="note-where">{lineLabel(comment().start, comment().end, comment().side)}</span>
+            <span class="note-actions">
+              <button class="icon-button" title="Edit" onClick={() => state.setComposer({ ...comment() })}>
+                <Icon name="pencil" />
               </button>
-            </article>
-          }
-        >
-          <article class="note">
-            <header>
-              <span class="note-where">{lineLabel(comment().start, comment().end, comment().side)}</span>
-              <span class="note-actions">
-                <button
-                  class="icon-button"
-                  title="Resolve (kept, but not sent)"
-                  onClick={() => state.setResolved([comment().id], true)}
-                >
-                  <Icon name="checkCircle" />
-                </button>
-                <button class="icon-button" title="Edit" onClick={() => state.setComposer({ ...comment() })}>
-                  <Icon name="pencil" />
-                </button>
-                <button class="icon-button" title="Delete" onClick={() => state.deleteComment(comment().id)}>
-                  <Icon name="trash" />
-                </button>
-              </span>
-            </header>
-            <p class="note-body">{comment().body}</p>
-          </article>
-        </Show>
+              <button class="icon-button" title="Delete" onClick={() => state.deleteComment(comment().id)}>
+                <Icon name="trash" />
+              </button>
+            </span>
+          </header>
+          <p class="note-body">{comment().body}</p>
+        </article>
       )}
     </Show>
   );

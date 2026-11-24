@@ -71,9 +71,6 @@ pub struct Comment {
     pub excerpt: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
-    /// Resolved comments stay in the draft but are not sent.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub resolved: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_at: Option<u64>,
 }

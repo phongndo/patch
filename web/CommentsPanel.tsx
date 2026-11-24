@@ -1,6 +1,6 @@
-//! Every comment in the draft: general comments about the whole change, then
-//! line comments grouped by file. Filtered by state, searchable, and with
-//! actions on one comment or on a selection of them.
+//! Every comment in this review: general comments about the whole change,
+//! then line comments grouped by file. Searchable, editable, and deletable one
+//! at a time or as a selection.
 
 import { createMemo, createSignal, For, onSettled, Show } from "solid-js";
 import type { Comment } from "../src/protocol.ts";
@@ -8,27 +8,9 @@ import { Icon } from "./Icon.tsx";
 import { lineLabel } from "./Notes.tsx";
 import { isGeneral, isShown, state } from "./state.ts";
 
-type Filter = "all" | "open" | "stale" | "resolved";
-const filters: Array<{ value: Filter; label: string; hint: string; empty: string }> = [
-  { value: "all", label: "All", hint: "Every comment", empty: "No comments yet." },
-  { value: "open", label: "Open", hint: "Comments that will be sent", empty: "No open comments." },
-  {
-    value: "stale",
-    label: "Stale",
-    hint: "Open comments whose lines are not in the diff on screen",
-    empty: "No stale comments.",
-  },
-  { value: "resolved", label: "Done", hint: "Resolved: kept, but not sent", empty: "No resolved comments." },
-];
-
-/** A line comment whose lines are no longer in the diff on screen. */
-const stale = (comment: Comment) => !isGeneral(comment) && !isShown(state.fileByName(comment.file), comment);
-
-const matches = (comment: Comment, value: Filter) =>
-  value === "all" ||
-  (value === "resolved"
-    ? Boolean(comment.resolved)
-    : !comment.resolved && (value === "open" || stale(comment)));
+/** A line comment whose lines are no longer in the diff on screen; it is still sent as written. */
+export const moved = (comment: Comment) =>
+  !isGeneral(comment) && !isShown(state.fileByName(comment.file), comment);
 
 /** Writes or edits a general comment in place. */
 function GeneralEditor(props: { id?: string; onDone: () => void }) {
@@ -87,29 +69,19 @@ export function CommentsPanel(props: {
   onOpen: (comment: Comment) => void;
   onEdit: (comment: Comment) => void;
 }) {
-  const [filter, setFilter] = createSignal<Filter>("all");
   const [selected, setSelected] = createSignal<ReadonlySet<string>>(new Set());
   // "new" while a general comment is being written; an id while one is edited.
   const [writing, setWriting] = createSignal<string>();
 
-  const counts = createMemo(() => {
-    const out: Record<Filter, number> = { all: 0, open: 0, stale: 0, resolved: 0 };
-    for (const comment of state.store.comments)
-      for (const { value } of filters) if (matches(comment, value)) out[value]++;
-    return out;
-  });
-
   const visible = createMemo(() => {
     const text = props.query.trim().toLowerCase();
-    return state.store.comments
-      .filter((comment) => matches(comment, filter()))
-      .filter(
-        (comment) =>
-          !text ||
-          comment.file.toLowerCase().includes(text) ||
-          comment.body.toLowerCase().includes(text) ||
-          comment.excerpt.some((line) => line.toLowerCase().includes(text)),
-      );
+    return state.store.comments.filter(
+      (comment) =>
+        !text ||
+        comment.file.toLowerCase().includes(text) ||
+        comment.body.toLowerCase().includes(text) ||
+        comment.excerpt.some((line) => line.toLowerCase().includes(text)),
+    );
   });
   const general = createMemo(() => visible().filter(isGeneral));
   const groups = createMemo(() => [
@@ -132,7 +104,6 @@ export function CommentsPanel(props: {
   const clear = () => setSelected(new Set<string>());
   const chosen = () =>
     [...selected()].filter((id) => state.store.comments.some((comment) => comment.id === id));
-  const staleIds = () => state.store.comments.filter((c) => !c.resolved && stale(c)).map((c) => c.id);
 
   function Row(row: { comment: Comment }) {
     const comment = () => row.comment;
@@ -142,13 +113,7 @@ export function CommentsPanel(props: {
         when={writing() !== comment().id}
         fallback={<GeneralEditor id={comment().id} onDone={() => setWriting(undefined)} />}
       >
-        <li
-          class={{
-            "comment-row": true,
-            selected: selected().has(comment().id),
-            resolved: Boolean(comment().resolved),
-          }}
-        >
+        <li class={{ "comment-row": true, selected: selected().has(comment().id) }}>
           <input
             type="checkbox"
             class="comment-check"
@@ -161,22 +126,19 @@ export function CommentsPanel(props: {
             title={
               isGeneral(comment())
                 ? "Edit"
-                : stale(comment())
-                  ? "Its lines are not in the diff on screen"
+                : moved(comment())
+                  ? "Its lines are no longer in the diff; it will be sent as written"
                   : "Show in the diff"
             }
-            onClick={() => (isGeneral(comment()) ? edit() : !stale(comment()) && props.onOpen(comment()))}
+            onClick={() => (isGeneral(comment()) ? edit() : !moved(comment()) && props.onOpen(comment()))}
           >
-            <Show when={!isGeneral(comment()) || comment().resolved || comment().scope}>
+            <Show when={!isGeneral(comment()) || comment().scope}>
               <span class="comment-line">
                 <Show when={!isGeneral(comment())}>
                   {lineLabel(comment().start, comment().end, comment().side)}
                 </Show>
-                <Show when={comment().resolved}>
-                  <span class="tag">done</span>
-                </Show>
-                <Show when={!comment().resolved && stale(comment())}>
-                  <span class="tag stale">stale</span>
+                <Show when={moved(comment())}>
+                  <span class="tag warning">lines changed</span>
                 </Show>
                 <Show when={comment().scope}>
                   <span class="tag">{comment().scope}</span>
@@ -189,14 +151,7 @@ export function CommentsPanel(props: {
             <span class="comment-body">{comment().body}</span>
           </button>
           <span class="comment-actions">
-            <button
-              class="icon-button"
-              title={comment().resolved ? "Reopen" : "Resolve (kept, but not sent)"}
-              onClick={() => state.setResolved([comment().id], !comment().resolved)}
-            >
-              <Icon name="checkCircle" />
-            </button>
-            <Show when={!stale(comment())}>
+            <Show when={!moved(comment())}>
               <button class="icon-button" title="Edit" onClick={edit}>
                 <Icon name="pencil" />
               </button>
@@ -212,26 +167,6 @@ export function CommentsPanel(props: {
 
   return (
     <div class="comments-panel">
-      <div class="comment-filters" role="tablist" aria-label="Show comments">
-        <For each={filters}>
-          {(option) => (
-            <button
-              role="tab"
-              aria-selected={filter() === option.value ? "true" : "false"}
-              class="comment-filter"
-              title={option.hint}
-              onClick={() => {
-                setFilter(option.value);
-                clear();
-              }}
-            >
-              {option.label}
-              <span class="count">{counts()[option.value]}</span>
-            </button>
-          )}
-        </For>
-      </div>
-
       <div class="comment-groups">
         <section class="comment-group">
           <header class="comment-file general">
@@ -283,9 +218,7 @@ export function CommentsPanel(props: {
           <p class="empty">
             {props.query.trim()
               ? "No comments match the search."
-              : filter() === "all"
-                ? "No line comments yet. Click a line number's + in the diff, or select lines and press c."
-                : filters.find((option) => option.value === filter())!.empty}
+              : "No line comments yet. Click a line number's + in the diff, or select lines and press c."}
           </p>
         </Show>
       </div>
@@ -307,33 +240,10 @@ export function CommentsPanel(props: {
               >
                 Select all
               </button>
-              <Show when={staleIds().length}>
-                <button class="link danger" onClick={() => state.deleteComments(staleIds())}>
-                  Delete {staleIds().length} stale
-                </button>
-              </Show>
             </>
           }
         >
           <span class="comment-bar-count">{chosen().length} selected</span>
-          <button
-            class="link"
-            onClick={() => {
-              state.setResolved(chosen(), true);
-              clear();
-            }}
-          >
-            Resolve
-          </button>
-          <button
-            class="link"
-            onClick={() => {
-              state.setResolved(chosen(), false);
-              clear();
-            }}
-          >
-            Reopen
-          </button>
           <button
             class="link danger"
             onClick={() => {

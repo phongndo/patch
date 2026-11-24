@@ -194,7 +194,7 @@ async fn review(args: &[String]) -> Result<(), String> {
         )
     };
 
-    let session = server::start(options, public).await?;
+    let mut session = server::start(options, public).await?;
     eprintln!("Patch is open at {}", session.url);
     if remote {
         eprintln!("Open that link on any device on your tailnet. It works for this review only.");
@@ -203,7 +203,7 @@ async fn review(args: &[String]) -> Result<(), String> {
     }
 
     let outcome = tokio::select! {
-        outcome = session.outcome => outcome.unwrap_or(Outcome::Closed),
+        outcome = &mut session.outcome => outcome.unwrap_or(Outcome::Closed),
         _ = tokio::signal::ctrl_c() => std::process::exit(130),
     };
     // Let the page receive its answer before the process ends.
@@ -211,7 +211,11 @@ async fn review(args: &[String]) -> Result<(), String> {
     let root_text = root.to_string_lossy().into_owned();
     let text = match outcome {
         Outcome::Submitted(submission) => feedback::format(&submission, &git::repository_name(&root), &root_text),
-        Outcome::Closed => feedback::CLOSED.to_string(),
+        Outcome::Closed => {
+            // Closing ends the review; the next one starts clean.
+            let _ = std::fs::remove_file(&session.draft);
+            feedback::CLOSED.to_string()
+        }
     };
     let mut stdout = std::io::stdout().lock();
     let _ = writeln!(stdout, "{text}");

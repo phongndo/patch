@@ -6,39 +6,40 @@ import { stayConnected } from "./api.ts";
 import { createDiffView, type DiffView, type Note } from "./diff.ts";
 import { hotkeys } from "./hotkeys.ts";
 import { Icon } from "./Icon.tsx";
+import { moved } from "./CommentsPanel.tsx";
 import { CommentCard, Composer } from "./Notes.tsx";
 import { isShown, kindOf, kinds, opensCollapsed, state, stats, type Kind, type Target } from "./state.ts";
 import { ScopePicker } from "./ScopePicker.tsx";
+import { defaults, preferences } from "./settings.ts";
 import { Sidebar } from "./Sidebar.tsx";
 
 type Layout = "split" | "unified";
-const storedLayout = localStorage.getItem("patch.layout");
+const { settings } = preferences;
 const initialLayout: Layout =
-  storedLayout === "split" || storedLayout === "unified"
-    ? storedLayout
-    : innerWidth >= 1200
-      ? "split"
-      : "unified";
+  settings.layout === "auto" ? (innerWidth >= 1200 ? "split" : "unified") : settings.layout;
 
 export function App() {
   const { store } = state;
   const [layout, setLayout] = createSignal<Layout>(initialLayout);
-  const [sidebar, setSidebar] = createSignal(localStorage.getItem("patch.sidebar") !== "hidden");
-  const defaultWidth = 280;
-  const [sidebarWidth, setSidebarWidth] = createSignal(
-    Number(localStorage.getItem("patch.sidebarWidth")) || defaultWidth,
-  );
+  const sidebar = () => settings.sidebarOpen;
+  const setSidebar = (toggle: (shown: boolean) => boolean) =>
+    preferences.update({ sidebarOpen: toggle(settings.sidebarOpen) });
   const clampWidth = (width: number) => Math.round(Math.min(Math.max(width, 180), innerWidth * 0.5));
 
   function startResize(event: PointerEvent & { currentTarget: HTMLElement }) {
     const handle = event.currentTarget;
     handle.setPointerCapture(event.pointerId);
     handle.toggleAttribute("data-dragging", true);
-    const move = (moved: PointerEvent) => setSidebarWidth(clampWidth(moved.clientX));
+    let width = settings.sidebarWidth;
+    // While dragging only the variable moves; the setting is saved once, at the end.
+    const move = (moved: PointerEvent) => {
+      width = clampWidth(settings.sidebarSide === "right" ? innerWidth - moved.clientX : moved.clientX);
+      document.documentElement.style.setProperty("--sidebar", `${width}px`);
+    };
     const end = () => {
       handle.removeEventListener("pointermove", move);
       handle.toggleAttribute("data-dragging", false);
-      localStorage.setItem("patch.sidebarWidth", String(sidebarWidth()));
+      preferences.update({ sidebarWidth: width });
     };
     handle.addEventListener("pointermove", move);
     handle.addEventListener("lostpointercapture", end, { once: true });
@@ -67,17 +68,10 @@ export function App() {
   });
   const totals = () => breakdown().get("total")!;
   const number = new Intl.NumberFormat();
-  // Resolved comments stay in the draft but are not sent, so they are not counted.
-  const openComments = () => store.comments.filter((comment) => !comment.resolved);
-  const commentCount = () => openComments().length;
-  /** "3 comments · 1 resolved, not sent" */
-  const summary = () => {
-    const parts: string[] = [];
-    if (commentCount()) parts.push(`${commentCount()} comment${commentCount() === 1 ? "" : "s"}`);
-    const resolved = store.comments.length - commentCount();
-    if (resolved) parts.push(`${resolved} resolved, not sent`);
-    return parts.join(" · ");
-  };
+  const commentCount = () => store.comments.length;
+  /** Comments whose lines left the diff after a refresh or a scope change; they are sent as written. */
+  const movedCount = () => store.comments.filter(moved).length;
+  const summary = () => (commentCount() ? `${commentCount()} comment${commentCount() === 1 ? "" : "s"}` : "");
   const hasFeedback = () => commentCount() > 0;
 
   function annotationsFor(name: string): DiffLineAnnotation<Note>[] {
@@ -187,7 +181,8 @@ export function App() {
       // Keep what the reviewer folded when a filter changes; new files start from the defaults.
       for (const file of files)
         initial[file.name] =
-          collapsed[file.name] ?? (store.viewed.includes(file.name) || opensCollapsed(file));
+          collapsed[file.name] ??
+          (store.viewed.includes(file.name) || opensCollapsed(file, settings.foldGenerated));
       setCollapsed(() => initial);
       diff?.setFiles(files, (file) => initial[file.name] ?? false);
       const anchor = keepPlace;
@@ -203,11 +198,17 @@ export function App() {
     { defer: true },
   );
 
-  createEffect(layout, (value) => {
-    diff?.setLayout(value);
-    localStorage.setItem("patch.layout", value);
-  });
-  createEffect(sidebar, (shown) => localStorage.setItem("patch.sidebar", shown ? "shown" : "hidden"));
+  createEffect(layout, (value) => diff?.setLayout(value));
+  // Remember a layout chosen with the toggle; "auto" stays auto until then.
+  const chooseLayout = (value: Layout) => {
+    setLayout(value);
+    preferences.update({ layout: value });
+  };
+  createEffect(
+    () => ({ ...settings }),
+    (current) => diff?.configure(current),
+    { defer: true },
+  );
 
   const currentFile = () => diff?.topFile() ?? state.visibleFiles()[0]?.name;
   const step = (direction: 1 | -1) => {
@@ -248,7 +249,7 @@ export function App() {
   hotkeys([
     ["J", () => idle() && step(1)],
     ["K", () => idle() && step(-1)],
-    ["S", () => idle() && setLayout((value) => (value === "split" ? "unified" : "split"))],
+    ["S", () => idle() && chooseLayout(layout() === "split" ? "unified" : "split")],
     ["R", () => idle() && void refresh()],
     ["B", () => idle() && setSidebar((shown) => !shown)],
     ["/", () => idle() && searchInput?.focus()],
@@ -279,7 +280,7 @@ export function App() {
   ]);
 
   return (
-    <div class={{ app: true, "no-sidebar": !sidebar() }} style={{ "--sidebar": `${sidebarWidth()}px` }}>
+    <div class={{ app: true, "no-sidebar": !sidebar(), "sidebar-right": settings.sidebarSide === "right" }}>
       <header class="bar">
         <div class="where">
           <button
@@ -336,7 +337,7 @@ export function App() {
             <button
               class="icon-button"
               title={layout() === "split" ? "Split · switch to unified (s)" : "Unified · switch to split (s)"}
-              onClick={() => setLayout((value) => (value === "split" ? "unified" : "split"))}
+              onClick={() => chooseLayout(layout() === "split" ? "unified" : "split")}
             >
               <Icon name={layout() === "split" ? "diffSplit" : "diffUnified"} />
             </button>
@@ -349,6 +350,12 @@ export function App() {
               </PopoverTrigger>
               <PopoverContent class="finish" side="bottom" align="end" sideOffset={6}>
                 <PopoverTitle class="finish-title">{summary() || "No comments yet"}</PopoverTitle>
+                <Show when={movedCount()}>
+                  <p class="finish-warning">
+                    {movedCount() === 1 ? "1 comment is" : `${movedCount()} comments are`} on lines no longer
+                    in the diff. {movedCount() === 1 ? "It is" : "They are"} sent as written.
+                  </p>
+                </Show>
                 <Show when={sendError()}>
                   <p class="error">{sendError()}</p>
                 </Show>
@@ -389,16 +396,13 @@ export function App() {
         aria-label="Resize the sidebar"
         title="Drag to resize · double-click to reset"
         onPointerDown={startResize}
-        onDblClick={() => {
-          setSidebarWidth(defaultWidth);
-          localStorage.removeItem("patch.sidebarWidth");
-        }}
+        onDblClick={() => preferences.update({ sidebarWidth: defaults.sidebarWidth })}
         onKeyDown={(event) => {
-          const step = event.key === "ArrowLeft" ? -16 : event.key === "ArrowRight" ? 16 : 0;
-          if (!step) return;
+          const toward = event.key === "ArrowLeft" ? -16 : event.key === "ArrowRight" ? 16 : 0;
+          if (!toward) return;
           event.preventDefault();
-          setSidebarWidth((width) => clampWidth(width + step));
-          localStorage.setItem("patch.sidebarWidth", String(sidebarWidth()));
+          const step = settings.sidebarSide === "right" ? -toward : toward;
+          preferences.update({ sidebarWidth: clampWidth(settings.sidebarWidth + step) });
         }}
       />
 

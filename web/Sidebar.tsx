@@ -8,6 +8,7 @@ import {
   PopoverTrigger,
 } from "@ui-sdk/solid/popover";
 import { CommentsPanel } from "./CommentsPanel.tsx";
+import { SettingsPanel } from "./SettingsPanel.tsx";
 import { Icon } from "./Icon.tsx";
 import { kindOf, kinds, state, statuses, statusOf, type Kind, type Status } from "./state.ts";
 import { Tree } from "./Tree.tsx";
@@ -158,6 +159,9 @@ export function Sidebar(props: {
       <Show when={view() === "comments"}>
         <CommentsPanel query={query()} onOpen={props.onOpenComment} onEdit={props.onEditComment} />
       </Show>
+      <footer class="side-foot">
+        <SettingsPanel />
+      </footer>
     </aside>
   );
 }

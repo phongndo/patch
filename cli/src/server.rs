@@ -79,6 +79,33 @@ struct App {
 pub struct Session {
     pub url: String,
     pub outcome: oneshot::Receiver<Outcome>,
+    /// The draft that carries comments over an interrupted run; dropped when the review ends.
+    pub draft: PathBuf,
+}
+
+/// Where the reviewer's settings live, shared by every review on this machine.
+pub fn settings_path() -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| crate::install::home_dir().join(".config"))
+        .join("patch/settings.json")
+}
+
+/// The saved settings as a JSON object, or an empty one.
+fn read_settings() -> serde_json::Value {
+    std::fs::read(settings_path())
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .filter(serde_json::Value::is_object)
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+/// Puts the settings into the page itself, so its first paint already uses them.
+fn with_settings(html: &[u8]) -> Vec<u8> {
+    let settings = read_settings().to_string().replace('<', "\\u003c");
+    let script = format!("<script>window.__PATCH_SETTINGS__={settings}</script></head>");
+    String::from_utf8_lossy(html).replacen("</head>", &script, 1).into_bytes()
 }
 
 pub fn state_dir() -> PathBuf {
@@ -119,11 +146,12 @@ pub async fn start(options: Options, public_url: impl FnOnce(u16) -> String) -> 
         changes: tokio::sync::watch::channel(0).0,
     });
     tokio::spawn(watch_repository(app.clone()));
-    let router = Router::new().fallback(handle).with_state(app);
+    let router = Router::new().fallback(handle).with_state(app.clone());
     tokio::spawn(async move {
         let _ = axum::serve(listener, router).await;
     });
-    Ok(Session { url: public_url(port), outcome: receiver })
+    let draft = app.drafts.join(format!("{}.json", app.draft_key));
+    Ok(Session { url: public_url(port), outcome: receiver, draft })
 }
 
 /// Checks the repository while a page is open and tells it when anything moved.
@@ -273,12 +301,22 @@ fn valid_key(key: &str) -> bool {
     key.len() == 24 && key.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+/// A review is one pass. The draft only carries comments over a run that was
+/// cut off (an agent's timeout, a crash), so an old one is not brought back.
+const DRAFT_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60);
+
 async fn read_draft(app: &App) -> Draft {
-    tokio::fs::read(draft_path(app, &app.draft_key))
+    let path = draft_path(app, &app.draft_key);
+    let fresh = tokio::fs::metadata(&path)
         .await
         .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .unwrap_or_default()
+        .and_then(|meta| meta.modified().ok())
+        .and_then(|modified| modified.elapsed().ok())
+        .is_some_and(|age| age < DRAFT_LIFETIME);
+    if !fresh {
+        return Draft::default();
+    }
+    tokio::fs::read(&path).await.ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default()
 }
 
 fn on_disconnect(app: &Arc<App>) {
@@ -366,6 +404,8 @@ async fn asset(app: &App, headers: &HeaderMap, path: &str) -> Response {
         },
         None => return (StatusCode::NOT_FOUND, "Not found").into_response(),
     };
+    let bytes: std::borrow::Cow<'static, [u8]> =
+        if path == "/index.html" { with_settings(&bytes).into() } else { bytes };
     let immutable = path.starts_with("/a/");
     let mut response = Response::new(Body::empty());
     let out = response.headers_mut();
@@ -539,6 +579,27 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
             }
             settle(&app, Outcome::Submitted(submission));
             json(StatusCode::OK, &serde_json::json!({ "ok": true }))
+        }
+        (Method::GET, "/api/settings") => json(StatusCode::OK, &read_settings()),
+        (Method::PUT, "/api/settings") => {
+            let bytes = body().await;
+            let valid = bytes.len() <= 64 * 1024
+                && serde_json::from_slice::<serde_json::Value>(&bytes).is_ok_and(|value| value.is_object());
+            if !valid {
+                return error(StatusCode::BAD_REQUEST, "Settings must be a JSON object.");
+            }
+            let path = settings_path();
+            let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
+            let saved = match path.parent() {
+                Some(dir) => tokio::fs::create_dir_all(dir).await.is_ok(),
+                None => false,
+            } && tokio::fs::write(&temporary, &bytes).await.is_ok()
+                && tokio::fs::rename(&temporary, &path).await.is_ok();
+            if saved {
+                json(StatusCode::OK, &serde_json::json!({ "ok": true }))
+            } else {
+                error(StatusCode::INTERNAL_SERVER_ERROR, "Could not save the settings.")
+            }
         }
         (Method::POST, "/api/leave") => {
             app.live.lock().unwrap().leaving = true;
