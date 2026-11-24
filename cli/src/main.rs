@@ -246,28 +246,29 @@ async fn review(args: &[String]) -> Result<(), String> {
         outcome = &mut session.outcome => outcome.unwrap_or(Outcome::Closed),
         _ = tokio::signal::ctrl_c() => std::process::exit(130),
     };
-    // Let the page receive its answer before the process ends.
-    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     let root_text = root.to_string_lossy().into_owned();
     let text = match outcome {
         Outcome::Submitted(submission) => Some(feedback::format(&submission, &git::repository_name(&root), &root_text)),
         Outcome::Unopened => None,
-        Outcome::Closed => {
-            // Closing ends the review; the next one starts clean.
-            let _ = std::fs::remove_file(&session.draft);
-            (!args.adapter).then(|| feedback::CLOSED.to_string())
-        }
+        Outcome::Closed => (!args.adapter).then(|| feedback::CLOSED.to_string()),
     };
+    let submitted = text.as_ref().is_some_and(|text| text != feedback::CLOSED);
+    // Kept before anything can fail: the page closes as soon as it has its answer.
+    let output = match &text {
+        Some(text) if args.adapter && args.codex.is_none() => Some(harness::receipt(text)),
+        _ => text.clone(),
+    };
+    // Let the page receive its answer before the process ends.
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     if let Some(thread) = &args.codex {
-        if harness::finish_codex(thread, text.as_deref()) {
-            server::retire(&session.draft);
-        }
-    } else if let Some(text) = text {
-        // An adapter retires the draft itself, with the receipt, once its harness took the feedback.
-        let output = if args.adapter { harness::receipt(&session.draft, &text) } else { text };
+        harness::finish_codex(thread, text.as_deref());
+    } else if let Some(output) = output {
         let mut stdout = std::io::stdout().lock();
-        if writeln!(stdout, "{output}").and_then(|()| stdout.flush()).is_ok() && !args.adapter {
-            server::retire(&session.draft);
+        let printed = writeln!(stdout, "{output}").and_then(|()| stdout.flush());
+        // Nobody is reading any more; an adapter's receipt already kept it.
+        if printed.is_err() && submitted && !args.adapter {
+            let file = harness::keep(&random_token(24), &output).map_err(|error| error.to_string())?;
+            return Err(format!("Nothing read the feedback. It is kept in {}", file.display()));
         }
     }
     Ok(())
@@ -295,8 +296,8 @@ fn main() -> ExitCode {
             Ok(())
         }
         "hook" if rest.first().is_some_and(|name| name == "delivered") => {
-            if let Some(draft) = rest.get(1).and_then(|key| server::draft_for(key)) {
-                server::retire(&draft);
+            if let Some(receipt) = rest.get(1) {
+                harness::delivered(receipt);
             }
             Ok(())
         }

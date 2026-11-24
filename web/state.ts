@@ -1,10 +1,11 @@
-//! The review's state: one Solid store for what the reviewer writes, saved as
-//! a draft on every change, and a plain signal for the parsed diff.
+//! The review's state: one Solid store for what the reviewer writes, and a plain
+//! signal for the parsed diff. It belongs to one run of Patch: the tab keeps it
+//! over a reload, and no other review sees it.
 
 import { parsePatchFiles, type FileDiffMetadata } from "@pierre/diffs";
 import { createMemo, createRoot, createSignal, createStore, flush, snapshot } from "solid-js";
 import type { Comment, ReviewResponse, Scope, Side } from "../src/protocol.ts";
-import { loadReview, saveDraft, submit } from "./api.ts";
+import { loadReview, submit } from "./api.ts";
 
 export interface Target {
   file: string;
@@ -13,6 +14,25 @@ export interface Target {
   end: number;
   /** Set when editing an existing comment. */
   id?: string;
+}
+
+/** What the tab remembers of a run. */
+interface Saved {
+  comments: Comment[];
+  viewed: Record<string, string>;
+}
+const savedKey = (session: string) => `patch:${session}`;
+
+/** Reads what this tab wrote in this run, and forgets any other run served from the same address. */
+function readSaved(session: string): Saved | undefined {
+  const key = savedKey(session);
+  for (const other of Object.keys(sessionStorage))
+    if (other.startsWith(savedKey("")) && other !== key) sessionStorage.removeItem(other);
+  try {
+    return JSON.parse(sessionStorage.getItem(key) ?? "null") ?? undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export type Status = "added" | "modified" | "deleted" | "renamed";
@@ -61,6 +81,29 @@ export const stats = (file: FileDiffMetadata) => {
   return { additions, deletions };
 };
 
+/** Names a file's changes, so a viewed mark lasts only as long as they do. */
+function fingerprint(file: FileDiffMetadata): string {
+  let hash = 5381;
+  const add = (text: string) => {
+    for (let index = 0; index < text.length; index++) hash = ((hash * 33) ^ text.charCodeAt(index)) | 0;
+  };
+  add(`${file.type} ${file.prevName ?? ""}`);
+  for (const hunk of file.hunks)
+    for (const part of hunk.hunkContent)
+      if (part.type === "change") {
+        for (let index = 0; index < part.deletions; index++)
+          add(`-${file.deletionLines[part.deletionLineIndex + index]}`);
+        for (let index = 0; index < part.additions; index++)
+          add(`+${file.additionLines[part.additionLineIndex + index]}`);
+      }
+  return String(hash);
+}
+
+/** The whole text of files whose hidden context was expanded, by name. */
+const expanded = new Map<string, Record<Side, string[]>>();
+export const rememberFile = (name: string, oldText: string, newText: string) =>
+  void expanded.set(name, { deletions: oldText.split("\n"), additions: newText.split("\n") });
+
 /** Where a side's line sits in the parsed file, or undefined when the diff does not show it. */
 function lineIndex(file: FileDiffMetadata, side: Side, line: number): number | undefined {
   for (const hunk of file.hunks) {
@@ -78,15 +121,21 @@ export function excerpt(file: FileDiffMetadata, side: Side, start: number, end: 
   const out: string[] = [];
   for (let line = start; line <= end; line++) {
     const index = lineIndex(file, side, line);
-    const text = index === undefined ? undefined : lines[index];
+    const text = index === undefined ? expanded.get(file.name)?.[side][line - 1] : lines[index];
     if (text !== undefined) out.push(text.replace(/\r?\n$/, ""));
   }
   return out;
 }
 
-/** Whether a comment's last line is in the diff on screen, so it can be drawn there. */
-export const isShown = (file: FileDiffMetadata | undefined, comment: Pick<Comment, "side" | "end">) =>
-  file !== undefined && lineIndex(file, comment.side, comment.end) !== undefined;
+/** Whether a comment's lines still read in the diff on screen as when it was written, so it can be drawn there. */
+export function isShown(
+  file: FileDiffMetadata | undefined,
+  comment: Pick<Comment, "side" | "start" | "end" | "excerpt">,
+) {
+  if (!file) return false;
+  const now = excerpt(file, comment.side, comment.start, comment.end);
+  return now.length > 0 && now.join("\n") === comment.excerpt.join("\n");
+}
 
 /** Folders before files at each level, then by name: the order the file tree shows. */
 export function sortFiles(files: FileDiffMetadata[]): FileDiffMetadata[] {
@@ -127,10 +176,10 @@ const newId = () =>
 
 function createReviewState() {
   const [store, setStore] = createStore({
-    review: undefined as Omit<ReviewResponse, "patch" | "draft"> | undefined,
+    review: undefined as Omit<ReviewResponse, "patch"> | undefined,
     comments: [] as Comment[],
-    note: "",
-    viewed: [] as string[],
+    /** Files marked viewed, by name, each with the fingerprint of the changes that were. */
+    viewed: {} as Record<string, string>,
     loading: true,
     error: "",
     submitted: false,
@@ -138,7 +187,13 @@ function createReviewState() {
   // Parsed diffs stay out of the store: they go to the highlighter workers,
   // which cannot clone store proxies, and they never change in place.
   const [files, setFiles] = createSignal<FileDiffMetadata[]>([]);
+  // What is being written lives here, not in the editor: the diff drops and
+  // redraws its editors as files, filters and layout change.
   const [composer, setComposer] = createSignal<Target>();
+  const [composerText, setComposerText] = createSignal("");
+  /** A general comment being written, or edited when it has an id. */
+  const [general, setGeneral] = createSignal<{ id?: string }>();
+  const [generalText, setGeneralText] = createSignal("");
   /** Kinds and Git statuses the reviewer filtered out of the tree and the diff. */
   const [hiddenStatuses, setHiddenStatuses] = createSignal<ReadonlySet<Status>>(new Set());
   const [hiddenKinds, setHiddenKinds] = createSignal<ReadonlySet<Kind>>(new Set());
@@ -150,42 +205,100 @@ function createReviewState() {
   });
   let restored = false;
 
-  const persist = () => {
+  const remember = () => {
     flush(); // Setters apply on the next microtask; save what was just written.
-    if (!store.review || store.submitted) return;
-    const { comments, note, viewed } = snapshot(store);
-    saveDraft(store.review.draftKey, { comments, note, viewed });
+    if (!store.review) return;
+    const { comments, viewed } = snapshot(store);
+    try {
+      sessionStorage.setItem(savedKey(store.review.session), JSON.stringify({ comments, viewed }));
+    } catch {
+      // Storage is full or off: a reload starts empty.
+    }
   };
 
+  const bodyOf = (id: string | undefined) =>
+    (id && store.comments.find((comment) => comment.id === id)?.body) || "";
+
+  /** Opens an editor on some lines, keeping whatever was being written elsewhere. */
+  function compose(target: Target) {
+    keepWriting();
+    setComposer(target);
+    setComposerText(bodyOf(target.id));
+  }
+
+  function composeGeneral(id?: string) {
+    keepWriting();
+    setGeneral({ id });
+    setGeneralText(bodyOf(id));
+  }
+
+  const cancelComposer = () => {
+    setComposer(undefined);
+    setComposerText("");
+  };
+  const cancelGeneral = () => {
+    setGeneral(undefined);
+    setGeneralText("");
+  };
+
+  /** Turns anything half-written into a comment, so moving on never loses it. */
+  function keepWriting() {
+    flush();
+    const target = composer();
+    if (target && composerText().trim()) saveComment(target, composerText().trim());
+    else cancelComposer();
+    const open = general();
+    if (open && generalText().trim()) saveGeneral(generalText().trim(), open.id);
+    else cancelGeneral();
+    flush();
+  }
+
+  const isWriting = () =>
+    (composer() !== undefined && composerText().trim() !== bodyOf(composer()?.id)) ||
+    (general() !== undefined && generalText().trim() !== bodyOf(general()?.id));
+  /** Whether closing the tab would lose something. */
+  const hasUnsent = () => !store.submitted && (store.comments.length > 0 || isWriting());
+
+  let loads = 0;
   async function load(scope?: Scope) {
+    const turn = ++loads;
     setStore((s) => {
       s.loading = true;
       s.error = "";
     });
     try {
-      const { patch, draft, ...review } = await loadReview(scope);
+      const { patch, ...review } = await loadReview(scope);
+      if (turn !== loads) return; // Something else was chosen meanwhile.
       const started = performance.now();
       const parsed = parsePatchFiles(patch, {
-        cacheKeyPrefix: `${review.draftKey}:${Date.now()}:`,
+        cacheKeyPrefix: `${review.session}:${Date.now()}:`,
       }).flatMap((entry) => entry.files);
       console.debug(`patch: parsed ${parsed.length} files in ${(performance.now() - started).toFixed(1)}ms`);
+      const target = composer();
+      const before = target && excerptAt(target);
+      // Before the old files go: a comment on lines the new ones lack is kept as written.
+      const next = target && parsed.find((file) => file.name === target.file);
+      const old = [...expanded];
+      expanded.clear();
+      if (target && !(before && isShown(next, { ...target, excerpt: before }))) {
+        for (const [name, text] of old) expanded.set(name, text);
+        keepWriting();
+        expanded.clear();
+      }
+      const saved = restored ? undefined : readSaved(review.session);
+      restored = true;
       setFiles(sortFiles(parsed));
-      setComposer(undefined);
       setStore((s) => {
         s.review = review;
         s.loading = false;
-        // The draft is one per repository; switching views keeps what is written.
-        if (!restored) {
-          s.comments = draft.comments;
-          s.viewed = draft.viewed;
-          // An older draft's single note becomes a general comment, so nothing is sent unseen.
-          if (draft.note.trim())
-            s.comments.unshift({ ...generalComment(draft.note.trim()), createdAt: undefined });
-          s.note = "";
+        // Switching what is under review keeps what is written.
+        if (saved) {
+          s.comments = saved.comments ?? [];
+          s.viewed = saved.viewed ?? {};
         }
       });
-      restored = true;
     } catch (error) {
+      if (turn !== loads) return;
       setStore((s) => {
         s.loading = false;
         s.error = error instanceof Error ? error.message : String(error);
@@ -205,6 +318,10 @@ function createReviewState() {
   };
 
   const fileByName = (name: string) => files().find((file) => file.name === name);
+  const excerptAt = (target: Target) => {
+    const file = fileByName(target.file);
+    return file ? excerpt(file, target.side, target.start, target.end) : [];
+  };
 
   function saveComment(target: Target, body: string) {
     const file = fileByName(target.file);
@@ -219,13 +336,13 @@ function createReviewState() {
           start: target.start,
           end: target.end,
           body,
-          excerpt: excerpt(file, target.side, target.start, target.end),
+          excerpt: excerptAt(target),
           scope: scopeNote(),
           createdAt: Date.now(),
         });
     });
-    setComposer(undefined);
-    persist();
+    cancelComposer();
+    remember();
   }
 
   /** Adds a comment about the whole change, or edits one. */
@@ -235,7 +352,8 @@ function createReviewState() {
       if (existing) existing.body = body;
       else s.comments.push(generalComment(body));
     });
-    persist();
+    cancelGeneral();
+    remember();
   }
 
   function deleteComments(ids: Iterable<string>) {
@@ -244,39 +362,46 @@ function createReviewState() {
       for (let index = s.comments.length - 1; index >= 0; index--)
         if (gone.has(s.comments[index]!.id)) s.comments.splice(index, 1);
     });
-    const editing = composer()?.id;
-    if (editing && gone.has(editing)) setComposer(undefined);
-    persist();
+    if (gone.has(composer()?.id ?? "")) cancelComposer();
+    if (gone.has(general()?.id ?? "")) cancelGeneral();
+    remember();
   }
 
   const deleteComment = (id: string) => deleteComments([id]);
 
-  function setNote(note: string) {
-    setStore((s) => {
-      s.note = note;
-    });
-    persist();
+  function isViewed(name: string): boolean {
+    const mark = store.viewed[name];
+    const file = mark === undefined ? undefined : fileByName(name);
+    return file !== undefined && mark === fingerprint(file);
   }
 
   /** Returns whether the file is now viewed. */
   function toggleViewed(name: string): boolean {
-    const viewed = !store.viewed.includes(name);
+    const file = fileByName(name);
+    const viewed = file !== undefined && !isViewed(name);
     setStore((s) => {
-      if (viewed) s.viewed.push(name);
-      else s.viewed.splice(s.viewed.indexOf(name), 1);
+      if (viewed) s.viewed[name] = fingerprint(file);
+      else delete s.viewed[name];
     });
-    persist();
+    remember();
     return viewed;
   }
 
+  let sending = false;
   async function finish(decision: "approve" | "comment") {
-    const review = store.review;
-    if (!review) return;
-    const { comments, note, viewed } = snapshot(store);
-    await submit(review.draftKey, { decision, comments, note, viewed });
-    setStore((s) => {
-      s.submitted = true;
-    });
+    if (!store.review || sending || store.submitted) return;
+    sending = true;
+    try {
+      keepWriting();
+      await submit({ decision, comments: snapshot(store).comments });
+      sessionStorage.removeItem(savedKey(store.review.session));
+      setStore((s) => {
+        s.submitted = true;
+      });
+      flush(); // The page may close at once, and must not ask about comments it just sent.
+    } finally {
+      sending = false;
+    }
   }
 
   return {
@@ -288,14 +413,24 @@ function createReviewState() {
     hiddenKinds,
     setHiddenKinds,
     composer,
-    setComposer,
+    compose,
+    cancelComposer,
+    composerText,
+    setComposerText,
+    general,
+    composeGeneral,
+    cancelGeneral,
+    generalText,
+    setGeneralText,
+    keepWriting,
+    hasUnsent,
     load,
     fileByName,
     saveComment,
     saveGeneral,
     deleteComment,
     deleteComments,
-    setNote,
+    isViewed,
     toggleViewed,
     finish,
   };

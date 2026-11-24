@@ -18,7 +18,7 @@ const OUTCOMES: &str = "Then act on its stdout:
 - Feedback or comments: address every one now, then summarize what you changed.
 - Approved with no comments: say the review passed and continue.
 - Closed without feedback: say so in one sentence and stop. Closing is not approval.
-- If the command was cut off by a timeout, run it again: the user's comments are restored from their draft.";
+- If the command was cut off by a timeout, say so and run it again. The new review starts empty; the tab of the old one can still copy its comments.";
 
 const OPTIONS: &str = "Arguments: a directory to review, `--base <ref>` to compare against another branch, `--uncommitted` or `--staged` to narrow the change, `--remote` to serve the page to another device over Tailscale. Run the command yourself; never ask the user to.";
 

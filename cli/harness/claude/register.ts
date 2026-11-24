@@ -6,11 +6,13 @@ import type { CommandRunResult, EngineInterface, Register } from "claude-code";
 
 const PATCHR = "patchr"; // install writes the binary's full path here
 
-/** Submits the feedback, then lets go of the draft that holds it until then. */
+/** Submits the feedback, then lets go of the file that keeps it until then. */
 async function deliver($: EngineInterface, output: string) {
   let why = "";
+  let kept = "";
   try {
-    const { receipt, text } = JSON.parse(output);
+    const { receipt, text, file } = JSON.parse(output);
+    kept = file ? ` It is kept in ${file}` : "";
     const sent = await $.prompt.submit({ text, asUser: true });
     if (sent.drop === undefined) {
       await $.process.run([PATCHR, "hook", "delivered", receipt]).catch(() => undefined);
@@ -20,7 +22,7 @@ async function deliver($: EngineInterface, output: string) {
   } catch (error) {
     why = error instanceof Error ? error.message : String(error);
   }
-  $.ui.toast(`Your feedback was not sent (${why}). /patch brings it back.`);
+  $.ui.toast(`Your feedback was not sent (${why}).${kept}`);
 }
 
 /** The command's answer, for the user only. In a running turn the model would read its text. */

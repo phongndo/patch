@@ -45,12 +45,6 @@ export interface Comment {
   createdAt?: number;
 }
 
-export interface Draft {
-  comments: Comment[];
-  note: string;
-  viewed: string[];
-}
-
 export interface ReviewResponse {
   repository: string;
   branch: string;
@@ -60,9 +54,8 @@ export interface ReviewResponse {
   label: string;
   base?: string;
   patch: string;
-  /** Keys the saved draft, so a rerun of the same review restores it. */
-  draftKey: string;
-  draft: Draft;
+  /** Names this run, so a reloaded tab finds its own comments and no other run's. */
+  session: string;
 }
 
 export interface ScopesResponse {
@@ -73,8 +66,7 @@ export interface ScopesResponse {
   commits: Commit[];
 }
 
-export interface Submission extends Draft {
+export interface Submission {
   decision: "approve" | "comment";
+  comments: Comment[];
 }
-
-export const emptyDraft = (): Draft => ({ comments: [], note: "", viewed: [] });

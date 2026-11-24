@@ -15,7 +15,7 @@ import { render, type JSX } from "@solidjs/web";
 import { loadSide } from "./api.ts";
 import { preferences, type Settings } from "./settings.ts";
 import { useTheme } from "./themes.ts";
-import type { Target } from "./state.ts";
+import { rememberFile, type Target } from "./state.ts";
 
 export type Note = { kind: "comment"; id: string } | { kind: "composer"; target: Target };
 
@@ -125,6 +125,7 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
         fileDiff.type === "new" ? "" : loadSide(key, "old", fileDiff.prevName ?? fileDiff.name),
         fileDiff.type === "deleted" ? "" : loadSide(key, "new", fileDiff.name),
       ]);
+      rememberFile(fileDiff.name, oldText, newText);
       return {
         oldFile: { name: fileDiff.prevName ?? fileDiff.name, contents: oldText },
         newFile: { name: fileDiff.name, contents: newText },

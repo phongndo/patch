@@ -51,10 +51,12 @@ export default {
       if (kept.at(-1)?.role !== "assistant") request.messages = kept;
     });
 
-    /** Sends the feedback, then lets go of the draft that holds it until then. */
+    /** Sends the feedback, then lets go of the file that keeps it until then. */
     async function deliver(sessionID: string, output: string) {
+      let kept = "";
       try {
-        const { receipt, text } = JSON.parse(output);
+        const { receipt, text, file } = JSON.parse(output);
+        kept = file ? ` It is kept in ${file}` : "";
         const idle = await Promise.race([
           ctx.session.wait({ sessionID }).then(
             () => true,
@@ -68,7 +70,7 @@ export default {
         spawn(PATCHR, ["hook", "delivered", receipt], { stdio: "ignore" }).on("error", () => {});
       } catch (error) {
         const why = error instanceof Error ? error.message : String(error);
-        await notice(sessionID, `Your feedback was not sent (${why}). /patch brings it back.`);
+        await notice(sessionID, `Your feedback was not sent (${why}).${kept}`);
       }
     }
 

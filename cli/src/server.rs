@@ -18,14 +18,13 @@ use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
 use rust_embed::RustEmbed;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use crate::git::{self, Ref, Review};
 use crate::github;
 use crate::paths::patch_paths;
-use crate::protocol::{Draft, Mode, ReviewResponse, Scope, ScopesResponse, Submission};
+use crate::protocol::{Mode, ReviewResponse, Scope, ScopesResponse, Submission};
 
 #[derive(RustEmbed)]
 #[folder = "$PATCH_WEB_DIST"]
@@ -70,8 +69,8 @@ struct Live {
 
 struct App {
     options: Options,
-    draft_key: String,
-    drafts: PathBuf,
+    /// Names this run to its page, which keeps the comments until they are sent.
+    session: String,
     reviews: Mutex<HashMap<String, (Review, HashSet<String>)>>,
     live: Mutex<Live>,
     outcome: Mutex<Option<oneshot::Sender<Outcome>>>,
@@ -83,9 +82,6 @@ struct App {
 pub struct Session {
     pub url: String,
     pub outcome: oneshot::Receiver<Outcome>,
-    /// The draft that carries comments over an interrupted run; retired once the
-    /// feedback has been handed over.
-    pub draft: PathBuf,
 }
 
 /// Where the reviewer's settings live, shared by every review on this machine.
@@ -121,27 +117,7 @@ pub fn state_dir() -> PathBuf {
         .join("patch")
 }
 
-/// The draft behind a key, as an adapter names it once it delivered the feedback.
-pub fn draft_for(key: &str) -> Option<PathBuf> {
-    valid_key(key).then(|| state_dir().join("drafts").join(format!("{key}.json")))
-}
-
-/// Delivered feedback starts fresh next time; the last one is kept beside it.
-pub fn retire(draft: &Path) {
-    let _ = std::fs::rename(draft, draft.with_extension("json.submitted"));
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 pub async fn start(options: Options, public_url: impl FnOnce(u16) -> String) -> Result<Session, String> {
-    let drafts = state_dir().join("drafts");
-    std::fs::create_dir_all(&drafts).map_err(|error| format!("{}: {error}", drafts.display()))?;
-    let root = options.root.to_string_lossy().into_owned();
-    // One draft per repository: every scope reviewed in it shares the comments.
-    let draft_key = hex(&Sha256::digest(format!("{root}\0").as_bytes()))[..24].to_string();
-
     let listener = tokio::net::TcpListener::bind(options.bind)
         .await
         .map_err(|error| format!("Could not listen on {}: {error}", options.bind))?;
@@ -152,8 +128,7 @@ pub async fn start(options: Options, public_url: impl FnOnce(u16) -> String) -> 
     let (sender, receiver) = oneshot::channel();
     let app = Arc::new(App {
         options,
-        draft_key,
-        drafts,
+        session: crate::random_token(24),
         reviews: Mutex::new(HashMap::new()),
         live: Mutex::new(Live { connections: 0, leaving: false, timer: None }),
         outcome: Mutex::new(Some(sender)),
@@ -168,8 +143,7 @@ pub async fn start(options: Options, public_url: impl FnOnce(u16) -> String) -> 
     tokio::spawn(async move {
         let _ = axum::serve(listener, router).await;
     });
-    let draft = app.drafts.join(format!("{}.json", app.draft_key));
-    Ok(Session { url: public_url(port), outcome: receiver, draft })
+    Ok(Session { url: public_url(port), outcome: receiver })
 }
 
 /// Checks the repository while a page is open and tells it when anything moved.
@@ -188,10 +162,9 @@ async fn watch_repository(app: Arc<App>) {
     }
 }
 
-fn settle(app: &App, outcome: Outcome) {
-    if let Some(sender) = app.outcome.lock().unwrap().take() {
-        let _ = sender.send(outcome);
-    }
+/// Ends the review; false when it had already ended.
+fn settle(app: &App, outcome: Outcome) -> bool {
+    app.outcome.lock().unwrap().take().is_some_and(|sender| sender.send(outcome).is_ok())
 }
 
 fn json<T: Serialize>(status: StatusCode, value: &T) -> Response {
@@ -309,39 +282,6 @@ async fn review(app: &App, scope: &Scope) -> Result<Review, String> {
         new: Ref::Commit(pr.head_sha),
         patch: pr.patch,
     })
-}
-
-fn draft_path(app: &App, key: &str) -> PathBuf {
-    app.drafts.join(format!("{key}.json"))
-}
-
-fn valid_key(key: &str) -> bool {
-    key.len() == 24 && key.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
-
-/// A review is one pass. The draft only carries comments over a run that was
-/// cut off (an agent's timeout, a crash), so an old one is not brought back.
-const DRAFT_LIFETIME: Duration = Duration::from_secs(12 * 60 * 60);
-
-async fn read_draft(app: &App) -> Draft {
-    let path = draft_path(app, &app.draft_key);
-    let fresh = tokio::fs::metadata(&path)
-        .await
-        .ok()
-        .and_then(|meta| meta.modified().ok())
-        .and_then(|modified| modified.elapsed().ok())
-        .is_some_and(|age| age < DRAFT_LIFETIME);
-    if !fresh {
-        return Draft::default();
-    }
-    tokio::fs::read(&path).await.ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default()
-}
-
-async fn save_draft(app: &App, key: &str, draft: &Draft) -> bool {
-    let path = draft_path(app, key);
-    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
-    tokio::fs::write(&temporary, serde_json::to_vec(draft).unwrap_or_default()).await.is_ok()
-        && tokio::fs::rename(&temporary, &path).await.is_ok()
 }
 
 fn on_disconnect(app: &Arc<App>) {
@@ -523,8 +463,7 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                         label: current.label.clone(),
                         base: current.base.clone(),
                         patch: current.patch.clone(),
-                        draft_key: app.draft_key.clone(),
-                        draft: read_draft(&app).await,
+                        session: app.session.clone(),
                     };
                     app.reviews.lock().unwrap().insert(scope_key, (current, files));
                     let bytes = serde_json::to_vec(&response).unwrap_or_default();
@@ -589,30 +528,15 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                 Err(_) => (StatusCode::NOT_FOUND, "").into_response(),
             }
         }
-        (Method::PUT, "/api/draft") => {
-            let key = params.get("key").cloned().unwrap_or_default();
-            if !valid_key(&key) {
-                return error(StatusCode::BAD_REQUEST, "Bad key.");
-            }
-            let Ok(draft) = serde_json::from_slice::<Draft>(&body().await) else {
-                return error(StatusCode::BAD_REQUEST, "Bad draft.");
-            };
-            let saved = save_draft(&app, &key, &draft).await;
-            if saved { json(StatusCode::OK, &serde_json::json!({ "ok": true })) } else { error(StatusCode::INTERNAL_SERVER_ERROR, "Could not save the draft.") }
-        }
         (Method::POST, "/api/submit") => {
             let Ok(submission) = serde_json::from_slice::<Submission>(&body().await) else {
                 return error(StatusCode::BAD_REQUEST, "Unknown decision.");
             };
-            // The draft holds the feedback until it has been handed over, so none of it
-            // is lost when that fails; the page may not have saved the last edits.
-            if !submission.comments.is_empty() || !submission.note.is_empty() {
-                let viewed = read_draft(&app).await.viewed;
-                let draft = Draft { comments: submission.comments.clone(), note: submission.note.clone(), viewed };
-                save_draft(&app, &app.draft_key, &draft).await;
+            if settle(&app, Outcome::Submitted(submission)) {
+                json(StatusCode::OK, &serde_json::json!({ "ok": true }))
+            } else {
+                error(StatusCode::CONFLICT, "This review has already ended.")
             }
-            settle(&app, Outcome::Submitted(submission));
-            json(StatusCode::OK, &serde_json::json!({ "ok": true }))
         }
         (Method::GET, "/api/settings") => json(StatusCode::OK, &read_settings()),
         (Method::PUT, "/api/settings") => {

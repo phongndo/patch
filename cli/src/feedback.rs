@@ -1,4 +1,5 @@
 //! Turns a submitted review into the text the agent reads on stdout.
+//! `web/feedback.ts` writes the same for a page that has lost its review.
 
 use crate::protocol::{Comment, Decision, Submission};
 
@@ -30,9 +31,8 @@ fn range(comment: &Comment) -> String {
 
 pub fn format(submission: &Submission, repository: &str, root: &str) -> String {
     let mut comments: Vec<&Comment> = submission.comments.iter().filter(|c| !c.body.trim().is_empty()).collect();
-    let note = submission.note.trim();
     let approve = submission.decision == Decision::Approve;
-    if approve && comments.is_empty() && note.is_empty() {
+    if approve && comments.is_empty() {
         return "The user reviewed the changes in Patch and approved them with no comments.".into();
     }
 
@@ -52,11 +52,8 @@ pub fn format(submission: &Submission, repository: &str, root: &str) -> String {
         .into(),
     );
     out.push(format!("Paths are relative to {root}."));
-    // General comments belong to no file; an older draft's single note counts as one.
-    let general: Vec<&str> = std::iter::once(note)
-        .chain(comments.iter().filter(|c| c.file.is_empty()).map(|c| c.body.trim()))
-        .filter(|body| !body.is_empty())
-        .collect();
+    // General comments belong to no file.
+    let general: Vec<&str> = comments.iter().filter(|c| c.file.is_empty()).map(|c| c.body.trim()).collect();
     if !general.is_empty() {
         out.extend(["".into(), "## General".into(), String::new()]);
         for body in general {
@@ -114,7 +111,7 @@ mod tests {
 
     #[test]
     fn approval_with_nothing_to_say_is_one_line() {
-        let s = Submission { decision: Decision::Approve, comments: vec![], note: " ".into() };
+        let s = Submission { decision: Decision::Approve, comments: vec![] };
         assert!(format(&s, "demo", "/repo").contains("approved them with no comments"));
     }
 
@@ -123,19 +120,17 @@ mod tests {
         let s = Submission {
             decision: Decision::Comment,
             comments: vec![comment("additions", 2, 3, &["const x = 1;", "```"])],
-            note: "Overall fine.".into(),
         };
         let text = format(&s, "demo", "/repo");
         assert!(text.contains("### src/a.ts:2-3"));
         assert!(text.contains("````ts\nconst x = 1;\n```\n````"));
-        assert!(text.contains("## General\n\n- Overall fine."));
     }
 
     #[test]
     fn old_side_and_scope_are_named() {
         let mut c = comment("deletions", 4, 4, &[]);
         c.scope = Some("PR #1".into());
-        let s = Submission { decision: Decision::Comment, comments: vec![c], note: String::new() };
+        let s = Submission { decision: Decision::Comment, comments: vec![c] };
         assert!(format(&s, "demo", "/repo").contains("src/a.ts:4 (old side, removed lines) (in PR #1)"));
     }
 
@@ -149,7 +144,6 @@ mod tests {
         let s = Submission {
             decision: Decision::Comment,
             comments: vec![comment("additions", 2, 2, &[]), first, second],
-            note: String::new(),
         };
         let text = format(&s, "demo", "/repo");
         assert!(text.contains("## General\n\n- Split this PR.\n- Add tests.\n  For both paths.\n\n## src/a.ts"));

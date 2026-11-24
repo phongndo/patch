@@ -4,9 +4,11 @@
 // "bun src/cli.ts" (default).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import type { Comment } from "../src/protocol.ts";
+import { feedbackText } from "../web/feedback.ts";
 
 const command = (process.env.PATCHR ?? "bun src/cli.ts").split(" ");
 command[command.length - 1] =
@@ -72,6 +74,16 @@ async function start(...args: string[]) {
   return { child, url, origin: url.origin, stdout };
 }
 
+const general = (body: string): Comment => ({
+  id: "g",
+  file: "",
+  side: "additions",
+  start: 0,
+  end: 0,
+  body,
+  excerpt: [],
+});
+
 const post = (url: string, body: unknown, headers: Record<string, string> = {}) =>
   fetch(url, {
     method: "POST",
@@ -129,38 +141,37 @@ describe("patchr review", () => {
       expect(commit.patch).not.toContain("+four");
       expect((await fetch(`${origin}/api/review?scope=commits&from=--output%3Dx&to=HEAD`)).status).toBe(422);
 
-      // A draft saves and comes back with the next review.
-      const draft = {
-        comments: [
-          {
-            id: "c1",
-            file: "a.ts",
-            side: "additions",
-            start: 2,
-            end: 2,
-            body: "Lowercase this.",
-            excerpt: ["TWO"],
-          },
-        ],
-        note: "Close.",
-        viewed: [],
-      };
-      expect(
-        (
-          await fetch(`${origin}/api/draft?key=${review.draftKey}`, {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(draft),
-          })
-        ).ok,
-      ).toBe(true);
+      // Every view of one run is the same session; the server keeps no comments.
       const again = await (await fetch(`${origin}/api/review?scope=uncommitted`)).json();
-      expect(again.draft.comments[0].body).toBe("Lowercase this.");
       expect(again.label).toBe("feature · uncommitted");
+      expect(again.session).toBe(review.session);
+      expect(Object.keys(again)).not.toContain("draft");
+      expect((await fetch(`${origin}/api/draft?key=x`, { method: "PUT" })).ok).toBe(false);
 
-      expect(
-        (await post(`${origin}/api/submit?key=${review.draftKey}`, { decision: "comment", ...draft })).ok,
-      ).toBe(true);
+      const comments: Comment[] = [
+        {
+          id: "c1",
+          file: "b.ts",
+          side: "deletions",
+          start: 4,
+          end: 5,
+          body: "Why gone?\nIt was used.",
+          excerpt: ["```", "x"],
+          scope: "PR #1",
+        },
+        {
+          id: "c2",
+          file: "a.ts",
+          side: "additions",
+          start: 2,
+          end: 2,
+          body: "Lowercase this.",
+          excerpt: ["TWO"],
+        },
+        general("Close.\nBut not there."),
+        { id: "c4", file: "Makefile", side: "additions", start: 1, end: 1, body: " ", excerpt: [] },
+      ];
+      expect((await post(`${origin}/api/submit`, { decision: "comment", comments })).ok).toBe(true);
       const out = await stdout;
       expect(await child.exited).toBe(0);
       expect(out).toContain("# Review feedback (patch-contract-");
@@ -168,7 +179,11 @@ describe("patchr review", () => {
       expect(out).toContain("```ts\nTWO\n```");
       expect(out).toContain("Lowercase this.");
       expect(out).toContain("## General\n\n- Close.");
-      expect(existsSync(join(state, "patch", "drafts", `${review.draftKey}.json.submitted`))).toBe(true);
+      // A page that lost its review copies the same text, but not where the repository is.
+      const copied = feedbackText(comments, review.repository);
+      expect(copied).toBe(out.trim().replace(/^Paths are relative to .*\n/m, ""));
+      // It was read, so nothing of it stays behind.
+      expect(existsSync(join(state, "patch", "unsent"))).toBe(false);
     } finally {
       child.kill();
     }
@@ -177,7 +192,7 @@ describe("patchr review", () => {
   test("approval with nothing to say is one line", async () => {
     const { child, origin, stdout } = await start("--uncommitted");
     try {
-      await post(`${origin}/api/submit`, { decision: "approve", comments: [], note: "", viewed: [] });
+      await post(`${origin}/api/submit`, { decision: "approve", comments: [] });
       expect((await stdout).trim()).toBe(
         "The user reviewed the changes in Patch and approved them with no comments.",
       );
@@ -217,16 +232,8 @@ describe("patchr review", () => {
     }
   });
 
-  test("a page that leaves ends the review as closed, not approved, and drops the draft", async () => {
+  test("a page that leaves ends the review as closed, not approved", async () => {
     const { child, origin, stdout } = await start("--uncommitted");
-    const review = await (await fetch(`${origin}/api/review`)).json();
-    await fetch(`${origin}/api/draft?key=${review.draftKey}`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ comments: [], note: "", viewed: ["a.ts"] }),
-    });
-    const draft = join(state, "patch", "drafts", `${review.draftKey}.json`);
-    expect(existsSync(draft)).toBe(true);
     try {
       const live = new AbortController();
       const stream = await fetch(`${origin}/api/live`, { signal: live.signal });
@@ -237,7 +244,6 @@ describe("patchr review", () => {
       expect(await stdout).toContain("closed without feedback");
       expect(performance.now() - started).toBeLessThan(15_000);
       await child.exited;
-      expect(existsSync(draft)).toBe(false);
     } finally {
       child.kill();
     }
@@ -275,31 +281,79 @@ describe("patchr review", () => {
     }
   });
 
-  test("the draft holds submitted feedback until the adapter delivers it", async () => {
-    const submission = { decision: "comment", comments: [], note: "Keep me.", viewed: [] };
+  test("submitted feedback is kept until the adapter delivers it, and never comes back as comments", async () => {
+    const submission = { decision: "comment", comments: [general("Keep me.")] };
     const { child, origin, stdout } = await start("--typed", "--uncommitted");
     await post(`${origin}/api/submit`, submission);
-    const { receipt, text } = JSON.parse(await stdout);
+    const { receipt, text, file } = JSON.parse(await stdout);
     expect(text).toContain("Keep me.");
     await child.exited;
 
-    // Never delivered: the next review brings it back.
+    expect(file).toBe(join(state, "patch", "unsent", `${receipt}.md`));
+    expect(await Bun.file(file).text()).toContain("Keep me.");
+    expect((await stat(join(file, ".."))).mode & 0o077).toBe(0);
+    // The next review knows nothing of it.
     const again = await start("--typed", "--uncommitted");
-    const review = await (await fetch(`${again.origin}/api/review`)).json();
+    expect(await (await fetch(`${again.origin}/api/review`)).text()).not.toContain("Keep me.");
     again.child.kill();
-    expect(review.draftKey).toBe(receipt);
-    expect(review.draft.note).toBe("Keep me.");
 
-    const draft = join(state, "patch", "drafts", `${receipt}.json`);
     const delivered = (key: string) =>
       Bun.spawnSync([...command, "hook", "delivered", key], {
         env: { ...process.env, XDG_STATE_HOME: state, XDG_CONFIG_HOME: state },
       });
-    delivered("../drafts/x");
-    expect(existsSync(draft)).toBe(true);
+    delivered(`../unsent/${receipt}`);
+    delivered("x/../../unsent/../../x1x");
+    expect(existsSync(file)).toBe(true);
     delivered(receipt);
-    expect(existsSync(draft)).toBe(false);
-    expect(existsSync(`${draft}.submitted`)).toBe(true);
+    expect(existsSync(file)).toBe(false);
+  }, 20_000);
+
+  test("a review ends once: a second submission is told so", async () => {
+    const { child, origin, stdout } = await start("--uncommitted");
+    try {
+      const submission = { decision: "comment", comments: [general("Once.")] };
+      const [first, second] = await Promise.all([
+        post(`${origin}/api/submit`, submission),
+        post(`${origin}/api/submit`, submission),
+      ]);
+      expect([first.status, second.status].toSorted()).toEqual([200, 409]);
+      expect((await stdout).match(/Once\./g)).toHaveLength(1);
+    } finally {
+      child.kill();
+    }
+  });
+
+  test("feedback nobody reads any more is kept, and stderr says where", async () => {
+    const child = Bun.spawn(
+      ["sh", "-c", `"$0" review --no-open ${local.join(" ")} --uncommitted | true`, command.at(-1)!],
+      {
+        cwd: repo,
+        env: {
+          ...process.env,
+          PATCH_BROWSER: "none",
+          PATCH_PORT: "0",
+          XDG_STATE_HOME: state,
+          XDG_CONFIG_HOME: state,
+          SSH_CONNECTION: "",
+        },
+        stderr: "pipe",
+      },
+    );
+    const reader = child.stderr.getReader();
+    let text = "";
+    const until = async (pattern: RegExp) => {
+      while (!pattern.test(text)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`ended without ${pattern}: ${text}`);
+        text += new TextDecoder().decode(value);
+      }
+      return text.match(pattern)![1]!;
+    };
+    const origin = new URL(await until(/open at (\S+)/)).origin;
+    await post(`${origin}/api/submit`, { decision: "comment", comments: [general("Nobody reads.")] });
+    const file = await until(/kept in (\S+)/);
+    expect(await Bun.file(file).text()).toContain("Nobody reads.");
+    await child.exited;
   }, 20_000);
 
   test("Codex: one review per thread, and no feedback is lost", async () => {
@@ -354,7 +408,7 @@ describe("patchr review", () => {
 
       for (const [index, note] of ["FIRST", "SECOND"].entries()) {
         if (index > 0) reason = await open();
-        await post(`${url(reason)}api/submit`, { decision: "comment", comments: [], note, viewed: [] });
+        await post(`${url(reason)}api/submit`, { decision: "comment", comments: [general(note)] });
         for (let i = 0; i < 100 && (await kept()) <= index; i++) await Bun.sleep(50);
       }
       const context = (await hook("Continue.")).hookSpecificOutput.additionalContext as string;

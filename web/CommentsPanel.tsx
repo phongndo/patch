@@ -13,10 +13,8 @@ export const moved = (comment: Comment) =>
   !isGeneral(comment) && !isShown(state.fileByName(comment.file), comment);
 
 /** Writes or edits a general comment in place. */
-function GeneralEditor(props: { id?: string; onDone: () => void }) {
-  const [body, setBody] = createSignal(
-    () => state.store.comments.find((comment) => comment.id === props.id)?.body ?? "",
-  );
+function GeneralEditor(props: { id?: string }) {
+  const body = () => state.generalText();
   let input: HTMLTextAreaElement | undefined;
   onSettled(() => {
     requestAnimationFrame(() => input?.focus());
@@ -24,7 +22,7 @@ function GeneralEditor(props: { id?: string; onDone: () => void }) {
   const save = () => {
     if (body().trim()) state.saveGeneral(body().trim(), props.id);
     else if (props.id) state.deleteComment(props.id);
-    props.onDone();
+    else state.cancelGeneral();
   };
   return (
     <form
@@ -39,7 +37,7 @@ function GeneralEditor(props: { id?: string; onDone: () => void }) {
         rows={3}
         placeholder="About the whole change"
         value={body()}
-        onInput={(event) => setBody(event.currentTarget.value)}
+        onInput={(event) => state.setGeneralText(event.currentTarget.value)}
         onKeyDown={(event) => {
           event.stopPropagation();
           if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
@@ -47,13 +45,13 @@ function GeneralEditor(props: { id?: string; onDone: () => void }) {
             save();
           } else if (event.key === "Escape") {
             event.preventDefault();
-            props.onDone();
+            state.cancelGeneral();
           }
         }}
       />
       <footer>
         <span class="hint">⌘↵ save · Esc cancel</span>
-        <button type="button" class="button quiet" onClick={() => props.onDone()}>
+        <button type="button" class="button quiet" onClick={() => state.cancelGeneral()}>
           Cancel
         </button>
         <button type="submit" class="button primary" disabled={!body().trim() && !props.id}>
@@ -71,7 +69,10 @@ export function CommentsPanel(props: {
 }) {
   const [selected, setSelected] = createSignal<ReadonlySet<string>>(new Set());
   // "new" while a general comment is being written; an id while one is edited.
-  const [writing, setWriting] = createSignal<string>();
+  const writing = () => {
+    const open = state.general();
+    return open && (open.id ?? "new");
+  };
 
   const visible = createMemo(() => {
     const text = props.query.trim().toLowerCase();
@@ -107,12 +108,9 @@ export function CommentsPanel(props: {
 
   function Row(row: { comment: Comment }) {
     const comment = () => row.comment;
-    const edit = () => (isGeneral(comment()) ? setWriting(comment().id) : props.onEdit(comment()));
+    const edit = () => (isGeneral(comment()) ? state.composeGeneral(comment().id) : props.onEdit(comment()));
     return (
-      <Show
-        when={writing() !== comment().id}
-        fallback={<GeneralEditor id={comment().id} onDone={() => setWriting(undefined)} />}
-      >
+      <Show when={writing() !== comment().id} fallback={<GeneralEditor id={comment().id} />}>
         <li class={{ "comment-row": true, selected: selected().has(comment().id) }}>
           <input
             type="checkbox"
@@ -138,7 +136,7 @@ export function CommentsPanel(props: {
                   {lineLabel(comment().start, comment().end, comment().side)}
                 </Show>
                 <Show when={moved(comment())}>
-                  <span class="tag warning">lines changed</span>
+                  <span class="tag warning">not in the diff</span>
                 </Show>
                 <Show when={comment().scope}>
                   <span class="tag">{comment().scope}</span>
@@ -175,13 +173,13 @@ export function CommentsPanel(props: {
             <button
               class="icon-button"
               title="Add a general comment, about the whole change"
-              onClick={() => setWriting("new")}
+              onClick={() => state.composeGeneral()}
             >
               <Icon name="plus" />
             </button>
           </header>
           <Show when={writing() === "new"}>
-            <GeneralEditor onDone={() => setWriting(undefined)} />
+            <GeneralEditor />
           </Show>
           <ul>
             <For each={general()}>{(comment) => <Row comment={comment} />}</For>

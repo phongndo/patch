@@ -1,4 +1,4 @@
-import { createSignal, onSettled, Show } from "solid-js";
+import { onSettled, Show } from "solid-js";
 import { Icon } from "./Icon.tsx";
 import { state, type Target } from "./state.ts";
 
@@ -14,7 +14,7 @@ export function CommentCard(props: { id: string }) {
           <header>
             <span class="note-where">{lineLabel(comment().start, comment().end, comment().side)}</span>
             <span class="note-actions">
-              <button class="icon-button" title="Edit" onClick={() => state.setComposer({ ...comment() })}>
+              <button class="icon-button" title="Edit" onClick={() => state.compose({ ...comment() })}>
                 <Icon name="pencil" />
               </button>
               <button class="icon-button" title="Delete" onClick={() => state.deleteComment(comment().id)}>
@@ -30,10 +30,7 @@ export function CommentCard(props: { id: string }) {
 }
 
 export function Composer(props: { target: Target }) {
-  const editing = () =>
-    props.target.id ? state.store.comments.find((comment) => comment.id === props.target.id) : undefined;
-  // A writable signal seeded from the comment being edited, if any.
-  const [body, setBody] = createSignal(() => editing()?.body ?? "");
+  const body = () => state.composerText();
   let input: HTMLTextAreaElement | undefined;
 
   onSettled(() => {
@@ -41,9 +38,9 @@ export function Composer(props: { target: Target }) {
   });
 
   const save = () => {
-    if (body().trim()) state.saveComment(props.target, body());
+    if (body().trim()) state.saveComment(props.target, body().trim());
     else if (props.target.id) state.deleteComment(props.target.id);
-    else state.setComposer(undefined);
+    else state.cancelComposer();
   };
 
   return (
@@ -62,7 +59,7 @@ export function Composer(props: { target: Target }) {
         rows={3}
         placeholder="Leave a comment"
         value={body()}
-        onInput={(event) => setBody(event.currentTarget.value)}
+        onInput={(event) => state.setComposerText(event.currentTarget.value)}
         onKeyDown={(event) => {
           // Keys typed here belong to the comment, not to page shortcuts or the diff's find.
           event.stopPropagation();
@@ -71,13 +68,13 @@ export function Composer(props: { target: Target }) {
             save();
           } else if (event.key === "Escape") {
             event.preventDefault();
-            state.setComposer(undefined);
+            state.cancelComposer();
           }
         }}
       />
       <footer>
         <span class="hint">⌘↵ save · Esc cancel</span>
-        <button type="button" class="button quiet" onClick={() => state.setComposer(undefined)}>
+        <button type="button" class="button quiet" onClick={() => state.cancelComposer()}>
           Cancel
         </button>
         <button type="submit" class="button primary" disabled={!body().trim() && !props.target.id}>

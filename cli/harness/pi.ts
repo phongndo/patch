@@ -37,16 +37,18 @@ export default function (pi: ExtensionAPI) {
     else console.error(text);
   }
 
-  /** Sends the feedback, then lets go of the draft that holds it until then. */
+  /** Sends the feedback, then lets go of the file that keeps it until then. */
   function deliver(ctx: ExtensionCommandContext, output: string) {
+    let kept = "";
     try {
-      const { receipt, text } = JSON.parse(output);
+      const { receipt, text, file } = JSON.parse(output);
+      kept = file ? ` It is kept in ${file}` : "";
       // followUp only matters while the agent is working; when idle this starts a turn.
       pi.sendUserMessage(text, { deliverAs: "followUp" });
       spawn(PATCHR, ["hook", "delivered", receipt], { stdio: "ignore" }).on("error", () => {});
     } catch (error) {
       const why = error instanceof Error ? error.message : String(error);
-      notify(ctx, `Your feedback was not sent (${why}). /patch brings it back.`, "error");
+      notify(ctx, `Your feedback was not sent (${why}).${kept}`, "error");
     }
   }
 
@@ -107,7 +109,7 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // The draft keeps the comments, even just submitted ones, so the next /patch picks them up.
+  // The open tab keeps its comments and can copy them.
   pi.on("session_shutdown", () => {
     const run = open;
     open = undefined;

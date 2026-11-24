@@ -119,6 +119,7 @@ test("losing the connection shows one toast that Escape can't dismiss", async ()
   const toasts = document.querySelectorAll<HTMLElement>('[data-slot="toast"]');
   expect(toasts).toHaveLength(1);
   expect(toasts[0]!.textContent).toContain("Patch stopped");
+  expect(toasts[0]!.textContent).toContain("Copy feedback");
   await press(toasts[0]!, "Escape");
   expect(document.querySelectorAll('[data-slot="toast"]')).toHaveLength(1);
 });

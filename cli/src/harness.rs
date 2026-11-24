@@ -3,8 +3,9 @@
 //! no commands that run code, so a hook answers `$patch` before the model and
 //! `codex queue` brings the feedback back as the user's next message.
 //!
-//! Feedback is never only in flight: the review's draft keeps it until an
-//! adapter says its harness took the message (`patchr hook delivered`).
+//! Feedback is never only in flight: a file in the state folder keeps it until an
+//! adapter says its harness took the message (`patchr hook delivered`). It is for
+//! the user to pick up; no later review reads it.
 
 use std::fs::{File, TryLockError};
 use std::io::{Read, Write};
@@ -71,10 +72,43 @@ pub async fn repository_near(path: &str) -> Option<PathBuf> {
     git::find_root(directory).await.ok()
 }
 
-/// What an adapter reads: the feedback, and the receipt that confirms delivery.
-pub fn receipt(draft: &Path, text: &str) -> String {
-    let key = draft.file_stem().unwrap_or_default().to_string_lossy();
-    json!({ "receipt": key, "text": text.trim() }).to_string()
+const RECEIPT: usize = 24;
+
+fn unsent(receipt: &str) -> PathBuf {
+    state_dir().join("unsent").join(format!("{receipt}.md"))
+}
+
+/// Keeps feedback until it is delivered, in a folder only the user can read.
+pub fn keep(receipt: &str, text: &str) -> std::io::Result<PathBuf> {
+    let file = unsent(receipt);
+    private_dir(&state_dir().join("unsent"))?;
+    let unfinished = file.with_extension("tmp");
+    std::fs::write(&unfinished, text)?;
+    std::fs::rename(unfinished, &file)?;
+    Ok(file)
+}
+
+/// What an adapter reads: the feedback, the receipt that confirms delivery, and
+/// where the feedback is kept until then.
+pub fn receipt(text: &str) -> String {
+    let receipt = crate::random_token(RECEIPT);
+    let file = keep(&receipt, text).ok();
+    json!({ "receipt": receipt, "text": text.trim(), "file": file }).to_string()
+}
+
+/// The harness took the feedback a receipt names. Receipts are only letters and
+/// digits, so none of them names a file elsewhere.
+pub fn delivered(receipt: &str) {
+    if receipt.len() == RECEIPT && receipt.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        let _ = std::fs::remove_file(unsent(receipt));
+    }
+}
+
+fn private_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    std::fs::set_permissions(dir, std::os::unix::fs::PermissionsExt::from_mode(0o700))?;
+    Ok(())
 }
 
 /// The arguments of a prompt that is a `$patch` command. Codex may write the
@@ -114,9 +148,7 @@ impl Codex {
             return None;
         }
         let dir = state_dir().join("codex");
-        std::fs::create_dir_all(&dir).ok()?;
-        #[cfg(unix)]
-        std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700)).ok()?;
+        private_dir(&dir).ok()?;
         Some(Codex { dir, thread: thread.into() })
     }
 
@@ -234,13 +266,13 @@ pub fn codex_hook() {
     }
 }
 
-/// Ends a Codex review: its feedback, if any, becomes the thread's next message.
-/// True once the feedback is Codex's, or kept where the next prompt finds it.
-pub fn finish_codex(thread: &str, feedback: Option<&str>) -> bool {
-    let Some(codex) = Codex::new(thread) else { return false };
+/// Ends a Codex review: its feedback, if any, becomes the thread's next message,
+/// or is kept where the next prompt finds it.
+pub fn finish_codex(thread: &str, feedback: Option<&str>) {
+    let Some(codex) = Codex::new(thread) else { return };
     // Nobody should be sent to this review any more.
     let _ = File::options().write(true).truncate(true).open(codex.log());
-    let Some(feedback) = feedback else { return false };
+    let Some(feedback) = feedback else { return };
     let queued = Command::new("codex")
         .args(["queue", "--thread", thread, &format!("--message={feedback}")])
         .stdin(Stdio::null())
@@ -248,7 +280,9 @@ pub fn finish_codex(thread: &str, feedback: Option<&str>) -> bool {
         .stderr(Stdio::null())
         .status()
         .is_ok_and(|status| status.success());
-    queued || codex.keep(feedback).is_ok()
+    if !queued && let Err(error) = codex.keep(feedback) {
+        eprintln!("patchr: could not keep the feedback: {error}");
+    }
 }
 
 #[cfg(test)]

@@ -1,19 +1,4 @@
-import type {
-  Draft,
-  PullRequest,
-  ReviewResponse,
-  Scope,
-  ScopesResponse,
-  Submission,
-} from "../src/protocol.ts";
-
-const send = (path: string, method: string, body: unknown) =>
-  fetch(path, {
-    method,
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-    keepalive: true,
-  });
+import type { PullRequest, ReviewResponse, Scope, ScopesResponse, Submission } from "../src/protocol.ts";
 
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path);
@@ -46,39 +31,41 @@ export const loadSide = async (key: string, side: "old" | "new", path: string) =
   return response.ok ? response.text() : "";
 };
 
-let pending: ReturnType<typeof setTimeout> | undefined;
-let flush: (() => void) | undefined;
-
-/** Saves the draft a moment after the last change, and right away when the page hides. */
-export function saveDraft(key: string, draft: Draft) {
-  clearTimeout(pending);
-  flush = () => {
-    flush = undefined;
-    void send(`/api/draft?key=${key}`, "PUT", draft);
-  };
-  pending = setTimeout(flush, 400);
-}
 addEventListener("pagehide", (event: PageTransitionEvent) => {
-  flush?.();
   // Tell Patch the page is really going (closed or reloaded), so it can end
   // the review soon. A tab that only sleeps sends nothing and is waited for.
   if (!event.persisted) navigator.sendBeacon("/api/leave", new Blob(["{}"], { type: "application/json" }));
 });
 
-export async function submit(key: string, submission: Submission) {
-  clearTimeout(pending);
-  flush = undefined;
-  const response = await send(`/api/submit?key=${key}`, "POST", submission);
-  if (!response.ok) throw new Error("Patch is no longer running. Your comments are saved in the draft.");
+export async function submit(submission: Submission) {
+  const gone = "Patch is no longer running. Copy your feedback to send it yourself.";
+  const response = await fetch("/api/submit", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(submission),
+  }).catch(() => {
+    throw new Error(gone);
+  });
+  if (!response.ok) throw new Error(gone);
 }
 
-/** Holds a stream open so the server can tell when the tab is gone. */
 /** Holds a stream open so Patch can tell when the tab is gone, and hears when the repository changes. */
-export function stayConnected(onLost: () => void, onChanged: () => void) {
+export function stayConnected(hear: { lost: () => void; back: () => void; changed: () => void }) {
   const source = new EventSource("/api/live");
-  source.addEventListener("changed", onChanged);
-  source.onerror = () => {
-    if (source.readyState === EventSource.CLOSED) onLost();
+  source.addEventListener("changed", hear.changed);
+  // Chrome retries a server that is gone forever without closing the stream.
+  let silent: ReturnType<typeof setTimeout> | undefined;
+  source.onopen = () => {
+    clearTimeout(silent);
+    silent = undefined;
+    hear.back();
   };
-  return () => source.close();
+  source.onerror = () => {
+    if (source.readyState === EventSource.CLOSED) hear.lost();
+    else silent ??= setTimeout(hear.lost, 4000);
+  };
+  return () => {
+    clearTimeout(silent);
+    source.close();
+  };
 }

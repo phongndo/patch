@@ -1,9 +1,10 @@
 import type { DiffLineAnnotation, FileDiffMetadata, SelectedLineRange } from "@pierre/diffs";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@ui-sdk/solid/popover";
-import { toast, Toast, ToastRegion, ToastTitle } from "@ui-sdk/solid/toast";
+import { toast, Toast, ToastAction, ToastRegion, ToastTitle } from "@ui-sdk/solid/toast";
 import { createEffect, createMemo, createSignal, createStore, For, onSettled, Show, lazy } from "solid-js";
 import { stayConnected } from "./api.ts";
 import { createDiffView, type DiffView, type Note } from "./diff.ts";
+import { copyText, feedbackText } from "./feedback.ts";
 import { bindActions } from "./hotkeys.ts";
 import { Icon } from "./Icon.tsx";
 import { moved } from "./CommentsPanel.tsx";
@@ -97,7 +98,7 @@ export function App() {
       start: sameSide ? Math.min(range.start, range.end) : range.end,
       end: sameSide ? Math.max(range.start, range.end) : range.end,
     };
-    state.setComposer(target);
+    state.compose(target);
     // The gutter click selects its line after this handler runs.
     requestAnimationFrame(() => diff?.clearSelection());
   }
@@ -126,7 +127,7 @@ export function App() {
   }
 
   function FileHeader(props: { file: FileDiffMetadata }) {
-    const viewed = () => store.viewed.includes(props.file.name);
+    const viewed = () => state.isViewed(props.file.name);
     const count = () => store.comments.filter((comment) => comment.file === props.file.name).length;
     return (
       <span class="file-meta">
@@ -166,22 +167,32 @@ export function App() {
       scopeKey: () => store.review?.scopeKey ?? "",
     });
     diff.setLayout(layout());
-    const disconnect = stayConnected(
-      () => {
-        if (!store.submitted)
-          toast.warning("Patch stopped. Your comments are saved; run /patch again to continue.", {
-            id: "disconnected",
-            duration: Infinity,
-            dismissible: false,
-          });
+    const disconnect = stayConnected({
+      lost() {
+        if (store.submitted) return;
+        toast.warning("Patch stopped. Your comments are still here, but can only be copied.", {
+          id: "disconnected",
+          duration: Infinity,
+          dismissible: false,
+          action: { label: "Copy feedback", onAction: () => void copyFeedback() },
+          // Copying leaves the comments here, so the offer stays.
+          onDismiss: (details) => details.reason === "action" && details.cancel(),
+        });
       },
-      () => setStale(true),
-    );
+      back: () => toast.dismiss("disconnected"),
+      changed: () => setStale(true),
+    });
+    // Nothing outlives the review, so closing it with comments unsent asks first.
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (state.hasUnsent()) event.preventDefault();
+    };
+    addEventListener("beforeunload", onBeforeUnload);
     const onResize = () => setMaxWidth(Math.round(innerWidth / 2));
     addEventListener("resize", onResize);
     void state.load();
     return () => {
       removeEventListener("resize", onResize);
+      removeEventListener("beforeunload", onBeforeUnload);
       disconnect();
       diff?.destroy();
     };
@@ -194,8 +205,7 @@ export function App() {
       // Keep what the reviewer folded when a filter changes; new files start from the defaults.
       for (const file of files)
         initial[file.name] =
-          collapsed[file.name] ??
-          (store.viewed.includes(file.name) || opensCollapsed(file, settings.foldGenerated));
+          collapsed[file.name] ?? (state.isViewed(file.name) || opensCollapsed(file, settings.foldGenerated));
       setCollapsed(() => initial);
       diff?.setFiles(files, (file) => initial[file.name] ?? false);
       const anchor = keepPlace;
@@ -239,10 +249,29 @@ export function App() {
     diff?.scrollToLine(comment.file, comment.end, comment.side);
   }
 
+  async function copyFeedback() {
+    state.keepWriting();
+    if (!store.comments.length) {
+      toast.info("No comments to copy.", { id: "hint" });
+      return;
+    }
+    const copied = await copyText(feedbackText(store.comments, store.review?.repository ?? ""));
+    if (copied) toast.success("Feedback copied.", { id: "hint" });
+    else toast.error("The browser did not allow copying.", { id: "hint" });
+  }
+
+  /** Opens Finish with everything written counted. */
+  function openFinish() {
+    state.keepWriting();
+    setSendError("");
+    setFinishing(true);
+  }
+
   async function send(decision: "approve" | "comment") {
     setSendError("");
     try {
       await state.finish(decision);
+      if (!store.submitted) return;
       toast.dismiss("disconnected");
       setFinishing(false);
       // The agent has the feedback; the tab has nothing left to do.
@@ -293,7 +322,7 @@ export function App() {
       run: () => {
         if (state.composer() || store.submitted || settingsOpen()) return;
         if (finishing()) void send(hasFeedback() ? "comment" : "approve");
-        else setFinishing(true);
+        else openFinish();
       },
     },
     settings: { inInputs: true, run: () => setSettingsOpen(true) },
@@ -375,7 +404,7 @@ export function App() {
             >
               <Icon name={layout() === "split" ? "diffSplit" : "diffUnified"} />
             </button>
-            <Popover open={finishing()} onOpenChange={setFinishing}>
+            <Popover open={finishing()} onOpenChange={(open) => (open ? openFinish() : setFinishing(false))}>
               <PopoverTrigger class="button primary" disabled={store.submitted}>
                 Finish
                 <span class="count" data-empty={commentCount() ? undefined : ""}>
@@ -399,6 +428,9 @@ export function App() {
                 </Show>
                 <Show when={sendError()}>
                   <p class="error">{sendError()}</p>
+                  <button class="link" onClick={() => void copyFeedback()}>
+                    Copy feedback
+                  </button>
                 </Show>
                 <div class="finish-actions">
                   <span class="hint">{hasFeedback() ? "⌘↵ sends" : "⌘↵ approves"}</span>
@@ -433,7 +465,7 @@ export function App() {
         onOpenSettings={() => setSettingsOpen(true)}
         onEditComment={(comment) => {
           jumpTo(comment);
-          state.setComposer({ ...comment });
+          state.compose({ ...comment });
         }}
       />
 
@@ -483,6 +515,7 @@ export function App() {
         {() => (
           <Toast class="toast">
             <ToastTitle />
+            <ToastAction class="link" />
           </Toast>
         )}
       </ToastRegion>

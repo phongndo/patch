@@ -75,17 +75,6 @@ pub struct Comment {
     pub created_at: Option<u64>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Draft {
-    #[serde(default)]
-    pub comments: Vec<Comment>,
-    #[serde(default)]
-    pub note: String,
-    #[serde(default)]
-    pub viewed: Vec<String>,
-}
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewResponse {
@@ -97,8 +86,8 @@ pub struct ReviewResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
     pub patch: String,
-    pub draft_key: String,
-    pub draft: Draft,
+    /// Names this run, so a reloaded tab finds its own comments and no other run's.
+    pub session: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -148,6 +137,4 @@ pub struct Submission {
     pub decision: Decision,
     #[serde(default)]
     pub comments: Vec<Comment>,
-    #[serde(default)]
-    pub note: String,
 }
