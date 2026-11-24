@@ -360,7 +360,7 @@ export function App() {
                   <p class="error">{sendError()}</p>
                 </Show>
                 <div class="finish-actions">
-                  <span class="hint">⌘↵</span>
+                  <span class="hint">{hasFeedback() ? "⌘↵ sends" : "⌘↵ approves"}</span>
                   <button class="button" onClick={() => void send("approve")}>
                     <Icon name="check" />
                     Approve
@@ -368,6 +368,10 @@ export function App() {
                   <button
                     class="button primary"
                     disabled={!hasFeedback()}
+                    // With comments written, Enter sends them; it never approves past them.
+                    ref={(element) => {
+                      if (hasFeedback()) requestAnimationFrame(() => element.focus());
+                    }}
                     onClick={() => void send("comment")}
                   >
                     Send feedback

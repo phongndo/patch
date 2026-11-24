@@ -13,6 +13,17 @@ import { For } from "solid-js";
 import { Icon } from "./Icon.tsx";
 import { preferences, type Settings } from "./settings.ts";
 
+const shortcuts: Array<[keys: string, action: string]> = [
+  ["J K", "Next or previous file"],
+  ["C", "Comment on the selected lines"],
+  ["V", "Mark the file viewed"],
+  ["S", "Split or unified"],
+  ["B", "Show or hide the sidebar"],
+  ["R", "Refresh the diff"],
+  ["/", "Search files and comments"],
+  ["⌘ ↵", "Finish, then send"],
+];
+
 type Choice<K extends keyof Settings> = { value: Settings[K]; label: string };
 
 function Choose<K extends keyof Settings>(props: { name: K; label: string; options: Choice<K>[] }) {
@@ -172,6 +183,20 @@ export function SettingsPanel() {
               label="Fold generated files"
               hint="Lockfiles, minified and generated files open folded"
             />
+          </Section>
+          <Section title="Keyboard">
+            <dl class="shortcuts">
+              <For each={shortcuts}>
+                {([keys, action]) => (
+                  <>
+                    <dt>{action}</dt>
+                    <dd>
+                      <For each={keys.split(" ")}>{(key) => <kbd>{key}</kbd>}</For>
+                    </dd>
+                  </>
+                )}
+              </For>
+            </dl>
           </Section>
         </div>
         <footer class="settings-foot">
