@@ -13,7 +13,7 @@ import { getOrCreateWorkerPoolSingleton } from "@pierre/diffs/worker";
 import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import { render, type JSX } from "@solidjs/web";
 import { loadSide } from "./api.ts";
-import { diffTheme, preferences, type Settings } from "./settings.ts";
+import { preferences, type Settings } from "./settings.ts";
 import type { Target } from "./state.ts";
 
 export type Note = { kind: "comment"; id: string } | { kind: "composer"; target: Target };
@@ -29,8 +29,9 @@ export interface DiffViewHooks {
 }
 
 const startup = preferences.settings;
+const themesOf = (settings: Settings) => ({ dark: settings.darkTheme, light: settings.lightTheme });
 // What the highlighter workers were last told, so they are re-told only on a change.
-let workers = { palette: startup.palette, wordDiff: startup.wordDiff };
+let workers = { ...themesOf(startup), wordDiff: startup.wordDiff };
 
 const pool = getOrCreateWorkerPoolSingleton({
   poolOptions: {
@@ -38,7 +39,7 @@ const pool = getOrCreateWorkerPoolSingleton({
     poolSize: Math.max(2, Math.min(6, (navigator.hardwareConcurrency || 4) - 1)),
   },
   highlighterOptions: {
-    theme: diffTheme(startup.palette),
+    theme: themesOf(startup),
     preferredHighlighter: "highlights",
     preferredDiffLib: "@pierre/patches",
     lineDiffType: startup.wordDiff ? "word-alt" : "none",
@@ -92,8 +93,9 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
   };
 
   const options = {
-    theme: diffTheme(startup.palette),
+    theme: themesOf(startup),
     themeType: startup.colorScheme,
+    itemMetrics: { lineHeight: startup.lineHeight },
     preferredHighlighter: "highlights",
     diffStyle: "split",
     diffIndicators: startup.indicators,
@@ -170,16 +172,20 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     },
     /** Applies the reviewer's settings to the diff, including the highlighter workers. */
     configure(settings: Settings) {
-      const theme = diffTheme(settings.palette);
+      const theme = themesOf(settings);
       const lineDiffType = settings.wordDiff ? "word-alt" : "none";
-      const workersChanged = settings.palette !== workers.palette || settings.wordDiff !== workers.wordDiff;
-      workers = { palette: settings.palette, wordDiff: settings.wordDiff };
+      const workersChanged =
+        theme.dark !== workers.dark ||
+        theme.light !== workers.light ||
+        settings.wordDiff !== workers.wordDiff;
+      workers = { ...theme, wordDiff: settings.wordDiff };
       Object.assign(options, {
         theme,
         themeType: settings.colorScheme,
         diffIndicators: settings.indicators,
         lineDiffType,
         overflow: settings.wrap ? "wrap" : "scroll",
+        itemMetrics: { lineHeight: settings.lineHeight },
       });
       if (workersChanged) void pool.setRenderOptions({ theme, lineDiffType });
       view.setOptions({ ...options });

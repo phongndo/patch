@@ -8,7 +8,6 @@ import {
   PopoverTrigger,
 } from "@ui-sdk/solid/popover";
 import { CommentsPanel } from "./CommentsPanel.tsx";
-import { SettingsPanel } from "./SettingsPanel.tsx";
 import { Icon } from "./Icon.tsx";
 import { kindOf, kinds, state, statuses, statusOf, type Kind, type Status } from "./state.ts";
 import { Tree } from "./Tree.tsx";
@@ -21,6 +20,7 @@ export function Sidebar(props: {
   onOpenFile: (path: string) => void;
   onOpenComment: (comment: Comment) => void;
   onEditComment: (comment: Comment) => void;
+  onOpenSettings: () => void;
 }) {
   const [view, setView] = createSignal<View>("files");
 
@@ -160,7 +160,9 @@ export function Sidebar(props: {
         <CommentsPanel query={query()} onOpen={props.onOpenComment} onEdit={props.onEditComment} />
       </Show>
       <footer class="side-foot">
-        <SettingsPanel />
+        <button class="icon-button" title="Settings (⌘,)" onClick={() => props.onOpenSettings()}>
+          <Icon name="gear" />
+        </button>
       </footer>
     </aside>
   );

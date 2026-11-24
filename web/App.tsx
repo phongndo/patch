@@ -4,13 +4,14 @@ import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@ui-sdk/s
 import { createEffect, createMemo, createSignal, createStore, For, onSettled, Show } from "solid-js";
 import { stayConnected } from "./api.ts";
 import { createDiffView, type DiffView, type Note } from "./diff.ts";
-import { hotkeys } from "./hotkeys.ts";
+import { bindActions } from "./hotkeys.ts";
 import { Icon } from "./Icon.tsx";
 import { moved } from "./CommentsPanel.tsx";
 import { CommentCard, Composer } from "./Notes.tsx";
 import { isShown, kindOf, kinds, opensCollapsed, state, stats, type Kind, type Target } from "./state.ts";
 import { ScopePicker } from "./ScopePicker.tsx";
 import { defaults, preferences } from "./settings.ts";
+import { SettingsDialog } from "./SettingsDialog.tsx";
 import { Sidebar } from "./Sidebar.tsx";
 
 type Layout = "split" | "unified";
@@ -245,39 +246,37 @@ export function App() {
     await state.load(store.review?.scope);
   }
 
-  const idle = () => !state.composer() && !finishing() && !store.submitted;
-  hotkeys([
-    ["J", () => idle() && step(1)],
-    ["K", () => idle() && step(-1)],
-    ["S", () => idle() && chooseLayout(layout() === "split" ? "unified" : "split")],
-    ["R", () => idle() && void refresh()],
-    ["B", () => idle() && setSidebar((shown) => !shown)],
-    ["/", () => idle() && searchInput?.focus()],
-    ["Mod+F", () => searchInput?.focus()],
-    [
-      "V",
-      () => {
+  const [settingsOpen, setSettingsOpen] = createSignal(false);
+  const idle = () => !state.composer() && !finishing() && !store.submitted && !settingsOpen();
+  bindActions({
+    nextFile: { run: () => idle() && step(1) },
+    previousFile: { run: () => idle() && step(-1) },
+    layout: { run: () => idle() && chooseLayout(layout() === "split" ? "unified" : "split") },
+    refresh: { run: () => idle() && void refresh() },
+    sidebar: { run: () => idle() && setSidebar((shown) => !shown) },
+    search: { run: () => idle() && searchInput?.focus() },
+    viewed: {
+      run: () => {
         const file = idle() ? currentFile() : undefined;
         if (file && toggleViewed(file)) step(1);
       },
-    ],
-    [
-      "C",
-      () => {
+    },
+    comment: {
+      run: () => {
         const selection = idle() ? diff?.view.getSelectedLines() : undefined;
         if (selection) openComposer(selection.id, selection.range);
       },
-    ],
-    [
-      "Mod+Enter",
-      () => {
-        if (state.composer() || store.submitted) return;
+    },
+    finish: {
+      inInputs: true,
+      run: () => {
+        if (state.composer() || store.submitted || settingsOpen()) return;
         if (finishing()) void send(hasFeedback() ? "comment" : "approve");
         else setFinishing(true);
       },
-      { inInputs: true },
-    ],
-  ]);
+    },
+    settings: { inInputs: true, run: () => setSettingsOpen(true) },
+  });
 
   return (
     <div class={{ app: true, "no-sidebar": !sidebar(), "sidebar-right": settings.sidebarSide === "right" }}>
@@ -388,6 +387,7 @@ export function App() {
         onFind={(text) => diff?.find(text)}
         onOpenFile={(path) => diff?.scrollToFile(path)}
         onOpenComment={jumpTo}
+        onOpenSettings={() => setSettingsOpen(true)}
         onEditComment={(comment) => {
           jumpTo(comment);
           state.setComposer({ ...comment });
@@ -409,6 +409,8 @@ export function App() {
           preferences.update({ sidebarWidth: clampWidth(settings.sidebarWidth + step) });
         }}
       />
+
+      <SettingsDialog open={settingsOpen()} onOpenChange={setSettingsOpen} />
 
       <main class="diff" ref={(element) => (scroller = element)} />
 

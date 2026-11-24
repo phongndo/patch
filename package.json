@@ -9,6 +9,7 @@
     "build": "vite build && cargo build --release --manifest-path cli/Cargo.toml",
     "install:local": "bun run build && ./cli/target/release/patchr install",
     "icons": "bun scripts/icons.ts",
+    "themes": "bun scripts/themes.ts",
     "test": "cargo test --release --manifest-path cli/Cargo.toml && PATCHR=cli/target/release/patchr bun test ./tests/",
     "typecheck": "tsrs --noEmit -p tsconfig.json",
     "lint": "oxlint --deny-warnings .",
