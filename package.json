@@ -45,5 +45,8 @@
   "engines": {
     "bun": ">=1.4.5"
   },
-  "packageManager": "bun@1.4.5"
+  "packageManager": "bun@1.4.5",
+  "patchedDependencies": {
+    "solid-js@2.0.3": "patches/solid-js@2.0.3.patch"
+  }
 }

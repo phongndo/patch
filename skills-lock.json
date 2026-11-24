@@ -37,19 +37,19 @@
       "version": "2.0.3",
       "computedHash": "3fea3c3443b4c56a0e405e50626c576b7f9398a19599c1b2dc54843ce02c49b0"
     },
-    "solid-2.0": {
+    "solid-2-0": {
       "source": "solid-js",
       "sourceType": "node_modules",
       "skillPath": "skills/solid-2.0/SKILL.md",
       "version": "2.0.3",
-      "computedHash": "634a7ed28608d53a06256221f631c58932b8382dc56ae7a7101bf96e0b8fdf38"
+      "computedHash": "2362113c0b8eb7038a6e362d12ddb99753ed4a78e068a1782351f58be1c26be5"
     },
-    "solid-2.0-cheatsheet": {
+    "solid-2-0-cheatsheet": {
       "source": "solid-js",
       "sourceType": "node_modules",
       "skillPath": "skills/solid-2.0-cheatsheet/SKILL.md",
       "version": "2.0.3",
-      "computedHash": "6b4af98e774ada9ee3d91c23db4d732b97a76cb160fa460a62fe8265641de031"
+      "computedHash": "f1ee143fd513b291d6f3cfcae4a05e2d3d5f7c1e4fb903b0db42d5c92e740c84"
     },
     "trees": {
       "source": "pierrecomputer/pierre",

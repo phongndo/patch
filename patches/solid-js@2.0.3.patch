@@ -1,0 +1,22 @@
+diff --git a/skills/solid-2.0/SKILL.md b/skills/solid-2.0/SKILL.md
+index ff74de893545e5c2d4b638d021ab7e55491ace51..66245677f97013f89c7d734bac8479a469be7906 100644
+--- a/skills/solid-2.0/SKILL.md
++++ b/skills/solid-2.0/SKILL.md
+@@ -1,5 +1,5 @@
+ ---
+-name: solid-2.0
++name: solid-2-0
+ description: Solid 2.0 primer for coding agents. Use when writing, reviewing or migrating Solid 2.0 code (solid-js 2.x, @solidjs/web). The API differs from Solid 1.x and from React; read this before generating, then check unfamiliar names against node_modules/solid-js/CHEATSHEET.md.
+ ---
+ 
+diff --git a/skills/solid-2.0-cheatsheet/SKILL.md b/skills/solid-2.0-cheatsheet/SKILL.md
+index ed37948d3ab5f4d1131aea3406c30a344b0fb691..8c0bf7efe29f15cbbe41c886cde4ceb7346226a9 100644
+--- a/skills/solid-2.0-cheatsheet/SKILL.md
++++ b/skills/solid-2.0-cheatsheet/SKILL.md
+@@ -1,5 +1,5 @@
+ ---
+-name: solid-2.0-cheatsheet
++name: solid-2-0-cheatsheet
+ description: The complete Solid 2.0 API cheatsheet (solid-js 2.x, @solidjs/web). Use to look up the exact signature or form of a Solid 2.0 primitive, component, store setter, prop, attribute or SSR entry, and for the full list of 1.x APIs that no longer exist and their replacements.
+ ---
+ 
