@@ -130,8 +130,6 @@ function paint(root: HTMLElement, c: Theme["colors"], isDark: boolean) {
   const set = (name: string, value: string) => root.style.setProperty(name, value);
   set("--bg", editor);
   set("--panel", chrome);
-  // Behind the file cards: lifted from the chrome so the cards stand apart.
-  set("--page", `color-mix(in srgb, ${text} ${theme.dark ? 4 : 3}%, ${chrome})`);
   set("--fg", text);
   set("--muted", `color-mix(in srgb, ${text} 58%, ${chrome})`);
   set("--line", `color-mix(in srgb, ${text} 12%, ${chrome})`);

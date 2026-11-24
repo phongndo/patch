@@ -167,15 +167,18 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     lineHoverHighlight: "number",
     expansionLineCount: 20,
     parseDiffOptions: { preferredDiffLib: "@pierre/patches" },
-    layout: { paddingTop: 12, paddingBottom: 160, gap: 12 },
+    layout: { paddingTop: 0, paddingBottom: 160, gap: 0 },
     // Comment rows sit on the editor's background; how strongly changes are
     // tinted comes from the page (settings.ts, tint) through these variables.
     unsafeCSS: [
       findBar,
       "[data-line-annotation],[data-gutter-buffer=annotation]{--diffs-annotation-bg:var(--diffs-bg)}",
-      // Counts read added, then removed, as the bar's do; a modified file's icon is neutral.
+      // Files run edge to edge, so each one's header is a band, lifted from the chrome in case a theme's chrome and editor match.
+      "[data-diffs-header]{background:color-mix(in srgb,var(--fg) 4%,var(--panel))!important;box-shadow:inset 0 -1px var(--line)}",
+      // Counts read added, then removed, as the bar's do; most files are modified, so that has no icon.
       "[data-diffs-header] [data-additions-count]{order:-1}",
-      "[data-change-icon=change]{color:var(--muted)}",
+      "[data-additions-count],[data-deletions-count]{font-family:var(--font)!important;font-variant-numeric:tabular-nums}",
+      "[data-change-icon=change]{display:none}",
       // A change is an edge and a tint that runs through its line number; nothing is hatched.
       "[data-column-number],[data-gutter-buffer]{border-right-color:transparent!important}",
       "[data-indicators=bars] [data-column-number][data-line-type=change-deletion]::before{background:var(--diffs-deletion-base)}",
