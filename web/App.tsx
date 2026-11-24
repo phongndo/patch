@@ -698,6 +698,7 @@ export function App() {
         onOpenFile={openFile}
         onOpenComment={openComment}
         onEditComment={editComment}
+        onFind={(text) => diff?.find(text)}
         onRestoreDefaults={() => preferences.reset()}
       />
 

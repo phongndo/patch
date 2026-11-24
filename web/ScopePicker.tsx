@@ -16,6 +16,7 @@ import type { Commit, Mode, PullRequest, Scope, ScopesResponse } from "../src/pr
 import { loadPullRequests, loadScopes } from "./api.ts";
 import { listMotions } from "./hotkeys.ts";
 import { Icon } from "./Icon.tsx";
+import { search } from "./search.ts";
 import { preferences } from "./settings.ts";
 import { state } from "./state.ts";
 import { scopeOpen as open, setScopeOpen as setOpen } from "./ui.ts";
@@ -79,9 +80,10 @@ export function ScopePicker() {
   }
 
   const branches = createMemo(() => {
-    const text = branchQuery().trim().toLowerCase();
-    const all = scopes()?.branches ?? [];
-    return (text ? all.filter((branch) => branch.toLowerCase().includes(text)) : all).slice(0, 100);
+    const all = (scopes()?.branches ?? []).map((label) => ({ label, path: true }));
+    return search(all, branchQuery())
+      .slice(0, 100)
+      .map(({ entry }) => entry.label);
   });
 
   // Commits are listed newest first; a range runs from the older pick to the newer.

@@ -3,7 +3,6 @@
 //! their own. Commands run once the dialog is gone and focus is back on the
 //! page, so whatever they open can take it.
 
-import { fuzzyScore } from "@ui-sdk/core/text-match";
 import {
   Command,
   CommandEmpty,
@@ -23,6 +22,7 @@ import { listMotions } from "./hotkeys.ts";
 import { Icon } from "./Icon.tsx";
 import type { IconName } from "./icons.gen.ts";
 import { lineLabel } from "./Notes.tsx";
+import { search, segments, type Searchable } from "./search.ts";
 import { fontPresets, preferences, type Settings } from "./settings.ts";
 import {
   isGeneral,
@@ -41,13 +41,13 @@ import { palette, setPalette } from "./ui.ts";
 
 const { settings, update } = preferences;
 
-interface Entry {
+interface Entry extends Searchable {
   id: string;
-  label: string;
   icon: IconName;
   group?: string;
   detail?: string;
-  words?: string;
+  /** Which characters of the label the search matched. */
+  marks?: ReadonlySet<number>;
   keys?: string;
   checked?: boolean;
   colors?: readonly string[];
@@ -119,6 +119,7 @@ export function Palette(props: {
   onOpenFile: (path: string) => void;
   onOpenComment: (comment: Comment) => void;
   onEditComment: (comment: Comment) => void;
+  onFind: (text: string) => void;
   onRestoreDefaults: () => void;
 }) {
   const [query, setQuery] = createSignal("");
@@ -169,6 +170,9 @@ export function Palette(props: {
       return {
         id: `file:${file.name}`,
         label: file.name,
+        path: true,
+        // What is left to review is likelier wanted.
+        weight: state.isViewed(file.name) ? 0.95 : 1,
         icon: "fileText",
         detail: `+${additions} −${deletions}`,
         checked: state.isViewed(file.name),
@@ -384,14 +388,6 @@ export function Palette(props: {
     const name = page();
     return name ? pages[name] : undefined;
   };
-  const score = (entry: Entry, text: string) =>
-    Math.max(
-      fuzzyScore(entry.label, text),
-      0.7 * fuzzyScore(entry.group ?? "", text),
-      // Words only match whole: letters scattered over many words match anything.
-      (entry.words ?? "").toLowerCase().includes(text.toLowerCase()) ? 0.6 : 0,
-    );
-
   /** Entries in labeled sections, or the best matches in one list while searching. */
   const sections = createMemo((): Array<{ label: string; entries: Entry[] }> => {
     if (!palette()) return [];
@@ -407,20 +403,28 @@ export function Palette(props: {
       ? own
       : [
           ...own,
-          ...fileEntries().map((entry) => ({ ...entry, group: "File" })),
-          ...commentEntries(props.onOpenComment).map((entry) => ({ ...entry, group: "Comment" })),
+          // Commands come first when a file matches about as well.
+          ...fileEntries().map((entry) => ({ ...entry, group: "File", weight: 0.9 * (entry.weight ?? 1) })),
+          ...commentEntries(props.onOpenComment).map((entry) => ({
+            ...entry,
+            group: "Comment",
+            weight: 0.8,
+          })),
         ];
-    const ranked = everything
-      .map((entry, index) => ({
-        entry,
-        // Commands come first when a file matches about as well.
-        score: score(entry, text) * (!here && index >= own.length ? 0.8 : 1),
-      }))
-      .filter((match) => match.score > 0)
-      .toSorted((a, b) => b.score - a.score)
+    const entries = search(
+      everything.map((entry) => ({ ...entry, words: `${entry.words ?? ""} ${entry.group ?? ""}` })),
+      text,
+    )
       .slice(0, 100)
-      .map((match) => match.entry);
-    return ranked.length ? [{ label: "", entries: ranked }] : [];
+      .map(({ entry, marks }): Entry => ({ ...entry, marks }));
+    if (!here)
+      entries.push({
+        id: "find-text",
+        label: `Find “${text}” in the diff`,
+        icon: "search",
+        run: () => props.onFind(text),
+      });
+    return entries.length ? [{ label: "", entries }] : [];
   });
 
   const loading = () =>
@@ -507,7 +511,11 @@ export function Palette(props: {
                         <span class="palette-icon" aria-hidden="true">
                           <Icon name={entry().icon} />
                         </span>
-                        <span class="palette-label">{entry().label}</span>
+                        <span class="palette-label">
+                          <For each={segments(entry().label, entry().marks ?? new Set())} keyed={false}>
+                            {(part) => <span class={{ marked: part().marked }}>{part().text}</span>}
+                          </For>
+                        </span>
                         <Show when={query().trim() && !current() && entry().group}>
                           <span class="palette-detail">{entry().group}</span>
                         </Show>

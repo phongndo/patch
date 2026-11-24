@@ -2152,6 +2152,15 @@ kbd {
   white-space: nowrap;
 }
 
+.palette-label:has(.marked) {
+  color: color-mix(in srgb, var(--fg) 72%, var(--panel));
+}
+
+.palette-label .marked {
+  color: var(--fg);
+  font-weight: 600;
+}
+
 .palette-detail {
   flex: none;
   max-width: 45%;
