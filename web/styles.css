@@ -188,7 +188,7 @@ input {
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
-  min-width: 0;
+  flex: none;
 }
 
 .where {
@@ -975,6 +975,7 @@ input {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   max-width: 340px;
   height: var(--control);
   padding: 0 6px 0 8px;
@@ -1117,23 +1118,6 @@ input {
 
 .pr-text .muted {
   font-size: var(--text-meta);
-}
-
-/* A dot on the refresh button when the repository moved; nothing else shifts. */
-.icon-button.refresh {
-  position: relative;
-}
-
-.icon-button.refresh.stale::after {
-  content: "";
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--info);
-  box-shadow: 0 0 0 2px var(--panel);
 }
 
 .note header {
@@ -1390,16 +1374,7 @@ input {
   color: var(--del);
 }
 
-/* Sidebar footer and Settings */
-
-.side-foot {
-  flex: none;
-  display: flex;
-  align-items: center;
-  height: 40px;
-  padding: 0 8px;
-  border-top: 1px solid var(--line);
-}
+/* Settings */
 
 .switch {
   position: relative;

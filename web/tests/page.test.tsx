@@ -63,6 +63,18 @@ test("Finish focuses Approve with nothing written, and only Send feedback with c
   await clear();
 });
 
+test("Refresh is offered only once the repository changed", async () => {
+  const refresh = () =>
+    [...document.querySelectorAll(".bar button")].find((e) => e.textContent === "Refresh");
+  expect(refresh()).toBeUndefined();
+  (globalThis.EventSource as unknown as { last: EventTarget }).last.dispatchEvent(new Event("changed"));
+  await settle();
+  asked.length = 0;
+  await click(refresh() as HTMLElement);
+  expect(asked.some((url) => url.startsWith("/api/review"))).toBe(true);
+  expect(refresh()).toBeUndefined();
+});
+
 test("the totals open from a press and are named", async () => {
   await click($(".summary"));
   expect(nameOf($(".breakdown[data-open]"))).toBe("Changed lines");

@@ -533,6 +533,16 @@ export function App() {
           <ScopePicker />
         </div>
         <div class="end">
+          <Show when={stale()}>
+            <button
+              class="button quiet"
+              title={preferences.hint("The repository changed", "refresh")}
+              onClick={() => void refresh()}
+            >
+              <Icon name="refresh" />
+              Refresh
+            </button>
+          </Show>
           <Popover openOnHover delay={250} closeDelay={150}>
             <PopoverTrigger class="summary">
               <span>{state.files().length} files</span>
@@ -574,33 +584,6 @@ export function App() {
               onClick={() => openPalette()}
             >
               <Icon name="search" />
-            </button>
-            <button
-              class={{ "icon-button": true, refresh: true, stale: stale() }}
-              title={preferences.hint(stale() ? "The repository changed · refresh" : "Refresh", "refresh")}
-              onClick={() => void refresh()}
-            >
-              <Icon name="refresh" />
-            </button>
-            <button
-              class="icon-button"
-              title={preferences.hint(
-                allCollapsed() ? "Expand every file" : "Collapse every file",
-                "foldAll",
-              )}
-              onClick={toggleAll}
-            >
-              <Icon name={allCollapsed() ? "chevrons" : "chevronsClose"} />
-            </button>
-            <button
-              class="icon-button"
-              title={preferences.hint(
-                layout() === "split" ? "Split · switch to unified" : "Unified · switch to split",
-                "layout",
-              )}
-              onClick={() => chooseLayout(layout() === "split" ? "unified" : "split")}
-            >
-              <Icon name={layout() === "split" ? "diffSplit" : "diffUnified"} />
             </button>
             <Popover open={finishing()} onOpenChange={(open) => (open ? openFinish() : setFinishing(false))}>
               <PopoverTrigger class="button primary" disabled={store.submitted}>
@@ -670,7 +653,6 @@ export function App() {
         onFind={(text) => diff?.find(text)}
         onOpenFile={(path) => diff?.scrollToFile(path)}
         onOpenComment={jumpTo}
-        onOpenSettings={() => openSettings()}
         onEditComment={editComment}
       />
 

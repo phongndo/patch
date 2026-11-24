@@ -43,9 +43,9 @@ setting. ⌘/ comments on the selected lines or the line under the pointer, ⌃J
 ⌃K step through changes, ⌃N and ⌃P through comments and ⌥↓ and ⌥↑ through files,
 ⌘⇧V marks the file viewed and ⌘↵ finishes. Off a Mac the motions are on Alt. Settings › Shortcuts lists them all; any command can be given a key.
 
-Settings (⌘, or the gear at the bottom of the sidebar) cover themes, fonts and
-sizes, layout, the diff, and every keyboard shortcut. They are kept in
-`~/.config/patch/settings.json` and apply to every review.
+Settings (⌘, or the palette) cover themes, fonts and sizes, layout, the diff,
+and every keyboard shortcut. They are kept in `~/.config/patch/settings.json`
+and apply to every review.
 
 There are 416 themes for light and dark: Pierre's own and its other built-ins,
 the most-downloaded MIT and Apache-licensed theme extensions from Zed's

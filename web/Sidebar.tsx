@@ -21,7 +21,6 @@ export function Sidebar(props: {
   onOpenFile: (path: string) => void;
   onOpenComment: (comment: Comment) => void;
   onEditComment: (comment: Comment) => void;
-  onOpenSettings: () => void;
 }) {
   const [query, setQuery] = createSignal("");
   // Only the kinds and statuses this diff has are offered.
@@ -164,15 +163,6 @@ export function Sidebar(props: {
       <TabsPanel class="side-comments" value="comments">
         <CommentsPanel query={query()} onOpen={props.onOpenComment} onEdit={props.onEditComment} />
       </TabsPanel>
-      <footer class="side-foot">
-        <button
-          class="icon-button"
-          title={preferences.hint("Settings", "settings")}
-          onClick={() => props.onOpenSettings()}
-        >
-          <Icon name="gear" />
-        </button>
-      </footer>
     </Tabs>
   );
 }
