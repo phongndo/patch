@@ -13,23 +13,29 @@ cli/target/release/patchr install   # adds /patch to every harness it finds, and
 
 `patchr install --dry-run` lists what it would write; `patchr uninstall` removes it.
 
-| Harness       | Type     | Installed as                                |
-| ------------- | -------- | ------------------------------------------- |
-| Claude Code   | `/patch` | `~/.claude/skills/patch/SKILL.md`           |
-| Pi            | `/patch` | `~/.pi/agent/prompts/patch.md`              |
-| OpenCode      | `/patch` | `~/.config/opencode/commands/patch.md`      |
-| Gemini CLI    | `/patch` | `~/.gemini/commands/patch.toml`             |
-| Cursor, Droid | `/patch` | `~/.cursor/commands`, `~/.factory/commands` |
-| Codex, Amp    | `$patch` | `~/.agents/skills/patch/SKILL.md`           |
+| Harness       | Type     | Installed as                                           |
+| ------------- | -------- | ------------------------------------------------------ |
+| Claude Code   | `/patch` | a mod and its fallback skill, `~/.claude/skills/patch` |
+| Codex         | `$patch` | a hook in `~/.codex/hooks.json`, and Amp's skill       |
+| Pi            | `/patch` | `~/.pi/agent/extensions/patch.ts`                      |
+| OpenCode 2    | `/patch` | `~/.config/opencode/plugins/patch.ts`                  |
+| Gemini CLI    | `/patch` | `~/.gemini/commands/patch.toml`                        |
+| Cursor, Droid | `/patch` | `~/.cursor/commands`, `~/.factory/commands`            |
+| Amp           | `$patch` | `~/.agents/skills/patch/SKILL.md`                      |
 
-Codex's default sandbox blocks the local port Patch serves on; allow the
-command to escalate, or run Codex with a sandbox that permits loopback.
+In the first four the command opens the review itself: no model runs until you
+send feedback, which arrives as your next message, and the session stays free
+meanwhile. In the others the model waits on the command.
+
+Codex asks you to trust the hook once. Until you do, `$patch` is the skill, and
+Codex's default sandbox blocks the local port it needs; allow it to escalate.
 
 `patchr review [dir] [--base <ref>] [--uncommitted | --staged] [--remote | --local]`
 is what the command runs. By default it shows what a pull request would: the branch since
 it left its base, plus uncommitted and untracked files. A review is one pass:
 comment, send, and the next `/patch` starts fresh. A draft only carries comments
-over a run that was cut off (an agent's timeout), for 12 hours.
+over a run that was cut off (an agent's timeout) or feedback that did not reach
+the agent, for 12 hours.
 
 Settings (⌘, or the gear at the bottom of the sidebar) cover themes, fonts and
 sizes, layout, the diff, and every keyboard shortcut. They are kept in
