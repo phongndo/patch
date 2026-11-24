@@ -2,8 +2,8 @@ import type { FileDiffMetadata } from "@pierre/diffs";
 import { FileTree, type GitStatus } from "@pierre/trees";
 import { createEffect } from "solid-js";
 
-const status: Record<FileDiffMetadata["type"], GitStatus> = {
-  change: "modified",
+/** Most files in a diff are modified, so only the others are marked. */
+const status: Record<Exclude<FileDiffMetadata["type"], "change">, GitStatus> = {
   new: "added",
   deleted: "deleted",
   "rename-pure": "renamed",
@@ -21,7 +21,12 @@ export function Tree(props: { files: FileDiffMetadata[]; search: string; onOpen:
       const known = new Set(files.map((file) => file.name));
       tree = new FileTree({
         paths: files.map((file) => file.name),
-        gitStatus: files.map((file) => ({ path: file.name, status: status[file.type] })),
+        gitStatus: files.flatMap((file) =>
+          file.type === "change" ? [] : [{ path: file.name, status: status[file.type] }],
+        ),
+        icons: { set: "complete", colored: false },
+        // Every folder here holds changes, so a dot on each says nothing.
+        unsafeCSS: "[data-item-contains-git-change]>[data-item-section=git]{visibility:hidden}",
         initialExpansion: "open",
         flattenEmptyDirectories: true,
         density: "compact",

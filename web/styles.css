@@ -48,6 +48,7 @@
   --diffs-font-family: var(--mono);
   --diffs-header-font-family: var(--font);
   --diffs-font-size: var(--text);
+  --diffs-bg-separator-override: color-mix(in srgb, var(--fg) 5%, var(--bg));
   --trees-font-family-override: var(--font);
   --trees-font-size-override: var(--text);
   color-scheme: light dark;
@@ -286,8 +287,14 @@ input {
   background: transparent;
 }
 
+/* Finish is as wide empty as with a count, so nothing beside it moves. */
+.actions > .button.primary {
+  justify-content: center;
+  min-width: 6.75em;
+}
+
 .count[data-empty] {
-  visibility: hidden;
+  display: none;
 }
 
 .count {
@@ -438,6 +445,13 @@ input {
 .tree {
   height: 100%;
   --trees-bg-override: var(--panel);
+  --trees-fg-override: var(--fg);
+  --trees-selected-bg-override: var(--hover);
+  --trees-selected-fg-override: var(--fg);
+  --trees-focus-ring-color-override: var(--line-strong);
+  --trees-selected-focused-border-color-override: var(--line-strong);
+  --trees-git-added-color-override: var(--add);
+  --trees-git-deleted-color-override: var(--del);
 }
 
 /* Diff */
@@ -882,7 +896,7 @@ input {
 }
 
 .status-modified {
-  color: var(--info);
+  color: var(--muted);
 }
 
 .status-deleted {

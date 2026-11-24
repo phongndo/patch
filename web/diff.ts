@@ -173,6 +173,9 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     unsafeCSS: [
       findBar,
       "[data-line-annotation],[data-gutter-buffer=annotation]{--diffs-annotation-bg:var(--diffs-bg)}",
+      // Counts read added, then removed, as the bar's do; a modified file's icon is neutral.
+      "[data-diffs-header] [data-additions-count]{order:-1}",
+      "[data-change-icon=change]{color:var(--muted)}",
       "[data-line],[data-no-newline]{--mix-dark:var(--patch-line-dark,80%);--mix-light:var(--patch-line-light,88%)}",
       "[data-gutter-buffer],[data-column-number]{--mix-dark:var(--patch-number-dark,85%);--mix-light:var(--patch-number-light,91%)}",
     ].join("\n"),

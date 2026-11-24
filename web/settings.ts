@@ -136,7 +136,7 @@ function paint(root: HTMLElement, c: Theme["colors"], isDark: boolean) {
   set("--muted", `color-mix(in srgb, ${text} 58%, ${chrome})`);
   set("--line", `color-mix(in srgb, ${text} 12%, ${chrome})`);
   set("--line-strong", `color-mix(in srgb, ${text} 20%, ${chrome})`);
-  set("--hover", color(c.line) ?? `color-mix(in srgb, ${text} 8%, ${chrome})`);
+  set("--hover", `color-mix(in srgb, ${text} 8%, ${chrome})`);
   set("--note", `color-mix(in srgb, ${text} 4%, ${chrome})`);
   set("--accent", text);
   set("--accent-fg", chrome);
