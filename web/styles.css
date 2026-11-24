@@ -1654,6 +1654,7 @@ kbd {
 }
 
 .setting-description {
+  margin: 0;
   color: var(--muted);
   font-size: var(--text-meta);
 }
@@ -1780,6 +1781,8 @@ kbd {
   /* Hundreds of tiles: only the ones in view are painted. */
   content-visibility: auto;
   contain-intrinsic-size: auto 172px auto 110px;
+  /* The outline around the tile's face reaches past its painted box. */
+  overflow-clip-margin: 8px;
 }
 
 .theme-face {
@@ -1797,8 +1800,16 @@ kbd {
   outline-color: color-mix(in srgb, var(--fg) 18%, transparent);
 }
 
-.theme-tile.chosen .theme-face {
+.theme-tile[data-selected] .theme-face {
   outline-color: var(--info);
+}
+
+.theme-tile:focus-visible {
+  outline: none;
+}
+
+.theme-tile:focus-visible .theme-face {
+  outline-color: var(--fg);
 }
 
 .theme-top {
@@ -1839,7 +1850,7 @@ kbd {
   color: var(--muted);
 }
 
-.theme-tile.chosen .theme-name {
+.theme-tile[data-selected] .theme-name {
   color: var(--fg);
   font-weight: 600;
 }
@@ -1932,13 +1943,6 @@ kbd {
   color: var(--fg);
   font: inherit;
   outline: none;
-  appearance: textfield;
-}
-
-.stepper input::-webkit-inner-spin-button,
-.stepper input::-webkit-outer-spin-button {
-  appearance: none;
-  margin: 0;
 }
 
 .stepper-arrows {

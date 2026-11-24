@@ -6,7 +6,17 @@
 import { type JSX } from "@solidjs/web";
 import { formatForDisplay, HotkeyRecorder, type Hotkey } from "@tanstack/hotkeys";
 import { Dialog, DialogBackdrop, DialogClose, DialogContent, DialogTitle } from "@ui-sdk/solid/dialog";
-import { Popover, PopoverContent, PopoverTrigger } from "@ui-sdk/solid/popover";
+import { Field, FieldDescription, FieldLabel } from "@ui-sdk/solid/field";
+import { Input } from "@ui-sdk/solid/input";
+import { Listbox, ListboxGroup, ListboxGroupLabel, ListboxItem } from "@ui-sdk/solid/listbox";
+import {
+  NumberInput,
+  NumberInputControl,
+  NumberInputDecrement,
+  NumberInputGroup,
+  NumberInputIncrement,
+} from "@ui-sdk/solid/number-input";
+import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@ui-sdk/solid/popover";
 import {
   SegmentedControl,
   SegmentedControlIndicator,
@@ -53,11 +63,10 @@ function Choose<K extends keyof Settings>(props: {
 
 type Toggleable = { [K in keyof Settings]: Settings[K] extends boolean ? K : never }[keyof Settings];
 
-function Toggle(props: { name: Toggleable; label: string }) {
+function Toggle(props: { name: Toggleable }) {
   return (
     <Switch
       class="switch"
-      aria-label={props.label}
       checked={settings[props.name]}
       onCheckedChange={(checked) => update({ [props.name]: checked } as Partial<Settings>)}
     >
@@ -78,66 +87,54 @@ function Stepper(props: {
   step?: number;
   unit?: string;
 }) {
-  const step = () => props.step ?? 1;
-  const set = (value: number) =>
-    update({ [props.name]: Math.min(props.max, Math.max(props.min, value)) } as Partial<Settings>);
   return (
-    <label class="field-group">
-      <span class="field-name">{props.label}</span>
+    <Field class="field-group">
+      <FieldLabel class="field-name">{props.label}</FieldLabel>
       <span class="stepper-row">
-        <span class="stepper">
-          <Icon name={props.icon} />
-          <input
-            type="number"
-            aria-label={props.label}
-            min={props.min}
-            max={props.max}
-            step={step()}
-            value={settings[props.name]}
-            onChange={(event) => {
-              const value = Number(event.currentTarget.value);
-              if (Number.isFinite(value)) set(Math.round(value / step()) * step());
-            }}
-            onKeyDown={(event) => event.stopPropagation()}
-          />
-          <span class="stepper-arrows">
-            <button
-              type="button"
-              aria-label={`More ${props.label}`}
-              onClick={() => set(settings[props.name] + step())}
-            >
-              <Icon name="chevronSm" />
-            </button>
-            <button
-              type="button"
-              aria-label={`Less ${props.label}`}
-              onClick={() => set(settings[props.name] - step())}
-            >
-              <Icon name="chevronSm" />
-            </button>
-          </span>
-        </span>
+        <NumberInput
+          min={props.min}
+          max={props.max}
+          step={props.step ?? 1}
+          value={settings[props.name]}
+          onValueChange={(value, details) => {
+            if (value === null) details.cancel();
+            else update({ [props.name]: value } as Partial<Settings>);
+          }}
+        >
+          <NumberInputGroup class="stepper">
+            <Icon name={props.icon} />
+            <NumberInputControl />
+            <span class="stepper-arrows">
+              <NumberInputIncrement aria-label={`More ${props.label}`}>
+                <Icon name="chevronSm" />
+              </NumberInputIncrement>
+              <NumberInputDecrement aria-label={`Less ${props.label}`}>
+                <Icon name="chevronSm" />
+              </NumberInputDecrement>
+            </span>
+          </NumberInputGroup>
+        </NumberInput>
         <Show when={props.unit}>
           <span class="muted">{props.unit}</span>
         </Show>
       </span>
-    </label>
+    </Field>
   );
 }
 
 /* Themes */
 
-function ThemeTile(props: { theme: Theme; field: "lightTheme" | "darkTheme" }) {
+function ThemeTile(props: { theme: Theme }) {
   const c = () => props.theme.colors;
   const accent = () => c().accent ?? props.theme.palette[4] ?? c().text;
-  const chosen = () => settings[props.field] === props.theme.id;
   return (
-    <button
-      class={{ "theme-tile": true, chosen: chosen() }}
-      aria-pressed={chosen() ? "true" : "false"}
-      onClick={() => preferences.chooseTheme(props.theme)}
+    <ListboxItem
+      class="theme-tile"
+      value={props.theme.id}
+      label={props.theme.name}
+      aria-label={props.theme.name}
     >
-      <span class="theme-face" style={{ background: c().editor, color: c().text }}>
+      <span class="theme-face" aria-hidden="true" style={{ background: c().editor, color: c().text }}>
         <span class="theme-top">
           <span class="theme-aa">Aa</span>
           <span
@@ -155,7 +152,7 @@ function ThemeTile(props: { theme: Theme; field: "lightTheme" | "darkTheme" }) {
         </span>
       </span>
       <span class="theme-name">{props.theme.name}</span>
-    </button>
+    </ListboxItem>
   );
 }
 
@@ -178,29 +175,40 @@ function ThemeStrip(props: { field: "lightTheme" | "darkTheme"; base16: boolean 
       }))
       .filter((group) => group.themes.length);
   return (
-    <div
+    <Listbox
       class="theme-strip"
-      ref={(element) =>
-        // Open on the chosen theme.
+      ref={(element: HTMLElement) =>
+        // Tiles out of view have only an estimated size, so the list's own scrolling misses the chosen one.
         requestAnimationFrame(() =>
-          element.querySelector(".theme-tile.chosen")?.scrollIntoView({ block: "nearest", inline: "center" }),
+          element
+            .querySelector(".theme-tile[data-selected]")
+            ?.scrollIntoView({ block: "nearest", inline: "center" }),
         )
       }
+      aria-label={dark() ? "Dark theme" : "Light theme"}
+      orientation="horizontal"
+      activation="manual"
+      loop={false}
+      value={settings[props.field]}
+      onValueChange={(id) => {
+        const theme = themes.find((candidate) => candidate.id === id);
+        if (theme) preferences.chooseTheme(theme);
+      }}
     >
       <For each={sections()}>
         {(section) => (
-          <div class="theme-section">
-            <span class="theme-section-label">
+          <ListboxGroup class="theme-section">
+            <ListboxGroupLabel class="theme-section-label">
               {section.label}
               <span class="muted"> {section.themes.length}</span>
-            </span>
-            <div class="theme-section-tiles">
-              <For each={section.themes}>{(theme) => <ThemeTile theme={theme} field={props.field} />}</For>
+            </ListboxGroupLabel>
+            <div class="theme-section-tiles" role="presentation">
+              <For each={section.themes}>{(theme) => <ThemeTile theme={theme} />}</For>
             </div>
-          </div>
+          </ListboxGroup>
         )}
       </For>
-    </div>
+    </Listbox>
   );
 }
 
@@ -234,7 +242,7 @@ function ThemesPage() {
             description="List 251 more color schemes from the Base16 project."
             keys={[]}
           >
-            <Switch class="switch" aria-label="Base16 schemes" checked={base16()} onCheckedChange={setBase16}>
+            <Switch class="switch" checked={base16()} onCheckedChange={setBase16}>
               <SwitchThumb class="switch-thumb" />
             </Switch>
           </Row>
@@ -276,6 +284,10 @@ function FontCard(props: {
   footer?: JSX.Element;
 }) {
   const [open, setOpen] = createSignal(false);
+  const typed = (text: string) => {
+    const value = text.trim();
+    if (value) update({ [props.field]: value });
+  };
   const name = () =>
     props.presets.find((preset) => preset.value === settings[props.field])?.label ??
     settings[props.field].split(",")[0]!.replaceAll('"', "");
@@ -287,8 +299,11 @@ function FontCard(props: {
           {name()}
         </span>
         <Popover open={open()} onOpenChange={setOpen}>
-          <PopoverTrigger class="pill">Choose…</PopoverTrigger>
+          <PopoverTrigger class="pill">
+            Choose…<span class="sr-only"> {props.title}</span>
+          </PopoverTrigger>
           <PopoverContent class="menu font-menu" side="bottom" align="end" sideOffset={6}>
+            <PopoverTitle class="sr-only">{props.title}</PopoverTitle>
             <For each={props.presets}>
               {(preset) => (
                 <button
@@ -309,24 +324,23 @@ function FontCard(props: {
                 </button>
               )}
             </For>
-            <div class="menu-group">
-              <p class="menu-label">Any installed font</p>
-              <input
+            <Field class="menu-group">
+              <FieldLabel class="menu-label">Any installed font</FieldLabel>
+              <Input
                 class="field mono"
                 spellcheck={false}
-                aria-label={`${props.title}: font family`}
                 placeholder='"My Font", monospace'
-                value={settings[props.field]}
-                onChange={(event) => {
-                  const value = event.currentTarget.value.trim();
-                  if (value) update({ [props.field]: value });
-                }}
+                defaultValue={settings[props.field]}
+                onChange={(event) => typed(event.currentTarget.value)}
                 onKeyDown={(event) => {
-                  event.stopPropagation();
-                  if (event.key === "Enter") setOpen(false);
+                  if (event.key !== "Enter") return;
+                  // Enter would go on to press the trigger, which focus returns to.
+                  event.preventDefault();
+                  typed(event.currentTarget.value);
+                  setOpen(false);
                 }}
               />
-            </div>
+            </Field>
           </PopoverContent>
         </Popover>
       </div>
@@ -383,7 +397,7 @@ function TypographyPage() {
               description="Join characters like => and != in fonts that support it."
               keys={["ligatures"]}
             >
-              <Toggle name="ligatures" label="Ligatures" />
+              <Toggle name="ligatures" />
             </Row>
           }
           preview={() => (
@@ -552,7 +566,13 @@ function Group(props: { title: string; note?: string; reset?: () => void; childr
           <span class="muted"> — {props.note}</span>
         </Show>
         <Show when={props.reset}>
-          <button class="reset" title="Back to the defaults" onClick={() => props.reset?.()}>
+          <button
+            type="button"
+            class="reset"
+            title="Back to the defaults"
+            aria-label={`Reset ${props.title}`}
+            onClick={() => props.reset?.()}
+          >
             <Icon name="refresh" />
           </button>
         </Show>
@@ -570,14 +590,16 @@ function Row(props: {
 }) {
   const changed = () => props.keys.some((key) => settings[key] !== defaults[key]);
   return (
-    <div class="setting">
+    <Field class="setting">
       <span class="setting-text">
         <span class="setting-label">
-          {props.label}
+          <FieldLabel>{props.label}</FieldLabel>
           <Show when={changed()}>
             <button
+              type="button"
               class="reset"
               title="Back to the default"
+              aria-label={`Reset ${props.label}`}
               onClick={() => update(Object.fromEntries(props.keys.map((key) => [key, defaults[key]])))}
             >
               <Icon name="refresh" />
@@ -585,11 +607,11 @@ function Row(props: {
           </Show>
         </span>
         <Show when={props.description}>
-          <span class="setting-description">{props.description}</span>
+          <FieldDescription class="setting-description">{props.description}</FieldDescription>
         </Show>
       </span>
       {props.children}
-    </div>
+    </Field>
   );
 }
 
@@ -628,7 +650,7 @@ function GeneralPage() {
             description="Wrap lines instead of scrolling sideways."
             keys={["wrap"]}
           >
-            <Toggle name="wrap" label="Wrap long lines" />
+            <Toggle name="wrap" />
           </Row>
         </div>
       </Group>
@@ -668,14 +690,14 @@ function GeneralPage() {
             description="Mark the words that changed within a line."
             keys={["wordDiff"]}
           >
-            <Toggle name="wordDiff" label="Highlight changed words" />
+            <Toggle name="wordDiff" />
           </Row>
           <Row
             label="Fold generated files"
             description="Open lockfiles, minified and generated files folded."
             keys={["foldGenerated"]}
           >
-            <Toggle name="foldGenerated" label="Fold generated files" />
+            <Toggle name="foldGenerated" />
           </Row>
         </div>
       </Group>
