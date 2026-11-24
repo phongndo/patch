@@ -166,7 +166,7 @@ describe("patchr review", () => {
       expect(out).toContain("### a.ts:2");
       expect(out).toContain("```ts\nTWO\n```");
       expect(out).toContain("Lowercase this.");
-      expect(out).toContain("## Overall\n\nClose.");
+      expect(out).toContain("## General\n\n- Close.");
       expect(existsSync(join(state, "patch", "drafts", `${review.draftKey}.json.submitted`))).toBe(true);
     } finally {
       child.kill();

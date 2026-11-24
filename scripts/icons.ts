@@ -19,6 +19,7 @@ const names = [
   "Filter",
   "Gear",
   "Pencil",
+  "Plus",
   "Refresh",
   "Search",
   "SidebarLeft",

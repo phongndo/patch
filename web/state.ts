@@ -105,6 +105,20 @@ export function sortFiles(files: FileDiffMetadata[]): FileDiffMetadata[] {
 
 // randomUUID exists only on secure pages (HTTPS, localhost); a remote review
 // over plain HTTP on the tailnet has getRandomValues only.
+/** General comments are about the whole change: no file and no lines. */
+export const isGeneral = (comment: Pick<Comment, "file">) => comment.file === "";
+
+const generalComment = (body: string): Comment => ({
+  id: newId(),
+  file: "",
+  side: "additions",
+  start: 0,
+  end: 0,
+  body,
+  excerpt: [],
+  createdAt: Date.now(),
+});
+
 const newId = () =>
   Array.from(crypto.getRandomValues(new Uint8Array(4)), (byte) => byte.toString(16).padStart(2, "0")).join(
     "",
@@ -162,8 +176,11 @@ function createReviewState() {
         // The draft is one per repository; switching views keeps what is written.
         if (!restored) {
           s.comments = draft.comments;
-          s.note = draft.note;
           s.viewed = draft.viewed;
+          // An older draft's single note becomes a general comment, so nothing is sent unseen.
+          if (draft.note.trim())
+            s.comments.unshift({ ...generalComment(draft.note.trim()), createdAt: undefined });
+          s.note = "";
         }
       });
       restored = true;
@@ -190,11 +207,10 @@ function createReviewState() {
 
   function saveComment(target: Target, body: string) {
     const file = fileByName(target.file);
-    if (!file) return;
     setStore((s) => {
       const existing = target.id ? s.comments.find((comment) => comment.id === target.id) : undefined;
       if (existing) existing.body = body;
-      else
+      else if (file)
         s.comments.push({
           id: newId(),
           file: target.file,
@@ -204,18 +220,42 @@ function createReviewState() {
           body,
           excerpt: excerpt(file, target.side, target.start, target.end),
           scope: scopeNote(),
+          createdAt: Date.now(),
         });
     });
     setComposer(undefined);
     persist();
   }
 
-  function deleteComment(id: string) {
+  /** Adds a comment about the whole change, or edits one. */
+  function saveGeneral(body: string, id?: string) {
     setStore((s) => {
-      const index = s.comments.findIndex((comment) => comment.id === id);
-      if (index >= 0) s.comments.splice(index, 1);
+      const existing = id ? s.comments.find((comment) => comment.id === id) : undefined;
+      if (existing) existing.body = body;
+      else s.comments.push(generalComment(body));
     });
-    if (composer()?.id === id) setComposer(undefined);
+    persist();
+  }
+
+  function deleteComments(ids: Iterable<string>) {
+    const gone = new Set(ids);
+    setStore((s) => {
+      for (let index = s.comments.length - 1; index >= 0; index--)
+        if (gone.has(s.comments[index]!.id)) s.comments.splice(index, 1);
+    });
+    const editing = composer()?.id;
+    if (editing && gone.has(editing)) setComposer(undefined);
+    persist();
+  }
+
+  const deleteComment = (id: string) => deleteComments([id]);
+
+  /** Resolved comments stay in the draft, drawn small, and are not sent. */
+  function setResolved(ids: Iterable<string>, resolved: boolean) {
+    const chosen = new Set(ids);
+    setStore((s) => {
+      for (const comment of s.comments) if (chosen.has(comment.id)) comment.resolved = resolved || undefined;
+    });
     persist();
   }
 
@@ -260,7 +300,10 @@ function createReviewState() {
     load,
     fileByName,
     saveComment,
+    saveGeneral,
     deleteComment,
+    deleteComments,
+    setResolved,
     setNote,
     toggleViewed,
     finish,

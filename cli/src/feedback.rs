@@ -29,7 +29,9 @@ fn range(comment: &Comment) -> String {
 }
 
 pub fn format(submission: &Submission, repository: &str, root: &str) -> String {
-    let mut comments: Vec<&Comment> = submission.comments.iter().filter(|c| !c.body.trim().is_empty()).collect();
+    // Resolved comments are the reviewer's own bookkeeping; the agent never sees them.
+    let mut comments: Vec<&Comment> =
+        submission.comments.iter().filter(|c| !c.resolved && !c.body.trim().is_empty()).collect();
     let note = submission.note.trim();
     let approve = submission.decision == Decision::Approve;
     if approve && comments.is_empty() && note.is_empty() {
@@ -52,9 +54,19 @@ pub fn format(submission: &Submission, repository: &str, root: &str) -> String {
         .into(),
     );
     out.push(format!("Paths are relative to {root}."));
-    if !note.is_empty() {
-        out.extend(["".into(), "## Overall".into(), "".into(), note.into()]);
+    // General comments belong to no file; an older draft's single note counts as one.
+    let general: Vec<&str> = std::iter::once(note)
+        .chain(comments.iter().filter(|c| c.file.is_empty()).map(|c| c.body.trim()))
+        .filter(|body| !body.is_empty())
+        .collect();
+    if !general.is_empty() {
+        out.extend(["".into(), "## General".into(), String::new()]);
+        for body in general {
+            // One bullet per comment; later lines indent under it.
+            out.push(format!("- {}", body.replace('\n', "\n  ")));
+        }
     }
+    comments.retain(|c| !c.file.is_empty());
 
     comments.sort_by(|a, b| a.file.to_lowercase().cmp(&b.file.to_lowercase()).then(a.start.cmp(&b.start)));
     let mut current: Option<&str> = None;
@@ -98,6 +110,8 @@ mod tests {
             body: "Rename this.".into(),
             excerpt: excerpt.iter().map(|s| s.to_string()).collect(),
             scope: None,
+            resolved: false,
+            created_at: None,
         }
     }
 
@@ -117,7 +131,7 @@ mod tests {
         let text = format(&s, "demo", "/repo");
         assert!(text.contains("### src/a.ts:2-3"));
         assert!(text.contains("````ts\nconst x = 1;\n```\n````"));
-        assert!(text.contains("## Overall\n\nOverall fine."));
+        assert!(text.contains("## General\n\n- Overall fine."));
     }
 
     #[test]
@@ -126,6 +140,42 @@ mod tests {
         c.scope = Some("PR #1".into());
         let s = Submission { decision: Decision::Comment, comments: vec![c], note: String::new() };
         assert!(format(&s, "demo", "/repo").contains("src/a.ts:4 (old side, removed lines) (in PR #1)"));
+    }
+
+    #[test]
+    fn resolved_comments_are_left_out() {
+        let mut done = comment("additions", 3, 3, &[]);
+        done.body = "Already handled.".into();
+        done.resolved = true;
+        let open = comment("additions", 1, 1, &[]);
+        let s = Submission { decision: Decision::Comment, comments: vec![open, done], note: String::new() };
+        let text = format(&s, "demo", "/repo");
+        assert!(text.contains("### src/a.ts:1"));
+        assert!(!text.contains("Already handled."));
+    }
+
+    #[test]
+    fn only_resolved_comments_is_an_approval_when_approving() {
+        let mut done = comment("additions", 3, 3, &[]);
+        done.resolved = true;
+        let s = Submission { decision: Decision::Approve, comments: vec![done], note: String::new() };
+        assert!(format(&s, "demo", "/repo").contains("approved them with no comments"));
+    }
+
+    #[test]
+    fn general_comments_come_first_as_bullets() {
+        let mut first = comment("additions", 0, 0, &[]);
+        first.file = String::new();
+        first.body = "Split this PR.".into();
+        let mut second = first.clone();
+        second.body = "Add tests.\nFor both paths.".into();
+        let s = Submission {
+            decision: Decision::Comment,
+            comments: vec![comment("additions", 2, 2, &[]), first, second],
+            note: String::new(),
+        };
+        let text = format(&s, "demo", "/repo");
+        assert!(text.contains("## General\n\n- Split this PR.\n- Add tests.\n  For both paths.\n\n## src/a.ts"));
     }
 
     #[test]

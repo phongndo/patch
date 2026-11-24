@@ -67,8 +67,18 @@ export function App() {
   });
   const totals = () => breakdown().get("total")!;
   const number = new Intl.NumberFormat();
-  const commentCount = () => store.comments.length;
-  const hasFeedback = () => commentCount() > 0 || store.note.trim() !== "";
+  // Resolved comments stay in the draft but are not sent, so they are not counted.
+  const openComments = () => store.comments.filter((comment) => !comment.resolved);
+  const commentCount = () => openComments().length;
+  /** "3 comments · 1 resolved, not sent" */
+  const summary = () => {
+    const parts: string[] = [];
+    if (commentCount()) parts.push(`${commentCount()} comment${commentCount() === 1 ? "" : "s"}`);
+    const resolved = store.comments.length - commentCount();
+    if (resolved) parts.push(`${resolved} resolved, not sent`);
+    return parts.join(" · ");
+  };
+  const hasFeedback = () => commentCount() > 0;
 
   function annotationsFor(name: string): DiffLineAnnotation<Note>[] {
     const composer = state.composer();
@@ -338,17 +348,7 @@ export function App() {
                 </span>
               </PopoverTrigger>
               <PopoverContent class="finish" side="bottom" align="end" sideOffset={6}>
-                <PopoverTitle class="finish-title">
-                  {commentCount()
-                    ? `${commentCount()} comment${commentCount() === 1 ? "" : "s"}`
-                    : "No comments yet"}
-                </PopoverTitle>
-                <textarea
-                  placeholder="Overall note (optional)"
-                  rows={3}
-                  value={store.note}
-                  onInput={(event) => state.setNote(event.currentTarget.value)}
-                />
+                <PopoverTitle class="finish-title">{summary() || "No comments yet"}</PopoverTitle>
                 <Show when={sendError()}>
                   <p class="error">{sendError()}</p>
                 </Show>
@@ -377,6 +377,10 @@ export function App() {
         onFind={(text) => diff?.find(text)}
         onOpenFile={(path) => diff?.scrollToFile(path)}
         onOpenComment={jumpTo}
+        onEditComment={(comment) => {
+          jumpTo(comment);
+          state.setComposer({ ...comment });
+        }}
       />
 
       <button

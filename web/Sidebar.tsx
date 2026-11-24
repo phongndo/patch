@@ -7,9 +7,9 @@ import {
   PopoverTitle,
   PopoverTrigger,
 } from "@ui-sdk/solid/popover";
+import { CommentsPanel } from "./CommentsPanel.tsx";
 import { Icon } from "./Icon.tsx";
-import { lineLabel } from "./Notes.tsx";
-import { isShown, kindOf, kinds, state, statuses, statusOf, type Kind, type Status } from "./state.ts";
+import { kindOf, kinds, state, statuses, statusOf, type Kind, type Status } from "./state.ts";
 import { Tree } from "./Tree.tsx";
 
 type View = "files" | "comments";
@@ -19,17 +19,11 @@ export function Sidebar(props: {
   onFind: (text: string) => void;
   onOpenFile: (path: string) => void;
   onOpenComment: (comment: Comment) => void;
+  onEditComment: (comment: Comment) => void;
 }) {
   const [view, setView] = createSignal<View>("files");
 
   const [query, setQuery] = createSignal("");
-  const comments = createMemo(() => {
-    const text = query().trim().toLowerCase();
-    return state.store.comments.filter(
-      (comment) =>
-        !text || comment.file.toLowerCase().includes(text) || comment.body.toLowerCase().includes(text),
-    );
-  });
   // Only the kinds and statuses this diff has are offered.
   const present = createMemo(() => ({
     kinds: kinds.filter((kind) => state.files().some((file) => kindOf(file) === kind)),
@@ -162,36 +156,7 @@ export function Sidebar(props: {
       </div>
 
       <Show when={view() === "comments"}>
-        <div class="side-body comments">
-          <Show
-            when={comments().length}
-            fallback={
-              <p class="empty">
-                {state.store.comments.length ? "No matching comments." : "No comments yet."}
-              </p>
-            }
-          >
-            <ul class="comment-list">
-              <For each={comments()}>
-                {(comment) => (
-                  <li>
-                    <button class="comment-item" onClick={() => props.onOpenComment(comment)}>
-                      <span class="comment-where">
-                        {comment.file}
-                        <span class="muted">
-                          {" "}
-                          · {lineLabel(comment.start, comment.end, comment.side)}
-                          {isShown(state.fileByName(comment.file), comment) ? "" : " · not in this view"}
-                        </span>
-                      </span>
-                      <span class="comment-body">{comment.body}</span>
-                    </button>
-                  </li>
-                )}
-              </For>
-            </ul>
-          </Show>
-        </div>
+        <CommentsPanel query={query()} onOpen={props.onOpenComment} onEdit={props.onEditComment} />
       </Show>
     </aside>
   );
