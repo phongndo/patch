@@ -79,7 +79,8 @@ struct App {
 pub struct Session {
     pub url: String,
     pub outcome: oneshot::Receiver<Outcome>,
-    /// The draft that carries comments over an interrupted run; dropped when the review ends.
+    /// The draft that carries comments over an interrupted run; retired once the
+    /// feedback has been handed over.
     pub draft: PathBuf,
 }
 
@@ -114,6 +115,11 @@ pub fn state_dir() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| crate::install::home_dir().join(".local/state"))
         .join("patch")
+}
+
+/// Delivered feedback starts fresh next time; the last one is kept beside it.
+pub fn retire(draft: &Path) {
+    let _ = std::fs::rename(draft, draft.with_extension("json.submitted"));
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -317,6 +323,13 @@ async fn read_draft(app: &App) -> Draft {
         return Draft::default();
     }
     tokio::fs::read(&path).await.ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default()
+}
+
+async fn save_draft(app: &App, key: &str, draft: &Draft) -> bool {
+    let path = draft_path(app, key);
+    let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
+    tokio::fs::write(&temporary, serde_json::to_vec(draft).unwrap_or_default()).await.is_ok()
+        && tokio::fs::rename(&temporary, &path).await.is_ok()
 }
 
 fn on_disconnect(app: &Arc<App>) {
@@ -561,21 +574,19 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
             let Ok(draft) = serde_json::from_slice::<Draft>(&body().await) else {
                 return error(StatusCode::BAD_REQUEST, "Bad draft.");
             };
-            let path = draft_path(&app, &key);
-            let temporary = path.with_extension(format!("{}.tmp", std::process::id()));
-            let saved = tokio::fs::write(&temporary, serde_json::to_vec(&draft).unwrap_or_default()).await.is_ok()
-                && tokio::fs::rename(&temporary, &path).await.is_ok();
+            let saved = save_draft(&app, &key, &draft).await;
             if saved { json(StatusCode::OK, &serde_json::json!({ "ok": true })) } else { error(StatusCode::INTERNAL_SERVER_ERROR, "Could not save the draft.") }
         }
         (Method::POST, "/api/submit") => {
             let Ok(submission) = serde_json::from_slice::<Submission>(&body().await) else {
                 return error(StatusCode::BAD_REQUEST, "Unknown decision.");
             };
-            let key = params.get("key").cloned().unwrap_or_default();
-            // A submitted review starts fresh next time; keep the last one beside it.
-            if valid_key(&key) {
-                let path = draft_path(&app, &key);
-                let _ = tokio::fs::rename(&path, path.with_extension("json.submitted")).await;
+            // The draft holds the feedback until it has been handed over, so none of it
+            // is lost when that fails; the page may not have saved the last edits.
+            if !submission.comments.is_empty() || !submission.note.is_empty() {
+                let viewed = read_draft(&app).await.viewed;
+                let draft = Draft { comments: submission.comments.clone(), note: submission.note.clone(), viewed };
+                save_draft(&app, &app.draft_key, &draft).await;
             }
             settle(&app, Outcome::Submitted(submission));
             json(StatusCode::OK, &serde_json::json!({ "ok": true }))

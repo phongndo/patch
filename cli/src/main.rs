@@ -218,8 +218,9 @@ async fn review(args: &[String]) -> Result<(), String> {
         }
     };
     let mut stdout = std::io::stdout().lock();
-    let _ = writeln!(stdout, "{text}");
-    let _ = stdout.flush();
+    if writeln!(stdout, "{text}").and_then(|()| stdout.flush()).is_ok() {
+        server::retire(&session.draft);
+    }
     Ok(())
 }
 
