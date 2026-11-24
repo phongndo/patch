@@ -1,0 +1,12 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 110,
+  "ignorePatterns": [
+    "bun.lock",
+    "flake.lock",
+    "web/dist/**",
+    "dist/**",
+    "src/assets.gen.ts",
+    "web/icons.gen.ts"
+  ]
+}

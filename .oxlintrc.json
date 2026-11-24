@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "jsx-a11y", "import"],
+  "categories": {
+    "correctness": "error"
+  },
+  "ignorePatterns": ["dist/**", "web/dist/**", "src/assets.gen.ts", "web/icons.gen.ts", ".direnv/**"],
+  "overrides": [
+    {
+      "files": ["web/diff.ts"],
+      "rules": {
+        "import/default": "off"
+      }
+    }
+  ]
+}

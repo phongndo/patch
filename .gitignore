@@ -1,0 +1,8 @@
+node_modules/
+dist/
+web/dist/
+# Left behind by the native app on older branches.
+.zig-cache/
+zig-out/
+zig-pkg/
+cli/target/
