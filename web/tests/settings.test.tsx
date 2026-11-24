@@ -170,3 +170,17 @@ test("an agent can find and change every setting", async () => {
   expect(preferences.settings.contrast).toBe("high");
   expect(preferences.settings.wrap).toBe(false);
 });
+
+test("the page takes a theme's Display P3 colors, and drops what is not a color", async () => {
+  const { darkTheme, darkColors } = defaults;
+  const panel = "color(display-p3 0.090196 0.090196 0.090196)";
+  const add = "color(display-p3 0.304148 0.801790 0.517191 / 0.550000)";
+  const root = document.documentElement.style;
+  preferences.update({ colorScheme: "dark", darkTheme, darkColors: { ...darkColors, chrome: panel, add } });
+  await settle();
+  expect(root.getPropertyValue("--panel")).toBe(panel);
+  expect(root.getPropertyValue("--add")).toBe(add);
+  preferences.update({ darkColors: { ...darkColors, chrome: "url(x)" } });
+  await settle();
+  expect(root.getPropertyValue("--panel")).toBe(darkColors.editor);
+});

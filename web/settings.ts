@@ -117,15 +117,16 @@ function sanitize(saved: unknown): Settings {
   return settings;
 }
 
-const hex = (value: string | null | undefined) =>
-  value && /^#[0-9a-f]{3,8}$/i.test(value) ? value : undefined;
+/** A theme's color, hex or Display P3; anything else in a hand-edited file is dropped. */
+const color = (value: string | null | undefined) =>
+  value && /^(#[0-9a-f]{3,8}|color\(display-p3( [\d.]+){3}( \/ [\d.]+)?\))$/i.test(value) ? value : undefined;
 
 /** Paints Patch's own chrome from a theme: its surfaces, text and change colors, mixed for the rest. */
 function paint(root: HTMLElement, c: Theme["colors"], isDark: boolean) {
   const theme = { dark: isDark };
-  const editor = hex(c.editor) ?? (theme.dark ? "#0e0e10" : "#ffffff");
-  const chrome = hex(c.chrome) ?? editor;
-  const text = hex(c.text) ?? (theme.dark ? "#ececef" : "#18181b");
+  const editor = color(c.editor) ?? (theme.dark ? "#0e0e10" : "#ffffff");
+  const chrome = color(c.chrome) ?? editor;
+  const text = color(c.text) ?? (theme.dark ? "#ececef" : "#18181b");
   const set = (name: string, value: string) => root.style.setProperty(name, value);
   set("--bg", editor);
   set("--panel", chrome);
@@ -135,13 +136,13 @@ function paint(root: HTMLElement, c: Theme["colors"], isDark: boolean) {
   set("--muted", `color-mix(in srgb, ${text} 58%, ${chrome})`);
   set("--line", `color-mix(in srgb, ${text} 12%, ${chrome})`);
   set("--line-strong", `color-mix(in srgb, ${text} 20%, ${chrome})`);
-  set("--hover", hex(c.line) ?? `color-mix(in srgb, ${text} 8%, ${chrome})`);
+  set("--hover", color(c.line) ?? `color-mix(in srgb, ${text} 8%, ${chrome})`);
   set("--note", `color-mix(in srgb, ${text} 4%, ${chrome})`);
   set("--accent", text);
   set("--accent-fg", chrome);
-  set("--add", hex(c.add) ?? (theme.dark ? "#4ade80" : "#16a34a"));
-  set("--del", hex(c.del) ?? (theme.dark ? "#f87171" : "#dc2626"));
-  set("--info", hex(c.accent) ?? "#3b9ee0");
+  set("--add", color(c.add) ?? (theme.dark ? "#4ade80" : "#16a34a"));
+  set("--del", color(c.del) ?? (theme.dark ? "#f87171" : "#dc2626"));
+  set("--info", color(c.accent) ?? "#3b9ee0");
   root.style.colorScheme = theme.dark ? "dark" : "light";
 }
 
