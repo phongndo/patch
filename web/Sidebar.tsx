@@ -112,7 +112,7 @@ export function Sidebar(props: {
                         state.setHiddenKinds(toggle(state.hiddenKinds(), present().kinds, kind, event.altKey))
                       }
                     >
-                      <span class={`status kind-${kind}`}>
+                      <span class="status">
                         <Icon name={kindIcons[kind]} />
                       </span>
                       {label(kind)}

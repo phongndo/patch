@@ -26,7 +26,9 @@ export function Tree(props: { files: FileDiffMetadata[]; search: string; onOpen:
         ),
         icons: { set: "complete", colored: false },
         // Every folder here holds changes, so a dot on each says nothing.
-        unsafeCSS: "[data-item-contains-git-change]>[data-item-section=git]{visibility:hidden}",
+        // A row is ringed for the keyboard only; a click already fills it.
+        unsafeCSS: `[data-item-contains-git-change]>[data-item-section=git]{visibility:hidden}
+          [data-type=item]:not(:focus-visible)::before{outline-color:transparent!important}`,
         initialExpansion: "open",
         flattenEmptyDirectories: true,
         density: "compact",
