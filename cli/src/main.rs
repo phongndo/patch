@@ -60,6 +60,9 @@ pub fn random_token(length: usize) -> String {
     bytes.iter().map(|byte| ALPHABET[*byte as usize % ALPHABET.len()] as char).collect()
 }
 
+/// How long a Codex review waits for someone to open its page.
+const UNOPENED_GRACE: std::time::Duration = std::time::Duration::from_secs(2 * 60 * 60);
+
 struct Args {
     directory: Option<String>,
     base: Option<String>,
@@ -72,6 +75,8 @@ struct Args {
     adapter: bool,
     /// A path in the repository to review when the user names none.
     near: Option<String>,
+    /// The Codex thread that gets the feedback, instead of stdout.
+    codex: Option<String>,
 }
 
 fn parse_review(args: &[String]) -> Result<Args, String> {
@@ -85,6 +90,7 @@ fn parse_review(args: &[String]) -> Result<Args, String> {
         dev: false,
         adapter: false,
         near: None,
+        codex: None,
     };
     // What the user typed is read on its own: it can neither reach an adapter's
     // flags nor take them as values.
@@ -118,6 +124,7 @@ fn parse_words(parsed: &mut Args, args: &[String], adapter: bool) -> Result<(), 
             "--no-open" => parsed.open = false,
             "--dev" => parsed.dev = true,
             "--near" if adapter => parsed.near = Some(value("--near")?),
+            "--codex" if adapter => parsed.codex = Some(value("--codex")?),
             flag if flag.starts_with('-') => return Err(format!("Unknown option {flag}.")),
             _ if parsed.directory.is_none() => parsed.directory = Some(arg.clone()),
             _ => return Err("Pass at most one directory.".into()),
@@ -185,6 +192,8 @@ async fn review(args: &[String]) -> Result<(), String> {
         git::find_base(&root, Some(base)).await?;
     }
     let scope = Scope::view(args.mode, if args.mode == Mode::All { args.base.clone() } else { None });
+    // A Codex review has no harness process to end it.
+    let unopened = args.codex.is_some().then_some(UNOPENED_GRACE);
     let dev = args.dev.then(|| PathBuf::from(env!("PATCH_WEB_DIST")));
 
     let over_ssh = std::env::var_os("SSH_CONNECTION").is_some();
@@ -206,6 +215,7 @@ async fn review(args: &[String]) -> Result<(), String> {
                 hosts: vec![name.clone(), short, ip.to_string()],
                 secret: Some(secret),
                 dev,
+                unopened,
             },
             Box::new(move |port| format!("http://{link}:{port}/?t={token}")),
         )
@@ -218,6 +228,7 @@ async fn review(args: &[String]) -> Result<(), String> {
                 hosts: vec!["127.0.0.1".into(), "localhost".into()],
                 secret: None,
                 dev,
+                unopened,
             },
             Box::new(|port| format!("http://127.0.0.1:{port}/")),
         )
@@ -240,13 +251,18 @@ async fn review(args: &[String]) -> Result<(), String> {
     let root_text = root.to_string_lossy().into_owned();
     let text = match outcome {
         Outcome::Submitted(submission) => Some(feedback::format(&submission, &git::repository_name(&root), &root_text)),
+        Outcome::Unopened => None,
         Outcome::Closed => {
             // Closing ends the review; the next one starts clean.
             let _ = std::fs::remove_file(&session.draft);
             (!args.adapter).then(|| feedback::CLOSED.to_string())
         }
     };
-    if let Some(text) = text {
+    if let Some(thread) = &args.codex {
+        if harness::finish_codex(thread, text.as_deref()) {
+            server::retire(&session.draft);
+        }
+    } else if let Some(text) = text {
         // An adapter retires the draft itself, with the receipt, once its harness took the feedback.
         let output = if args.adapter { harness::receipt(&session.draft, &text) } else { text };
         let mut stdout = std::io::stdout().lock();
@@ -274,6 +290,10 @@ fn main() -> ExitCode {
         }
         "install" => install::install(rest.iter().any(|a| a == "--all"), rest.iter().any(|a| a == "--dry-run"))
             .map_err(|error| error.to_string()),
+        "hook" if rest.first().is_some_and(|name| name == "codex") => {
+            harness::codex_hook();
+            Ok(())
+        }
         "hook" if rest.first().is_some_and(|name| name == "delivered") => {
             if let Some(draft) = rest.get(1).and_then(|key| server::draft_for(key)) {
                 server::retire(&draft);

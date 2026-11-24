@@ -4,7 +4,7 @@
 // "bun src/cli.ts" (default).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -300,6 +300,71 @@ describe("patchr review", () => {
     expect(existsSync(draft)).toBe(false);
     expect(existsSync(`${draft}.submitted`)).toBe(true);
   }, 20_000);
+
+  test("Codex: one review per thread, and no feedback is lost", async () => {
+    const thread = crypto.randomUUID();
+    const bin = await mkdtemp(join(tmpdir(), "patch-bin-"));
+    await writeFile(join(bin, "codex"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const env = {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH}`,
+      PATCH_BROWSER: "none",
+      PATCH_PORT: "0",
+      XDG_STATE_HOME: state,
+      SSH_CONNECTION: "",
+    };
+    const hook = async (prompt: string) => {
+      const child = Bun.spawn([...command, "hook", "codex"], {
+        cwd: repo,
+        env,
+        stdin: new Blob([JSON.stringify({ session_id: thread, prompt, cwd: repo })]),
+        stdout: "pipe",
+      });
+      const text = await new Response(child.stdout).text();
+      return text ? JSON.parse(text) : undefined;
+    };
+    const open = async () => {
+      const { decision, reason } = await hook("$patch --no-open --local");
+      expect(decision).toBe("block");
+      return reason as string;
+    };
+    const url = (reason: string) => reason.match(/http\S+/)![0];
+    const kept = async () =>
+      (await readdir(join(state, "patch", "codex"))).filter((file) => file.endsWith(".md")).length;
+    try {
+      // Two at once still open one page.
+      const [first, second] = await Promise.all([open(), open()]);
+      expect(url(first)).toBe(url(second));
+      expect([first, second].filter((reason) => reason.includes("already open")).length).toBe(1);
+
+      // A review that died is not taken for an open one.
+      const port = new URL(url(first)).port;
+      Bun.spawnSync(["pkill", "-9", "-f", `codex ${thread}`]);
+      const squatter = Bun.serve({
+        port: Number(port),
+        hostname: "127.0.0.1",
+        fetch: () => new Response(""),
+      });
+      let reason = await open();
+      squatter.stop(true);
+      expect(reason).not.toContain("already");
+      expect(url(reason)).not.toBe(url(first));
+
+      for (const [index, note] of ["FIRST", "SECOND"].entries()) {
+        if (index > 0) reason = await open();
+        await post(`${url(reason)}api/submit`, { decision: "comment", comments: [], note, viewed: [] });
+        for (let i = 0; i < 100 && (await kept()) <= index; i++) await Bun.sleep(50);
+      }
+      const context = (await hook("Continue.")).hookSpecificOutput.additionalContext as string;
+      expect(context.indexOf("FIRST")).toBeGreaterThan(-1);
+      expect(context.indexOf("SECOND")).toBeGreaterThan(context.indexOf("FIRST"));
+      expect(await hook("Continue.")).toBeUndefined();
+      expect(await kept()).toBe(0);
+    } finally {
+      Bun.spawnSync(["pkill", "-9", "-f", `codex ${thread}`]);
+      await rm(bin, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   test("an open page hears when the repository changes", async () => {
     const { child, origin } = await start("--uncommitted");

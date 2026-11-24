@@ -44,6 +44,8 @@ const WATCH_EVERY: Duration = Duration::from_secs(3);
 pub enum Outcome {
     Submitted(Submission),
     Closed,
+    /// Nobody opened the page in time.
+    Unopened,
 }
 
 pub struct Options {
@@ -56,6 +58,8 @@ pub struct Options {
     pub secret: Option<String>,
     /// Serve the page from this folder instead of the copy built in.
     pub dev: Option<PathBuf>,
+    /// How long to wait for the page to be opened at all; None waits forever.
+    pub unopened: Option<Duration>,
 }
 
 struct Live {
@@ -157,6 +161,9 @@ pub async fn start(options: Options, public_url: impl FnOnce(u16) -> String) -> 
         changes: tokio::sync::watch::channel(0).0,
     });
     tokio::spawn(watch_repository(app.clone()));
+    if let Some(grace) = app.options.unopened {
+        end_after(&app, grace, Outcome::Unopened);
+    }
     let router = Router::new().fallback(handle).with_state(app.clone());
     tokio::spawn(async move {
         let _ = axum::serve(listener, router).await;
@@ -344,13 +351,24 @@ fn on_disconnect(app: &Arc<App>) {
         return;
     }
     let grace = if live.leaving { LEAVE_GRACE } else { SILENT_GRACE };
+    drop(live);
+    end_after(app, grace, Outcome::Closed);
+}
+
+/// Ends the review after a while unless a page connects first.
+fn end_after(app: &Arc<App>, grace: Duration, outcome: Outcome) {
+    let mut live = app.live.lock().unwrap();
+    // A page may have connected since the caller looked.
+    if live.connections > 0 {
+        return;
+    }
     if let Some(timer) = live.timer.take() {
         timer.abort();
     }
     let app = app.clone();
     live.timer = Some(tokio::spawn(async move {
         tokio::time::sleep(grace).await;
-        settle(&app, Outcome::Closed);
+        settle(&app, outcome);
     }));
 }
 
@@ -630,6 +648,22 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_page_nobody_opens_ends_its_review() {
+        let options = Options {
+            root: std::env::temp_dir(),
+            scope: Scope::All { base: None },
+            bind: "127.0.0.1:0".parse().unwrap(),
+            hosts: vec![],
+            secret: None,
+            dev: None,
+            unopened: Some(Duration::from_millis(20)),
+        };
+        let mut session = start(options, |port| port.to_string()).await.unwrap();
+        let outcome = tokio::time::timeout(Duration::from_secs(5), &mut session.outcome).await.unwrap();
+        assert!(matches!(outcome, Ok(Outcome::Unopened)));
+    }
 
     fn params(query: &str) -> HashMap<String, String> {
         query
