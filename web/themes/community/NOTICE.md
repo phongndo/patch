@@ -1,0 +1,44 @@
+# Community themes
+
+Vendored from Zed's extension registry by `scripts/fetch-themes.ts`.
+
+- Catppuccin (catppuccin): https://github.com/catppuccin/zed, MIT, by Catppuccin <releases@catppuccin.com>
+- macOS Classic Theme (macos-classic): https://github.com/huacnlee/zed-theme-macos-classic, MIT, by Jason Lee <huacnlee@gmail.com>
+- Tokyo Night Themes (tokyo-night): https://github.com/ssaunderss/zed-tokyo-night, MIT, by ssaunderss <austinsaunders@me.com>
+- Github Theme (github-theme): https://github.com/PyaeSoneAungRgn/github-zed-theme, MIT, by Pyae Sone Aung <pyaesoneaungrgn@gmail.com>, Clay Tercek
+- Nightfox (nvim-nightfox): https://github.com/cange/nightfox.zed, MIT, by cange
+- VSCode Dark Modern (vscode-dark-modern): https://github.com/kcamcam/vscode_dark_modern.zed, MIT, by kcamcam <kevincamellini@gmail.com>
+- Dracula (dracula): https://github.com/dracula/zed, MIT, by Ben Hamment <fisix1@gmail.com>
+- Snazzy (snazzy): https://github.com/Eivs/zed-snazzy, MIT, by eivs <eivs@live.com>
+- The Dark Side (the-dark-side): https://github.com/Imgkl/the-dark-side, MIT, by Sai Gokula Krishnan <hi@gokula.dev>
+- Nord Themes (nord): https://github.com/mikasius/zed-nord-theme, MIT, by Sergei Metlenkin <s.metlenkin@gmail.com>
+- Material Dark Theme (material-dark): https://github.com/xerodark/zed-material-theme, MIT, by Xero <xeroday@duck.com>
+- GitHub Dark Default (github-dark-default): https://github.com/mordfustang21/zed-github-dark, Apache-2.0, by MordFustang21
+- Rosé Pine (rose-pine-theme): https://github.com/rose-pine/zed, MIT, by Kainoa Kanter <kainoa@t1c.dev>
+- New Darcula Theme (new-darcula): https://github.com/e-simpson/new-darcula-z, MIT, by Evan Simpson <evan@evan.news>
+- Everforest Theme (regular, material, blur) (everforest): https://github.com/albertsko/zed-everforest, MIT, by Albert Skonieczny <github.com/albertsko>
+- Smooth Theme (smooth): https://github.com/segersniels/zed-smooth, MIT, by Niels Segers <github@niels.foo>
+- Ultimate Dark Neo (ultimate-dark-neo): https://github.com/rubjo/ultimate-dark-neo-zed, MIT, by Rune B
+- Tailwind Syntax (tailwind-theme): https://github.com/biaqat/tailwind-theme-zed, MIT, by blaqat <blaqat.ag@gmail.com>
+- Kanagawa Themes (kanagawa-themes): https://github.com/ethangilmore/zed-kanagawa, MIT, by Ethan Gilmore <ethanmckgilmore@gmail.com>, Yair Chan <enyaoficial001@gmail.com
+- Min Theme (min-theme): https://github.com/phibr0/zed-min-theme, MIT, by Phillip Bronzel <hello@phib.ro>
+- Serendipity Themes (serendipity): https://github.com/meocoder31099/Serendipity-Theme-Zed, MIT, by Nguyen Dang Vinh <meocoder@gmail.com>, Micheal Andreuzza <michael@andreuzza.com>
+- Vercel Theme (vercel-theme): https://github.com/NathanBrodin/zed-vercel-theme, MIT, by Nathan Brodin <nathan@brodin.dev>
+- 0x96f Theme (0x96f): https://github.com/0x96f-org/0x96f-zed-theme, MIT, by Filip <filip@0x96f.dev>
+- Night Owl Theme (night-owlz): https://github.com/elGusto/night-owlz, MIT, by Auguste Bercovici <gusberco@proton.me>
+- Modest Dark (modest-dark): https://github.com/timcole/modest-dark, MIT, by Timothy Cole <tim@timcole.me>
+- One Dark - Darkened (one-dark-darkened): https://github.com/pavles6/one-dark-darkened, MIT, by Pavle Sokic <pavles6@protonmail.com>
+- Nightfox Themes (nightfox): https://github.com/ssaunderss/zed-nightfox, MIT, by ssaunderss <austinsaunders@me.com>
+- Gentle Dark Theme (gentle-dark): https://github.com/gentlelionstudios/gentle-dark-zed, MIT, by Brian J. Gamble
+- GitHub Copilot Theme (github-copilot-theme): https://github.com/ssaunderss/zed-gh-copilot-theme, MIT, by ssaunderss <austinsaunders@me.com>
+- base16 (base16): https://github.com/bswinnerton/base16-zed, MIT, by Brooks Swinnerton <bswinnerton@gmail.com>, Tim Chmielecki <me@timcki.com>, Kevin Gyori <hi@gyori.me>
+- One Dark Pro Max (one-dark-pro-max): https://github.com/kussumma/one-dark-pro-max, MIT, by Kusuma, BoyeDarat
+- Gruvbox Material (gruvbox-material): https://github.com/tokiory/zed-gruvbox-material, MIT, by tokiory <tokiory.work@gmail.com>
+- Sublime Mariana Theme (sublime-mariana-theme): https://github.com/hnatiukr/zed-mariana-theme, MIT, by Roman Hnatiuk<roman@hnatiuk.cc>
+- Monosami Theme (monosami): https://github.com/borngraced/monosami, MIT, by Samuel Onoja <0@sami.cx>, Fabian Bergström
+- Melange Theme (melange): https://github.com/adorabilis/melange-zed, MIT, by adorabilis
+- Tomorrow Theme (tomorrow-theme): https://github.com/biaqat/tomorrow-theme-zed, MIT, by blaqat <blaqat.ag@gmail.com>
+- Synthwave '84 Theme (synthwave): https://github.com/DanielMSchmidt/zed-synthwave, MIT, by Daniel Schmidt <danielmschmidt92@gmail.com>
+- Quiet Light Theme (quiet-light-theme): https://github.com/biaqat/quiet-light-theme-zed, MIT, by blaqat <blaqat.ag@gmail.com>
+- Zedwaita (zedwaita): https://github.com/someone13574/zed-adwaita-theme, MIT, by someone13574 <owenlaw222@gmail.com>
+- Oceanic Next Theme (oceanic-next): https://github.com/rkunev/oceanic-next, MIT, by Rosen Kanev <rkunev@gmail.com
