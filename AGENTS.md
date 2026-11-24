@@ -17,3 +17,6 @@
   store proxies.
 - Keep docs short and only for what the code can't tell you. Explain a module in
   a `//!` comment at its top, not in Markdown.
+- Before using UI SDK, follow the `ui-sdk` skill and read
+  `node_modules/@ui-sdk/solid/docs/llms.txt`. The page has no agent bridge on
+  purpose: an agent must not approve its own review.

@@ -1,0 +1,70 @@
+{
+  "version": 2,
+  "skills": {
+    "app-hotkeys": {
+      "source": "@tanstack/hotkeys",
+      "sourceType": "node_modules",
+      "skillPath": "skills/app-hotkeys/SKILL.md",
+      "version": "0.33.1",
+      "computedHash": "c94d2235b02f741e4f4d5eec839b8a2ffa90cd7f0b43d46904ebbf9dfa2b08f1"
+    },
+    "diffs": {
+      "source": "pierrecomputer/pierre",
+      "ref": "diffs-v1.7.1",
+      "commit": "e03a4b80b5df6fcb3b7666809d7840bd40e6083a",
+      "sourceType": "github",
+      "skillPath": "skills/diffs/SKILL.md",
+      "computedHash": "fa4a60bda80205c60d15a4ff58f68b2ff01a0c9388fe30acdf6b70cf6a7ba63f"
+    },
+    "hotkeys-core": {
+      "source": "@tanstack/hotkeys",
+      "sourceType": "node_modules",
+      "skillPath": "skills/hotkeys-core/SKILL.md",
+      "version": "0.33.1",
+      "computedHash": "3b79d3eb5d34834bd491b3b60086ea31c1da7abc5fb81407538fd51ca6e3aecc"
+    },
+    "reactivity-diagnostics": {
+      "source": "solid-js",
+      "sourceType": "node_modules",
+      "skillPath": "skills/reactivity-diagnostics/SKILL.md",
+      "version": "2.0.3",
+      "computedHash": "75d737cb83c842dd69ab6b64395710c131e4312b294d0211123840bd063f7bea"
+    },
+    "server-components": {
+      "source": "@solidjs/web",
+      "sourceType": "node_modules",
+      "skillPath": "skills/server-components/SKILL.md",
+      "version": "2.0.3",
+      "computedHash": "3fea3c3443b4c56a0e405e50626c576b7f9398a19599c1b2dc54843ce02c49b0"
+    },
+    "solid-2.0": {
+      "source": "solid-js",
+      "sourceType": "node_modules",
+      "skillPath": "skills/solid-2.0/SKILL.md",
+      "version": "2.0.3",
+      "computedHash": "634a7ed28608d53a06256221f631c58932b8382dc56ae7a7101bf96e0b8fdf38"
+    },
+    "solid-2.0-cheatsheet": {
+      "source": "solid-js",
+      "sourceType": "node_modules",
+      "skillPath": "skills/solid-2.0-cheatsheet/SKILL.md",
+      "version": "2.0.3",
+      "computedHash": "6b4af98e774ada9ee3d91c23db4d732b97a76cb160fa460a62fe8265641de031"
+    },
+    "trees": {
+      "source": "pierrecomputer/pierre",
+      "ref": "e03a4b80b5df6fcb3b7666809d7840bd40e6083a",
+      "commit": "e03a4b80b5df6fcb3b7666809d7840bd40e6083a",
+      "sourceType": "github",
+      "skillPath": "skills/trees/SKILL.md",
+      "computedHash": "2fc6b4d2557dfdafa9880fb8ace37a02419e9248efa84262ccb6553889227526"
+    },
+    "ui-sdk": {
+      "source": "vercel-labs/ui",
+      "commit": "926dab872d1f2aa23df4bd9b5cf21c879c9abac9",
+      "sourceType": "github",
+      "skillPath": "packages/core/skills/ui-sdk/SKILL.md",
+      "computedHash": "cabe635c8f279e77b50a265c499ea2e8ebd471574b96acfc61a11a147d553e6d"
+    }
+  }
+}
