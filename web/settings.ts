@@ -146,12 +146,11 @@ function paint(root: HTMLElement, c: Theme["colors"], isDark: boolean) {
   root.style.colorScheme = theme.dark ? "dark" : "light";
 }
 
-// Percent of the change color mixed into a changed line and into its line
-// number, and the alpha of a changed word's highlight, per contrast level.
-// "low" is Pierre's own look.
+// Percent of the change color mixed into a changed line, and the alpha of a
+// changed word's highlight, per contrast level.
 const tints = {
-  dark: { low: [20, 15, 0.2], medium: [28, 40, 0.34], high: [38, 55, 0.48] },
-  light: { low: [12, 9, 0.15], medium: [18, 28, 0.26], high: [26, 40, 0.38] },
+  dark: { low: [12, 0.16], medium: [18, 0.24], high: [28, 0.34] },
+  light: { low: [7, 0.12], medium: [11, 0.18], high: [18, 0.26] },
 } as const;
 
 /**
@@ -162,11 +161,9 @@ const tints = {
 function tint(root: HTMLElement, contrast: Settings["contrast"], isDark: boolean) {
   const set = (name: string, value: string) => root.style.setProperty(name, value);
   for (const mode of ["dark", "light"] as const) {
-    const [line, number] = tints[mode][contrast];
-    set(`--patch-line-${mode}`, `${100 - line}%`);
-    set(`--patch-number-${mode}`, `${100 - number}%`);
+    set(`--patch-line-${mode}`, `${100 - tints[mode][contrast][0]}%`);
   }
-  const word = tints[isDark ? "dark" : "light"][contrast][2];
+  const word = tints[isDark ? "dark" : "light"][contrast][1];
   for (const [kind, color] of [
     ["addition", "var(--add)"],
     ["deletion", "var(--del)"],

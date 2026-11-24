@@ -49,6 +49,9 @@
   --diffs-header-font-family: var(--font);
   --diffs-font-size: var(--text);
   --diffs-bg-separator-override: color-mix(in srgb, var(--fg) 5%, var(--bg));
+  --diffs-fg-number-override: var(--muted);
+  --diffs-fg-number-addition-override: var(--muted);
+  --diffs-fg-number-deletion-override: var(--muted);
   --trees-font-family-override: var(--font);
   --trees-font-size-override: var(--text);
   color-scheme: light dark;

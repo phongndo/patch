@@ -176,8 +176,11 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
       // Counts read added, then removed, as the bar's do; a modified file's icon is neutral.
       "[data-diffs-header] [data-additions-count]{order:-1}",
       "[data-change-icon=change]{color:var(--muted)}",
-      "[data-line],[data-no-newline]{--mix-dark:var(--patch-line-dark,80%);--mix-light:var(--patch-line-light,88%)}",
-      "[data-gutter-buffer],[data-column-number]{--mix-dark:var(--patch-number-dark,85%);--mix-light:var(--patch-number-light,91%)}",
+      // A change is an edge and a tint that runs through its line number; nothing is hatched.
+      "[data-column-number],[data-gutter-buffer]{border-right-color:transparent!important}",
+      "[data-indicators=bars] [data-column-number][data-line-type=change-deletion]::before{background:var(--diffs-deletion-base)}",
+      "[data-content-buffer]{background-image:none}",
+      "[data-line],[data-no-newline],[data-gutter-buffer],[data-column-number]{--mix-dark:var(--patch-line-dark,82%);--mix-light:var(--patch-line-light,90%)}",
     ].join("\n"),
     async loadDiffFiles(fileDiff) {
       const key = hooks.scopeKey();

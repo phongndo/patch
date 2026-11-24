@@ -679,7 +679,7 @@ function GeneralPage() {
           </Row>
           <Row
             label="Change contrast"
-            description="How strongly changed lines, their numbers and changed words are tinted."
+            description="How strongly changed lines and words are tinted."
             keys={["contrast"]}
           >
             <Choose
