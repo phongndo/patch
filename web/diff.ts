@@ -7,6 +7,7 @@ import {
   type CodeViewItem,
   type DiffLineAnnotation,
   type FileDiffMetadata,
+  i18n,
   type SelectedLineRange,
 } from "@pierre/diffs";
 import { getOrCreateWorkerPoolSingleton } from "@pierre/diffs/worker";
@@ -48,6 +49,46 @@ const pool = getOrCreateWorkerPoolSingleton({
     lineDiffType: startup.wordDiff ? "word-alt" : "none",
   },
 });
+
+i18n.set({ messages: { searchPlaceholder: "Find" } });
+
+const chevron = (direction: "up" | "down") =>
+  `url("data:image/svg+xml,${encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="${
+      direction === "up" ? "M4 10l4-4 4 4" : "M4 6l4 4 4-4"
+    }" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+  )}")`;
+
+/**
+ * Pierre's find panel as one plain field: what is typed, how many match, the
+ * match before and after, and close, in the page's own colors. Its toggles and
+ * replace are gone; match case turns itself on (onSearchStateChange).
+ */
+const findBar = `
+  [data-search-toggles],[data-replace-toggle],[data-replace-cell]{display:none!important}
+  [data-editor-widget]{
+    --diffs-search-panel-fg:var(--fg);
+    --diffs-search-panel-bg:transparent;
+    min-width:0;width:300px;max-width:calc(100% - 24px);box-sizing:border-box;height:36px;padding:0 4px 0 12px;
+    border:1px solid var(--line-strong);border-radius:10px;
+    background:var(--panel);box-shadow:var(--shadow);
+    color:var(--fg);font:var(--ui-weight,400) var(--text)/1 var(--font);
+  }
+  [data-search-grid]{display:flex!important;align-items:center;gap:0;width:100%}
+  [data-input-box][data-find]{flex:1;width:auto!important;min-width:0;border:0;background:none;outline:none!important}
+  [data-input-box] input{padding:0;border:0;background:none;color:var(--fg);font:inherit;line-height:20px;caret-color:var(--info)}
+  [data-input-box] input::placeholder{color:var(--muted);opacity:1}
+  [data-matches]{padding-inline:8px;color:var(--muted)!important;font-size:var(--text-meta);font-weight:inherit}
+  input:placeholder-shown + [data-matches]{display:none}
+  [data-search-icon]{width:26px;height:26px;border-radius:var(--control-radius);color:var(--muted)}
+  [data-search-icon]:not(:disabled):hover{background:var(--hover);color:var(--fg)}
+  [data-search-icon]:focus-visible{outline:1px solid var(--muted);outline-offset:-1px}
+  [data-search-nav] svg{display:none}
+  [data-search-nav] [data-search-icon]::before{content:"";width:16px;height:16px;background:currentColor;mask:${chevron("down")}}
+  [data-search-nav] [data-search-icon]:first-child::before{mask:${chevron("up")}}
+  [data-search-close]{position:static;transform:none;background:none;box-shadow:none;color:var(--muted)}
+  [data-search-close]:not(:disabled):hover{background:var(--hover);color:var(--fg)}
+`;
 
 /** Mounts Solid content into a plain element once, and disposes it when dropped. */
 class Mounts {
@@ -113,6 +154,14 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     overflow: startup.wrap ? "wrap" : "scroll",
     stickyHeaders: true,
     searchOptions: { disableShortcuts: true },
+    onSearchStateChange(state?: { text: string; caseSensitive: boolean }) {
+      // Match case is not a button: a capital in the search turns it on.
+      if (state && state.caseSensitive !== (state.text !== state.text.toLowerCase()))
+        root
+          .querySelector("[data-search-panel]")
+          ?.shadowRoot?.querySelector<HTMLElement>("[data-search-toggles] button")
+          ?.click();
+    },
     enableGutterUtility: true,
     enableLineSelection: true,
     lineHoverHighlight: "number",
@@ -122,6 +171,7 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     // Comment rows sit on the editor's background; how strongly changes are
     // tinted comes from the page (settings.ts, tint) through these variables.
     unsafeCSS: [
+      findBar,
       "[data-line-annotation],[data-gutter-buffer=annotation]{--diffs-annotation-bg:var(--diffs-bg)}",
       "[data-line],[data-no-newline]{--mix-dark:var(--patch-line-dark,80%);--mix-light:var(--patch-line-light,88%)}",
       "[data-gutter-buffer],[data-column-number]{--mix-dark:var(--patch-number-dark,85%);--mix-light:var(--patch-number-light,91%)}",
