@@ -118,6 +118,7 @@ describe("patchr review", () => {
       // Scopes: branches, the branch's commits, and one commit on its own.
       const scopes = await (await fetch(`${origin}/api/scopes`)).json();
       expect(scopes.base).toBe("main");
+      expect(scopes.since).toBe("main");
       expect(scopes.branches).toEqual(expect.arrayContaining(["main", "feature"]));
       expect(scopes.commits.map((c: { subject: string }) => c.subject)).toEqual(["change two"]);
       const sha = scopes.commits[0].sha;
@@ -199,6 +200,34 @@ describe("patchr review", () => {
       child.kill();
     }
   }, 20_000);
+
+  test("on the base branch, the commits are its recent history", async () => {
+    const saved = repo;
+    repo = await mkdtemp(join(tmpdir(), "patch-contract-main-"));
+    try {
+      git("init", "-q", "-b", "main");
+      await writeFile(join(repo, "a.txt"), "1\n");
+      git("add", ".");
+      git("commit", "-qm", "first");
+      await writeFile(join(repo, "a.txt"), "2\n");
+      git("commit", "-qam", "second");
+      const { child, origin } = await start();
+      try {
+        const scopes = await (await fetch(`${origin}/api/scopes`)).json();
+        expect(scopes.base).toBe("main");
+        expect(scopes.since).toBeUndefined();
+        expect(scopes.commits.map((c: { subject: string }) => c.subject)).toEqual(["second", "first"]);
+        const sha = scopes.commits[1].sha;
+        const root = await (await fetch(`${origin}/api/review?scope=commits&from=${sha}&to=${sha}`)).json();
+        expect(root.patch).toContain("+1"); // The first commit diffs against the empty tree.
+      } finally {
+        child.kill();
+      }
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+      repo = saved;
+    }
+  });
 
   test("a bad base fails before serving", async () => {
     const child = Bun.spawn([...command, "review", "--no-open", ...local, "--base", "nope"], {

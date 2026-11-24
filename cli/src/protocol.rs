@@ -114,6 +114,9 @@ pub struct Commit {
 pub struct ScopesResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
+    /// The ref the listed commits are counted from; absent when they are just recent history.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,
     pub branches: Vec<String>,
     pub commits: Vec<Commit>,
 }

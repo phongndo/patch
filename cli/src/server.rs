@@ -439,8 +439,8 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
             let base = git::find_base(root, requested).await.ok().flatten();
             match git::list_branches(root).await {
                 Ok(branches) => {
-                    let commits = git::list_commits(root, base.as_deref()).await;
-                    json(StatusCode::OK, &ScopesResponse { base, branches, commits })
+                    let (commits, since) = git::list_commits(root, base.as_deref()).await;
+                    json(StatusCode::OK, &ScopesResponse { base, since, branches, commits })
                 }
                 Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
             }

@@ -65,6 +65,8 @@ export interface ReviewResponse {
 
 export interface ScopesResponse {
   base?: string;
+  /** The ref the listed commits are counted from; absent when they are just recent history. */
+  since?: string;
   branches: string[];
   commits: Commit[];
 }

@@ -198,7 +198,10 @@ export function ScopePicker() {
         <Show when={tab() === "commits"}>
           <div class="menu-group">
             <p class="menu-label">
-              {base() ? `Commits since ${base()}` : "Recent commits"} · Shift-click for a range
+              {scopes()?.since
+                ? `Commits since ${scopes()?.since}`
+                : `Recent commits on ${state.store.review?.branch ?? "this branch"}`}{" "}
+              · Shift-click for a range
             </p>
             <div class="menu-list">
               <button
@@ -211,7 +214,7 @@ export function ScopePicker() {
                     <Icon name="check" />
                   </Show>
                 </span>
-                All commits and uncommitted changes
+                {scopes()?.since ? "All commits and uncommitted changes" : "Uncommitted changes"}
               </button>
               <For each={commits()} fallback={<p class="menu-empty">No commits on this branch yet.</p>}>
                 {(commit) => (

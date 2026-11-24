@@ -302,14 +302,9 @@ pub async fn list_branches(root: &Path) -> Result<Vec<String>> {
     Ok(out.lines().filter(|r| !r.is_empty() && !r.ends_with("/HEAD") && *r != "origin").map(String::from).collect())
 }
 
-/// Commits on HEAD that `base` lacks, newest first; the last 50 when there is no base.
-pub async fn list_commits(root: &Path, base: Option<&str>) -> Vec<Commit> {
-    let range = base.map(|base| format!("{base}..HEAD"));
+async fn log(root: &Path, range: &[&str]) -> Vec<Commit> {
     let mut args = vec!["log", "--max-count=300", "--format=%H%x00%h%x00%s%x00%an%x00%cr"];
-    match &range {
-        Some(range) => args.push(range),
-        None => args.extend(["-n", "50", "HEAD"]),
-    }
+    args.extend(range);
     args.push("--");
     let out = try_git(root, &args).await.unwrap_or_default();
     out.lines()
@@ -320,6 +315,19 @@ pub async fn list_commits(root: &Path, base: Option<&str>) -> Vec<Commit> {
             Commit { sha: next(), short: next(), subject: next(), author: next(), when: next() }
         })
         .collect()
+}
+
+/// The branch's own commits since `base`, newest first, and the ref they are
+/// counted from. On the base branch itself, or a branch with nothing of its
+/// own, that list is empty, so it falls back to the last 50 commits and no ref.
+pub async fn list_commits(root: &Path, base: Option<&str>) -> (Vec<Commit>, Option<String>) {
+    if let Some(base) = base {
+        let own = log(root, &[&format!("{base}..HEAD")]).await;
+        if !own.is_empty() {
+            return (own, Some(base.to_string()));
+        }
+    }
+    (log(root, &["-n", "50", "HEAD"]).await, None)
 }
 
 pub fn safe_path(path: &str) -> bool {
