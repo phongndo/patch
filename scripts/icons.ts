@@ -5,6 +5,10 @@ import { join } from "node:path";
 
 const names = [
   "Branch",
+  "TextBold",
+  "Key",
+  "Type",
+  "Brush",
   "BrandGithub",
   "Check",
   "CheckCircle",

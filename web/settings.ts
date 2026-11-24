@@ -7,16 +7,16 @@ import { themes, type Theme } from "./themes.gen.ts";
 
 /** Every rebindable action, in the order Settings lists them. */
 export const actions = {
-  nextFile: { label: "Next file", key: "J" },
-  previousFile: { label: "Previous file", key: "K" },
-  comment: { label: "Comment on the selected lines", key: "C" },
-  viewed: { label: "Mark the file viewed", key: "V" },
-  layout: { label: "Split or unified", key: "S" },
-  sidebar: { label: "Show or hide the sidebar", key: "B" },
-  refresh: { label: "Refresh the diff", key: "R" },
-  search: { label: "Search files and comments", key: "/" },
-  finish: { label: "Finish, then send", key: "Mod+Enter" },
-  settings: { label: "Open Settings", key: "Mod+," },
+  nextFile: { label: "Next file", key: "J", group: "Navigation" },
+  previousFile: { label: "Previous file", key: "K", group: "Navigation" },
+  search: { label: "Search files and comments", key: "/", group: "Navigation" },
+  sidebar: { label: "Show or hide the sidebar", key: "B", group: "Navigation" },
+  comment: { label: "Comment on the selected lines", key: "C", group: "Review" },
+  viewed: { label: "Mark the file viewed", key: "V", group: "Review" },
+  layout: { label: "Split or unified", key: "S", group: "Review" },
+  refresh: { label: "Refresh the diff", key: "R", group: "Review" },
+  finish: { label: "Finish, then send", key: "Mod+Enter", group: "App" },
+  settings: { label: "Settings", key: "Mod+,", group: "App" },
 } as const;
 export type Action = keyof typeof actions;
 
@@ -46,6 +46,8 @@ export interface Settings {
   codeFont: string;
   textSize: number;
   codeSize: number;
+  uiWeight: number;
+  codeWeight: number;
   /** Code line height in pixels. */
   lineHeight: number;
   ligatures: boolean;
@@ -70,6 +72,8 @@ export const defaults: Settings = {
   codeFont: fontPresets.code[0].value,
   textSize: 13,
   codeSize: 13,
+  uiWeight: 400,
+  codeWeight: 400,
   lineHeight: 20,
   ligatures: true,
   sidebarSide: "left",
@@ -105,6 +109,8 @@ function sanitize(saved: unknown): Settings {
   settings.textSize = clamp(settings.textSize, 11, 17);
   settings.codeSize = clamp(settings.codeSize, 10, 20);
   settings.lineHeight = clamp(settings.lineHeight, 14, 32);
+  settings.uiWeight = clamp(settings.uiWeight / 100, 1, 9) * 100;
+  settings.codeWeight = clamp(settings.codeWeight / 100, 1, 9) * 100;
   return settings;
 }
 
@@ -158,6 +164,8 @@ function createSettings() {
       set("--text-meta", `${current.textSize - 1}px`);
       set("--diffs-font-size", `${current.codeSize}px`);
       set("--diffs-line-height", `${current.lineHeight}px`);
+      set("--ui-weight", String(current.uiWeight));
+      set("--code-weight", String(current.codeWeight));
       set("--diffs-font-features", current.ligatures ? "normal" : '"liga" 0, "calt" 0');
       set("--sidebar", `${current.sidebarWidth}px`);
     },

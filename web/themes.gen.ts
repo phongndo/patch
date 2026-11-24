@@ -12,6 +12,7 @@ export interface Theme {
     del: string | null;
     accent: string | null;
   };
+  palette: string[];
 }
 
 export const themes: Theme[] = [
@@ -28,6 +29,7 @@ export const themes: Theme[] = [
       del: null,
       accent: "#969696ff",
     },
+    palette: ["#000000f2", "#ee5d43", "#96E072", "#FFE66D", "#7cb7ff", "#FF66C4", "#5DFFDF", "#D5CED9"],
   },
   {
     id: "aurora-x",
@@ -42,6 +44,7 @@ export const themes: Theme[] = [
       del: "#dd5074",
       accent: "#c778db",
     },
+    palette: ["#000000", "#fc4346", "#50fb7b", "#f0fb8c", "#49baff", "#fc4cb4", "#8be9fd", "#ededec"],
   },
   {
     id: "ayu-dark",
@@ -56,6 +59,16 @@ export const themes: Theme[] = [
       del: "#f26d78",
       accent: "#73b8ff",
     },
+    palette: [
+      "#0d1016ff",
+      "#ef7177ff",
+      "#aad84cff",
+      "#feb454ff",
+      "#5ac1feff",
+      "#39bae5ff",
+      "#95e5cbff",
+      "#bfbdb6ff",
+    ],
   },
   {
     id: "ayu-light",
@@ -70,6 +83,16 @@ export const themes: Theme[] = [
       del: "#ff7383",
       accent: "#478acc",
     },
+    palette: [
+      "#5c6166ff",
+      "#ef7271ff",
+      "#85b304ff",
+      "#f1ad49ff",
+      "#3b9ee5ff",
+      "#55b4d3ff",
+      "#4dbf99ff",
+      "#fcfcfcff",
+    ],
   },
   {
     id: "ayu-mirage",
@@ -84,6 +107,16 @@ export const themes: Theme[] = [
       del: "#f27983",
       accent: "#80bfff",
     },
+    palette: [
+      "#242835ff",
+      "#f18779ff",
+      "#d5fe80ff",
+      "#fecf72ff",
+      "#72cffeff",
+      "#5bcde5ff",
+      "#95e5cbff",
+      "#cccac2ff",
+    ],
   },
   {
     id: "catppuccin-frappe",
@@ -98,6 +131,7 @@ export const themes: Theme[] = [
       del: "#e78284",
       accent: "#e5c890",
     },
+    palette: ["#51576d", "#e78284", "#a6d189", "#e5c890", "#8caaee", "#f4b8e4", "#81c8be", "#a5adce"],
   },
   {
     id: "catppuccin-latte",
@@ -112,6 +146,7 @@ export const themes: Theme[] = [
       del: "#d20f39",
       accent: "#df8e1d",
     },
+    palette: ["#5c5f77", "#d20f39", "#40a02b", "#df8e1d", "#1e66f5", "#ea76cb", "#179299", "#acb0be"],
   },
   {
     id: "catppuccin-macchiato",
@@ -126,6 +161,7 @@ export const themes: Theme[] = [
       del: "#ed8796",
       accent: "#eed49f",
     },
+    palette: ["#494d64", "#ed8796", "#a6da95", "#eed49f", "#8aadf4", "#f5bde6", "#8bd5ca", "#a5adcb"],
   },
   {
     id: "catppuccin-mocha",
@@ -140,6 +176,7 @@ export const themes: Theme[] = [
       del: "#f38ba8",
       accent: "#f9e2af",
     },
+    palette: ["#45475a", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#f5c2e7", "#94e2d5", "#a6adc8"],
   },
   {
     id: "dark-plus",
@@ -154,6 +191,16 @@ export const themes: Theme[] = [
       del: "#c74e39",
       accent: "#E2C08D",
     },
+    palette: [
+      "#000000ff",
+      "#cd3131ff",
+      "#0dbc79ff",
+      "#e5e510ff",
+      "#2472c8ff",
+      "#bc3fbcff",
+      "#11a8cdff",
+      "#e5e5e5ff",
+    ],
   },
   {
     id: "dracula",
@@ -168,6 +215,16 @@ export const themes: Theme[] = [
       del: "#FF5555",
       accent: "#8BE9FD",
     },
+    palette: [
+      "#21222cff",
+      "#ff5555ff",
+      "#50fa7bff",
+      "#f1fa8cff",
+      "#9580ffff",
+      "#ff79c6ff",
+      "#8be9fdff",
+      "#f8f8f2ff",
+    ],
   },
   {
     id: "dracula-soft",
@@ -182,6 +239,7 @@ export const themes: Theme[] = [
       del: "#ee6666",
       accent: "#97e1f1",
     },
+    palette: ["#262626", "#ee6666", "#62e884", "#e7ee98", "#bf9eee", "#f286c4", "#97e1f1", "#f6f6f4"],
   },
   {
     id: "everforest-dark",
@@ -196,6 +254,7 @@ export const themes: Theme[] = [
       del: "#e67e80a0",
       accent: "#7fbbb3a0",
     },
+    palette: ["#232a2e", "#e67e80", "#a7c080", "#dbbc7f", "#7fbbb3", "#d699b6", "#83c092", "#d3c6aa"],
   },
   {
     id: "everforest-light",
@@ -210,6 +269,7 @@ export const themes: Theme[] = [
       del: "#f85552a0",
       accent: "#3a94c5a0",
     },
+    palette: ["#efebd4", "#f85552", "#8da101", "#dfa000", "#3a94c5", "#df69ba", "#35a77c", "#5c6a72"],
   },
   {
     id: "github-dark",
@@ -224,6 +284,7 @@ export const themes: Theme[] = [
       del: "#ea4a5a",
       accent: "#79b8ff",
     },
+    palette: ["#586069", "#ea4a5a", "#34d058", "#ffea7f", "#2188ff", "#b392f0", "#39c5cf", "#d1d5da"],
   },
   {
     id: "github-dark-default",
@@ -238,6 +299,7 @@ export const themes: Theme[] = [
       del: "#f85149",
       accent: "#d29922",
     },
+    palette: ["#484f58", "#ff7b72", "#3fb950", "#d29922", "#58a6ff", "#bc8cff", "#39c5cf", "#b1bac4"],
   },
   {
     id: "github-dark-dimmed",
@@ -252,6 +314,16 @@ export const themes: Theme[] = [
       del: "#e5534b",
       accent: "#c69026",
     },
+    palette: [
+      "#2f3742ff",
+      "#f47067ff",
+      "#57ab5aff",
+      "#c69026ff",
+      "#539bf5ff",
+      "#b083f0ff",
+      "#39c5cfff",
+      "#f0f6fcff",
+    ],
   },
   {
     id: "github-dark-high-contrast",
@@ -266,6 +338,16 @@ export const themes: Theme[] = [
       del: "#ff6a69",
       accent: "#f0b72f",
     },
+    palette: [
+      "#2f3742ff",
+      "#ff9492ff",
+      "#28d751ff",
+      "#f0b72fff",
+      "#71b7ffff",
+      "#cb9effff",
+      "#39c5cfff",
+      "#f0f6fcff",
+    ],
   },
   {
     id: "github-light",
@@ -280,6 +362,7 @@ export const themes: Theme[] = [
       del: "#d73a49",
       accent: "#005cc5",
     },
+    palette: ["#24292e", "#d73a49", "#28a745", "#dbab09", "#0366d6", "#5a32a3", "#1b7c83", "#6a737d"],
   },
   {
     id: "github-light-default",
@@ -294,6 +377,16 @@ export const themes: Theme[] = [
       del: "#cf222e",
       accent: "#9a6700",
     },
+    palette: [
+      "#1f2328ff",
+      "#cf222eff",
+      "#116329ff",
+      "#4d2d00ff",
+      "#0969daff",
+      "#8250dfff",
+      "#1b7c83ff",
+      "#59636eff",
+    ],
   },
   {
     id: "github-light-high-contrast",
@@ -308,6 +401,16 @@ export const themes: Theme[] = [
       del: "#a0111f",
       accent: "#744500",
     },
+    palette: [
+      "#010409ff",
+      "#a0111fff",
+      "#024c1aff",
+      "#3f2200ff",
+      "#0349b4ff",
+      "#622cbcff",
+      "#1b7c83ff",
+      "#59636eff",
+    ],
   },
   {
     id: "gruvbox-dark-hard",
@@ -322,6 +425,16 @@ export const themes: Theme[] = [
       del: "#cc241d",
       accent: "#d79921",
     },
+    palette: [
+      "#282828ff",
+      "#cc241dff",
+      "#98971aff",
+      "#d79921ff",
+      "#458588ff",
+      "#b16286ff",
+      "#689d6aff",
+      "#a89984ff",
+    ],
   },
   {
     id: "gruvbox-dark-medium",
@@ -336,6 +449,16 @@ export const themes: Theme[] = [
       del: "#cc241d",
       accent: "#d79921",
     },
+    palette: [
+      "#282828ff",
+      "#cc241dff",
+      "#98971aff",
+      "#d79921ff",
+      "#458588ff",
+      "#b16286ff",
+      "#689d6aff",
+      "#a89984ff",
+    ],
   },
   {
     id: "gruvbox-dark-soft",
@@ -350,6 +473,16 @@ export const themes: Theme[] = [
       del: "#cc241d",
       accent: "#d79921",
     },
+    palette: [
+      "#282828ff",
+      "#cc241dff",
+      "#98971aff",
+      "#d79921ff",
+      "#458588ff",
+      "#b16286ff",
+      "#689d6aff",
+      "#a89984ff",
+    ],
   },
   {
     id: "gruvbox-light-hard",
@@ -364,6 +497,16 @@ export const themes: Theme[] = [
       del: "#cc241d",
       accent: "#d79921",
     },
+    palette: [
+      "#fbf1c7ff",
+      "#cc241dff",
+      "#98971aff",
+      "#d79921ff",
+      "#458588ff",
+      "#b16286ff",
+      "#689d6aff",
+      "#7c6f64ff",
+    ],
   },
   {
     id: "gruvbox-light-medium",
@@ -378,6 +521,16 @@ export const themes: Theme[] = [
       del: "#cc241d",
       accent: "#d79921",
     },
+    palette: [
+      "#fbf1c7ff",
+      "#cc241dff",
+      "#98971aff",
+      "#d79921ff",
+      "#458588ff",
+      "#b16286ff",
+      "#689d6aff",
+      "#7c6f64ff",
+    ],
   },
   {
     id: "gruvbox-light-soft",
@@ -392,6 +545,16 @@ export const themes: Theme[] = [
       del: "#cc241d",
       accent: "#d79921",
     },
+    palette: [
+      "#fbf1c7ff",
+      "#cc241dff",
+      "#98971aff",
+      "#d79921ff",
+      "#458588ff",
+      "#b16286ff",
+      "#689d6aff",
+      "#7c6f64ff",
+    ],
   },
   {
     id: "horizon",
@@ -406,6 +569,7 @@ export const themes: Theme[] = [
       del: "#F43E5C",
       accent: "#FAB38E",
     },
+    palette: ["#000000f2", "#E95678", "#29D398", "#FAB795", "#26BBD9", "#EE64AC", "#59E1E3", "#eeeeecff"],
   },
   {
     id: "horizon-bright",
@@ -420,6 +584,7 @@ export const themes: Theme[] = [
       del: "#F43E5C",
       accent: "#AF5427",
     },
+    palette: ["#000000f2", "#E95678", "#29D398", "#FAB795", "#26BBD9", "#EE64AC", "#59E1E3", "#21201cff"],
   },
   {
     id: "houston",
@@ -434,6 +599,7 @@ export const themes: Theme[] = [
       del: "#f4587e",
       accent: "#ffd493",
     },
+    palette: ["#17191e", "#dc3657", "#23d18b", "#ffc368", "#2b7eca", "#ad5dca", "#24c0cf", "#eef0f9"],
   },
   {
     id: "kanagawa-dragon",
@@ -448,6 +614,7 @@ export const themes: Theme[] = [
       del: null,
       accent: "#8ba4b0",
     },
+    palette: ["#0d0c0c", "#c4746e", "#8a9a7b", "#c4b28a", "#8ba4b0", "#a292a3", "#8ea4a2", "#c5c9c5"],
   },
   {
     id: "kanagawa-lotus",
@@ -462,6 +629,7 @@ export const themes: Theme[] = [
       del: null,
       accent: "#5a7785",
     },
+    palette: ["#43436c", "#c84053", "#6e915f", "#de9800", "#4d699b", "#766b90", "#5e857a", "#dcd5ac"],
   },
   {
     id: "kanagawa-wave",
@@ -476,6 +644,7 @@ export const themes: Theme[] = [
       del: null,
       accent: "#7E9CD8",
     },
+    palette: ["#16161D", "#C34043", "#76946A", "#DCA561", "#7E9CD8", "#957FB8", "#6A9589", "#DCD7BA"],
   },
   {
     id: "laserwave",
@@ -490,6 +659,7 @@ export const themes: Theme[] = [
       del: "#b381c5",
       accent: "#74dfc4",
     },
+    palette: ["#000000", "#EB64B9", "#74dfc4", "#ffe261", "#40b4c4", "#b381c5", "#b4dce7", "#e5e5e5"],
   },
   {
     id: "light-plus",
@@ -504,6 +674,16 @@ export const themes: Theme[] = [
       del: "#ad0707",
       accent: "#895503",
     },
+    palette: [
+      "#000000ff",
+      "#cd3131ff",
+      "#0dbc79ff",
+      "#e5e510ff",
+      "#2472c8ff",
+      "#bc3fbcff",
+      "#11a8cdff",
+      "#e5e5e5ff",
+    ],
   },
   {
     id: "material-theme",
@@ -518,6 +698,7 @@ export const themes: Theme[] = [
       del: "#f0717890",
       accent: "#82AAFF90",
     },
+    palette: ["#000000", "#f07178", "#C3E88D", "#FFCB6B", "#82AAFF", "#C792EA", "#89DDFF", "#ffffff"],
   },
   {
     id: "material-theme-darker",
@@ -532,6 +713,7 @@ export const themes: Theme[] = [
       del: "#f0717890",
       accent: "#82AAFF90",
     },
+    palette: ["#000000", "#f07178", "#C3E88D", "#FFCB6B", "#82AAFF", "#C792EA", "#89DDFF", "#ffffff"],
   },
   {
     id: "material-theme-lighter",
@@ -546,6 +728,7 @@ export const themes: Theme[] = [
       del: "#E5393590",
       accent: "#6182B890",
     },
+    palette: ["#000000", "#E53935", "#91B859", "#E2931D", "#6182B8", "#9C3EDA", "#39ADB5", "#FFFFFF"],
   },
   {
     id: "material-theme-ocean",
@@ -560,6 +743,7 @@ export const themes: Theme[] = [
       del: "#f0717890",
       accent: "#82AAFF90",
     },
+    palette: ["#000000", "#f07178", "#C3E88D", "#FFCB6B", "#82AAFF", "#C792EA", "#89DDFF", "#ffffff"],
   },
   {
     id: "material-theme-palenight",
@@ -574,6 +758,7 @@ export const themes: Theme[] = [
       del: "#f0717890",
       accent: "#82AAFF90",
     },
+    palette: ["#000000", "#f07178", "#C3E88D", "#FFCB6B", "#82AAFF", "#C792EA", "#89DDFF", "#ffffff"],
   },
   {
     id: "min-dark",
@@ -588,6 +773,7 @@ export const themes: Theme[] = [
       del: "#c74e39",
       accent: "#E2C08D",
     },
+    palette: ["#1A1A1A", "#FA7584", "#79B8FF", "#FFAB70", "#B392F1", "#E394DC", "#79B8FF", "#BBBBBB"],
   },
   {
     id: "min-light",
@@ -602,6 +788,7 @@ export const themes: Theme[] = [
       del: null,
       accent: null,
     },
+    palette: ["#333333", "#D32F2F", "#388E3C", "#F57C00", "#1976D2", "#C2185B", "#0097A7", "#B1B1B1"],
   },
   {
     id: "monokai",
@@ -616,6 +803,16 @@ export const themes: Theme[] = [
       del: "#c74e39",
       accent: "#E2C08D",
     },
+    palette: [
+      "#333333ff",
+      "#c4265eff",
+      "#86b42bff",
+      "#b3b42bff",
+      "#6a7ec8ff",
+      "#8c6bc8ff",
+      "#56adbcff",
+      "#e3e3ddff",
+    ],
   },
   {
     id: "night-owl",
@@ -630,6 +827,7 @@ export const themes: Theme[] = [
       del: "#EF535090",
       accent: "#a2bffc",
     },
+    palette: ["#011627", "#EF5350", "#22da6e", "#c5e478", "#82AAFF", "#C792EA", "#21c7a8", "#ffffff"],
   },
   {
     id: "night-owl-light",
@@ -644,6 +842,7 @@ export const themes: Theme[] = [
       del: null,
       accent: "#288ed7",
     },
+    palette: ["#403f53", "#de3d3b", "#08916a", "#E0AF02", "#288ed7", "#d6438a", "#2AA298", "#93A1A1"],
   },
   {
     id: "nord",
@@ -658,6 +857,7 @@ export const themes: Theme[] = [
       del: "#bf616a",
       accent: "#ebcb8b",
     },
+    palette: ["#3b4252", "#bf616a", "#a3be8c", "#ebcb8b", "#81a1c1", "#b48ead", "#6c99a6", "#e5e9f0"],
   },
   {
     id: "one-dark-pro",
@@ -672,6 +872,7 @@ export const themes: Theme[] = [
       del: null,
       accent: null,
     },
+    palette: ["#3f4451", "#e05561", "#8cc265", "#d18f52", "#4aa5f0", "#c162de", "#42b3c2", "#d7dae0"],
   },
   {
     id: "one-light",
@@ -686,6 +887,7 @@ export const themes: Theme[] = [
       del: "#ad0707",
       accent: "#895503",
     },
+    palette: ["#383A42", "#E45649", "#50A14F", "#C18401", "#4078F2", "#A626A4", "#0184BC", "#FAFAFA"],
   },
   {
     id: "pierre-dark",
@@ -700,6 +902,7 @@ export const themes: Theme[] = [
       del: "#ff2e3f",
       accent: "#009fff",
     },
+    palette: ["#171717", "#ff2e3f", "#0dbe4e", "#ffca00", "#009fff", "#e130ac", "#08c0ef", "#bcbcbc"],
   },
   {
     id: "pierre-dark-protanopia-deuteranopia",
@@ -714,6 +917,7 @@ export const themes: Theme[] = [
       del: "#fe8c2c",
       accent: "#009fff",
     },
+    palette: ["#171717", "#ffa359", "#69b1ff", "#ffd452", "#009fff", "#b969f3", "#68cdf2", "#bcbcbc"],
   },
   {
     id: "pierre-dark-soft",
@@ -728,6 +932,7 @@ export const themes: Theme[] = [
       del: "#ff6762",
       accent: "#69b1ff",
     },
+    palette: ["#171717", "#ff2e3f", "#0dbe4e", "#ffca00", "#009fff", "#e130ac", "#08c0ef", "#bcbcbc"],
   },
   {
     id: "pierre-dark-tritanopia",
@@ -742,6 +947,7 @@ export const themes: Theme[] = [
       del: "#ff855e",
       accent: "#009fff",
     },
+    palette: ["#171717", "#ff855e", "#64d1db", "#ffbc56", "#69b1ff", "#ea68bc", "#92dde4", "#bcbcbc"],
   },
   {
     id: "pierre-dark-vibrant",
@@ -756,6 +962,16 @@ export const themes: Theme[] = [
       del: "color(display-p3 1.000000 0.250216 0.262337)",
       accent: "color(display-p3 0.308664 0.645271 1.000000)",
     },
+    palette: [
+      "color(display-p3 0.090196 0.090196 0.090196)",
+      "color(display-p3 1.000000 0.250216 0.262337)",
+      "color(display-p3 0.298067 0.776115 0.322484)",
+      "color(display-p3 1.000000 0.832068 0.300621)",
+      "color(display-p3 0.308664 0.645271 1.000000)",
+      "color(display-p3 0.885558 0.236588 0.705659)",
+      "color(display-p3 0.327292 0.790977 0.995660)",
+      "color(display-p3 0.737255 0.737255 0.737255)",
+    ],
   },
   {
     id: "pierre-light",
@@ -770,6 +986,7 @@ export const themes: Theme[] = [
       del: "#d52c36",
       accent: "#009fff",
     },
+    palette: ["#1d1d1d", "#d52c36", "#18a46c", "#d5a910", "#1a85d4", "#bd2e90", "#1ca1c7", "#bcbcbc"],
   },
   {
     id: "pierre-light-protanopia-deuteranopia",
@@ -784,6 +1001,7 @@ export const themes: Theme[] = [
       del: "#ac6023",
       accent: "#009fff",
     },
+    palette: ["#1d1d1d", "#ac6023", "#216cab", "#ffca00", "#1a85d4", "#8836c7", "#2182a1", "#bcbcbc"],
   },
   {
     id: "pierre-light-soft",
@@ -798,6 +1016,7 @@ export const themes: Theme[] = [
       del: "#ff2e3f",
       accent: "#009fff",
     },
+    palette: ["#1d1d1d", "#ff2e3f", "#0dbe4e", "#ffca00", "#009fff", "#e130ac", "#08c0ef", "#bcbcbc"],
   },
   {
     id: "pierre-light-tritanopia",
@@ -812,6 +1031,7 @@ export const themes: Theme[] = [
       del: "#d5512f",
       accent: "#009fff",
     },
+    palette: ["#1d1d1d", "#d5512f", "#1e858e", "#d5901c", "#1a85d4", "#992a75", "#17a5af", "#bcbcbc"],
   },
   {
     id: "pierre-light-vibrant",
@@ -826,6 +1046,16 @@ export const themes: Theme[] = [
       del: "color(display-p3 0.838044 0.219378 0.220424)",
       accent: "color(display-p3 0.308664 0.645271 1.000000)",
     },
+    palette: [
+      "color(display-p3 0.113725 0.113725 0.113725)",
+      "color(display-p3 0.838044 0.219378 0.220424)",
+      "color(display-p3 0.266455 0.667541 0.435918)",
+      "color(display-p3 0.883654 0.721037 0.210874)",
+      "color(display-p3 0.227104 0.537899 0.881328)",
+      "color(display-p3 0.733164 0.179473 0.572580)",
+      "color(display-p3 0.246852 0.642335 0.817202)",
+      "color(display-p3 0.737255 0.737255 0.737255)",
+    ],
   },
   {
     id: "plastic",
@@ -840,6 +1070,16 @@ export const themes: Theme[] = [
       del: "#E06C75",
       accent: "#D19A66",
     },
+    palette: [
+      "#5F6672ff",
+      "#E06C75ff",
+      "#98C379ff",
+      "#E5C07Bff",
+      "#61AFEFff",
+      "#B57EDCff",
+      "#56B6C2ff",
+      "#A9B2C3ff",
+    ],
   },
   {
     id: "poimandres",
@@ -854,6 +1094,7 @@ export const themes: Theme[] = [
       del: "#d0679d",
       accent: "#ADD7FF",
     },
+    palette: ["#1b1e28", "#d0679d", "#5DE4c7", "#fffac2", "#89ddff", "#f087bd", "#89ddff", "#ffffff"],
   },
   {
     id: "red",
@@ -868,6 +1109,16 @@ export const themes: Theme[] = [
       del: "#c74e39",
       accent: "#E2C08D",
     },
+    palette: [
+      "#000000ff",
+      "#cd3131ff",
+      "#0dbc79ff",
+      "#e5e510ff",
+      "#2472c8ff",
+      "#bc3fbcff",
+      "#11a8cdff",
+      "#e5e5e5ff",
+    ],
   },
   {
     id: "rose-pine",
@@ -882,6 +1133,7 @@ export const themes: Theme[] = [
       del: "#908caa",
       accent: "#ebbcba",
     },
+    palette: ["#21202e", "#eb6f92", "#31748f", "#f6c177", "#9ccfd8", "#c4a7e7", "#ebbcba", "#e0def4"],
   },
   {
     id: "rose-pine-dawn",
@@ -896,6 +1148,7 @@ export const themes: Theme[] = [
       del: "#797593",
       accent: "#d7827e",
     },
+    palette: ["#f4ede8", "#b4637a", "#286983", "#ea9d34", "#56949f", "#907aa9", "#d7827e", "#575279"],
   },
   {
     id: "rose-pine-moon",
@@ -910,6 +1163,7 @@ export const themes: Theme[] = [
       del: "#908caa",
       accent: "#ea9a97",
     },
+    palette: ["#2a283e", "#eb6f92", "#3e8fb0", "#f6c177", "#9ccfd8", "#c4a7e7", "#ea9a97", "#e0def4"],
   },
   {
     id: "slack-dark",
@@ -924,6 +1178,7 @@ export const themes: Theme[] = [
       del: "#FFF",
       accent: "#ECB22E",
     },
+    palette: ["#000000", "#cd3131", "#0dbc79", "#e5e510", "#2472c8", "#bc3fbc", "#11a8cd", "#e5e5e5"],
   },
   {
     id: "slack-ochin",
@@ -938,6 +1193,7 @@ export const themes: Theme[] = [
       del: "#e53935",
       accent: "#ECB22E",
     },
+    palette: ["#000000", "#e53935", "#91b859", "#ffb62c", "#6182b8", "#7c4dff", "#39adb5", "#ffffff"],
   },
   {
     id: "snazzy-light",
@@ -952,6 +1208,7 @@ export const themes: Theme[] = [
       del: null,
       accent: "#00A39F",
     },
+    palette: ["#565869", "#ff5c57", "#2dae58", "#cf9c00", "#09a1ed", "#f767bb", "#13bbb7", "#fafbf9"],
   },
   {
     id: "solarized-dark",
@@ -966,6 +1223,16 @@ export const themes: Theme[] = [
       del: "#c74e39",
       accent: "#E2C08D",
     },
+    palette: [
+      "#073642ff",
+      "#dc322fff",
+      "#859900ff",
+      "#b58900ff",
+      "#268bd2ff",
+      "#d33682ff",
+      "#2aa198ff",
+      "#eee8d5ff",
+    ],
   },
   {
     id: "solarized-light",
@@ -980,6 +1247,16 @@ export const themes: Theme[] = [
       del: "#ad0707",
       accent: "#895503",
     },
+    palette: [
+      "#073642ff",
+      "#dc322fff",
+      "#859900ff",
+      "#b58900ff",
+      "#268bd2ff",
+      "#d33682ff",
+      "#2aa198ff",
+      "#eee8d5ff",
+    ],
   },
   {
     id: "synthwave-84",
@@ -994,6 +1271,7 @@ export const themes: Theme[] = [
       del: "#fe4450",
       accent: "#b893ceee",
     },
+    palette: ["#241b2f", "#fe4450", "#72f1b8", "#fede5d", "#03edf9", "#ff7edb", "#36f9f6", "#ffffff"],
   },
   {
     id: "tokyo-night",
@@ -1008,6 +1286,7 @@ export const themes: Theme[] = [
       del: "#914c54",
       accent: "#6183bb",
     },
+    palette: ["#363b54", "#f7768e", "#73daca", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#787c99"],
   },
   {
     id: "vesper",
@@ -1022,6 +1301,7 @@ export const themes: Theme[] = [
       del: "#c74e39",
       accent: "#E2C08D",
     },
+    palette: ["#101010", "#f5a191", "#90b99f", "#e6b99d", "#aca1cf", "#e29eca", "#ea83a5", "#A0A0A0"],
   },
   {
     id: "vitesse-black",
@@ -1036,6 +1316,7 @@ export const themes: Theme[] = [
       del: "#cb7676",
       accent: "#6394bf",
     },
+    palette: ["#dbd7cacc", "#cb7676", "#4d9375", "#e6cc77", "#6394bf", "#d9739f", "#5eaab5", "#dbd7ca"],
   },
   {
     id: "vitesse-dark",
@@ -1050,6 +1331,7 @@ export const themes: Theme[] = [
       del: "#cb7676",
       accent: "#6394bf",
     },
+    palette: ["#dbd7caee", "#cb7676", "#4d9375", "#e6cc77", "#6394bf", "#d9739f", "#5eaab5", "#dbd7ca"],
   },
   {
     id: "vitesse-light",
@@ -1064,5 +1346,6 @@ export const themes: Theme[] = [
       del: "#ab5959",
       accent: "#296aa3",
     },
+    palette: ["#ffffff", "#ab5959", "#1e754f", "#bda437", "#296aa3", "#a13865", "#2993a3", "#dbd7ca"],
   },
 ];
