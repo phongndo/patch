@@ -31,10 +31,17 @@ it left its base, plus uncommitted and untracked files. A review is one pass:
 comment, send, and the next `/patch` starts fresh. A draft only carries comments
 over a run that was cut off (an agent's timeout), for 12 hours.
 
-Settings (⌘, or the gear at the bottom of the sidebar) cover themes (Pierre
-Highlights' 75, for light and dark), fonts and sizes, layout, the diff, and
-every keyboard shortcut. They are kept in `~/.config/patch/settings.json` and
-apply to every review.
+Settings (⌘, or the gear at the bottom of the sidebar) cover themes, fonts and
+sizes, layout, the diff, and every keyboard shortcut. They are kept in
+`~/.config/patch/settings.json` and apply to every review.
+
+There are 443 themes for light and dark: Pierre's own and its other built-ins,
+the most-downloaded MIT and Apache-licensed theme extensions from Zed's
+registry (Catppuccin, Tokyo Night, GitHub, Dracula, Nord, Rosé Pine, Kanagawa,
+Everforest, Gruvbox Material and more), and 251 Base16 schemes behind a switch.
+Community themes load only when chosen. `bun scripts/fetch-themes.ts` refreshes
+them into `web/themes/community`, with their sources and licenses in
+`NOTICE.md` there, and `bun scripts/themes.ts` rebuilds the list.
 
 ## Remote review
 

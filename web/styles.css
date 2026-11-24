@@ -1546,9 +1546,12 @@ kbd {
   font-weight: 400;
 }
 
+/* Mixed from the text color, so cards stand out even in themes whose chrome
+   and editor share one color. */
 .settings-card {
+  border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--panel);
+  background: color-mix(in srgb, var(--fg) 4%, var(--bg));
   overflow: hidden;
 }
 
@@ -1671,12 +1674,32 @@ kbd {
 
 .theme-strip {
   display: flex;
-  gap: 14px;
-  padding: 14px 16px 12px;
+  gap: 18px;
+  padding: 12px 16px 14px;
   overflow-x: auto;
   scroll-snap-type: x proximity;
-  border-radius: 12px;
-  background: var(--panel);
+}
+
+.theme-section {
+  display: grid;
+  gap: 10px;
+  flex: none;
+}
+
+.theme-section + .theme-section {
+  padding-left: 18px;
+  border-left: 1px solid var(--line);
+}
+
+.theme-section-label {
+  color: var(--muted);
+  font-size: var(--text-meta);
+  font-weight: 500;
+}
+
+.theme-section-tiles {
+  display: flex;
+  gap: 14px;
 }
 
 .theme-tile {
@@ -1878,6 +1901,18 @@ kbd {
 
 .stepper-arrows button:first-child .icon {
   transform: rotate(180deg);
+}
+
+.card-rows {
+  border-top: 1px solid var(--line);
+}
+
+.card-rows > .setting {
+  padding: 10px 16px;
+}
+
+.card-rows > .setting + .setting {
+  border-top: 1px solid var(--line);
 }
 
 .preview {

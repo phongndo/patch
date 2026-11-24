@@ -1,7 +1,7 @@
 import type { DiffLineAnnotation, FileDiffMetadata, SelectedLineRange } from "@pierre/diffs";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@ui-sdk/solid/hover-card";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@ui-sdk/solid/popover";
-import { createEffect, createMemo, createSignal, createStore, For, onSettled, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, createStore, For, onSettled, Show, lazy } from "solid-js";
 import { stayConnected } from "./api.ts";
 import { createDiffView, type DiffView, type Note } from "./diff.ts";
 import { bindActions } from "./hotkeys.ts";
@@ -11,8 +11,11 @@ import { CommentCard, Composer } from "./Notes.tsx";
 import { isShown, kindOf, kinds, opensCollapsed, state, stats, type Kind, type Target } from "./state.ts";
 import { ScopePicker } from "./ScopePicker.tsx";
 import { defaults, preferences } from "./settings.ts";
-import { SettingsDialog } from "./SettingsDialog.tsx";
 import { Sidebar } from "./Sidebar.tsx";
+
+const SettingsDialog = lazy(() =>
+  import("./SettingsDialog.tsx").then((m) => ({ default: m.SettingsDialog })),
+);
 
 type Layout = "split" | "unified";
 const { settings } = preferences;
@@ -207,7 +210,9 @@ export function App() {
   };
   createEffect(
     () => ({ ...settings }),
-    (current) => diff?.configure(current),
+    (current) => {
+      void diff?.configure(current);
+    },
     { defer: true },
   );
 
@@ -246,7 +251,12 @@ export function App() {
     await state.load(store.review?.scope);
   }
 
-  const [settingsOpen, setSettingsOpen] = createSignal(false);
+  const [settingsOpen, openSettings] = createSignal(false);
+  const [settingsOpened, setSettingsOpened] = createSignal(false);
+  const setSettingsOpen = (open: boolean) => {
+    if (open) setSettingsOpened(true);
+    openSettings(open);
+  };
   const idle = () => !state.composer() && !finishing() && !store.submitted && !settingsOpen();
   bindActions({
     nextFile: { run: () => idle() && step(1) },
@@ -410,7 +420,10 @@ export function App() {
         }}
       />
 
-      <SettingsDialog open={settingsOpen()} onOpenChange={setSettingsOpen} />
+      {/* The dialog and its theme catalog load the first time Settings opens. */}
+      <Show when={settingsOpened()}>
+        <SettingsDialog open={settingsOpen()} onOpenChange={setSettingsOpen} />
+      </Show>
 
       <main class="diff" ref={(element) => (scroller = element)} />
 

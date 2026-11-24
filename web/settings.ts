@@ -3,7 +3,8 @@
 //! and the first paint already uses them.
 
 import { createEffect, createMemo, createRoot, createSignal, createStore, snapshot } from "solid-js";
-import { themes, type Theme } from "./themes.gen.ts";
+import type { Theme } from "./themes.gen.ts";
+import { defaultDark, defaultLight } from "./themes.defaults.gen.ts";
 
 /** Every rebindable action, in the order Settings lists them. */
 export const actions = {
@@ -41,6 +42,9 @@ export interface Settings {
   colorScheme: "system" | "light" | "dark";
   lightTheme: string;
   darkTheme: string;
+  /** The chosen themes' colors, kept so the page paints without loading the theme catalog. */
+  lightColors: Theme["colors"];
+  darkColors: Theme["colors"];
   /** A CSS font-family list: a preset's value, or whatever the reviewer typed. */
   uiFont: string;
   codeFont: string;
@@ -66,8 +70,10 @@ export interface Settings {
 
 export const defaults: Settings = {
   colorScheme: "system",
-  lightTheme: "pierre-light",
-  darkTheme: "pierre-dark",
+  lightTheme: defaultLight.id,
+  darkTheme: defaultDark.id,
+  lightColors: defaultLight.colors,
+  darkColors: defaultDark.colors,
   uiFont: fontPresets.ui[0].value,
   codeFont: fontPresets.code[0].value,
   textSize: 13,
@@ -93,7 +99,6 @@ declare global {
   }
 }
 
-const themeById = new Map(themes.map((theme) => [theme.id, theme]));
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, Math.round(value)));
 
 /** Keeps only known keys with the default's type, so a hand-edited file cannot break the page. */
@@ -104,8 +109,6 @@ function sanitize(saved: unknown): Settings {
       if (key in defaults && typeof value === typeof (defaults as unknown as Record<string, unknown>)[key])
         out[key] = value;
   const settings = out as unknown as Settings;
-  if (!themeById.get(settings.lightTheme)) settings.lightTheme = defaults.lightTheme;
-  if (!themeById.get(settings.darkTheme)) settings.darkTheme = defaults.darkTheme;
   settings.textSize = clamp(settings.textSize, 11, 17);
   settings.codeSize = clamp(settings.codeSize, 10, 20);
   settings.lineHeight = clamp(settings.lineHeight, 14, 32);
@@ -118,8 +121,8 @@ const hex = (value: string | null | undefined) =>
   value && /^#[0-9a-f]{3,8}$/i.test(value) ? value : undefined;
 
 /** Paints Patch's own chrome from a theme: its surfaces, text and change colors, mixed for the rest. */
-function paint(root: HTMLElement, theme: Theme) {
-  const c = theme.colors;
+function paint(root: HTMLElement, c: Theme["colors"], isDark: boolean) {
+  const theme = { dark: isDark };
   const editor = hex(c.editor) ?? (theme.dark ? "#0e0e10" : "#ffffff");
   const chrome = hex(c.chrome) ?? editor;
   const text = hex(c.text) ?? (theme.dark ? "#ececef" : "#18181b");
@@ -150,13 +153,13 @@ function createSettings() {
   const dark = createMemo(() =>
     settings.colorScheme === "system" ? systemDark() : settings.colorScheme === "dark",
   );
-  const theme = createMemo(() => themeById.get(dark() ? settings.darkTheme : settings.lightTheme)!);
+  const colors = createMemo(() => (dark() ? settings.darkColors : settings.lightColors));
 
   createEffect(
-    () => ({ ...settings, theme: theme() }),
+    () => ({ ...settings, colors: colors(), isDark: dark() }),
     (current) => {
       const root = document.documentElement;
-      paint(root, current.theme);
+      paint(root, current.colors, current.isDark);
       const set = (name: string, value: string) => root.style.setProperty(name, value);
       set("--font", current.uiFont);
       set("--mono", current.codeFont);
@@ -194,7 +197,45 @@ function createSettings() {
     update({ keys });
   }
 
-  return { settings, update, reset: () => update(structuredClone(defaults)), dark, theme, keyFor, bind };
+  /** Picks a theme for one mode, keeping its colors for the next first paint. */
+  const chooseTheme = (theme: Theme) =>
+    update(
+      theme.dark
+        ? { darkTheme: theme.id, darkColors: theme.colors }
+        : { lightTheme: theme.id, lightColors: theme.colors },
+    );
+
+  return {
+    settings,
+    update,
+    reset: () => update(structuredClone(defaults)),
+    dark,
+    keyFor,
+    bind,
+    chooseTheme,
+  };
 }
 
 export const preferences = createRoot(createSettings);
+
+// Settings saved before themes carried their colors, or naming a theme that is
+// gone, are repaired from the catalog; it loads only in that case.
+{
+  const saved = window.__PATCH_SETTINGS__ ?? {};
+  const s = preferences.settings;
+  const stale =
+    (s.lightTheme !== defaults.lightTheme && !saved.lightColors) ||
+    (s.darkTheme !== defaults.darkTheme && !saved.darkColors);
+  if (stale)
+    void import("./themes.gen.ts").then(({ themes }) => {
+      const find = (id: string) => themes.find((theme) => theme.id === id);
+      const light = find(s.lightTheme) ?? defaultLight;
+      const dark = find(s.darkTheme) ?? defaultDark;
+      preferences.update({
+        lightTheme: light.id,
+        lightColors: light.colors,
+        darkTheme: dark.id,
+        darkColors: dark.colors,
+      });
+    });
+}

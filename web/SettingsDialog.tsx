@@ -17,6 +17,7 @@ import { createMemo, createSignal, For, onCleanup, Show } from "solid-js";
 import { Icon } from "./Icon.tsx";
 import type { IconName } from "./icons.gen.ts";
 import { actions, defaults, fontPresets, preferences, type Action, type Settings } from "./settings.ts";
+import { defaultDark, defaultLight } from "./themes.defaults.gen.ts";
 import { themes, type Theme } from "./themes.gen.ts";
 
 const { settings, update } = preferences;
@@ -134,7 +135,7 @@ function ThemeTile(props: { theme: Theme; field: "lightTheme" | "darkTheme" }) {
     <button
       class={{ "theme-tile": true, chosen: chosen() }}
       aria-pressed={chosen() ? "true" : "false"}
-      onClick={() => update({ [props.field]: props.theme.id })}
+      onClick={() => preferences.chooseTheme(props.theme)}
     >
       <span class="theme-face" style={{ background: c().editor, color: c().text }}>
         <span class="theme-top">
@@ -158,8 +159,24 @@ function ThemeTile(props: { theme: Theme; field: "lightTheme" | "darkTheme" }) {
   );
 }
 
-function ThemeStrip(props: { field: "lightTheme" | "darkTheme" }) {
-  const list = () => themes.filter((theme) => theme.dark === (props.field === "darkTheme"));
+const groups: Array<{ id: string; label: string }> = [
+  { id: "pierre", label: "Pierre" },
+  { id: "builtin", label: "Built-in" },
+  { id: "community", label: "Community" },
+  { id: "base16", label: "Base16" },
+];
+
+/** A mode's themes in one sideways strip, in labeled sections. */
+function ThemeStrip(props: { field: "lightTheme" | "darkTheme"; base16: boolean }) {
+  const dark = () => props.field === "darkTheme";
+  const sections = () =>
+    groups
+      .filter((group) => group.id !== "base16" || props.base16)
+      .map((group) => ({
+        ...group,
+        themes: themes.filter((theme) => theme.dark === dark() && theme.group === group.id),
+      }))
+      .filter((group) => group.themes.length);
   return (
     <div
       class="theme-strip"
@@ -170,12 +187,28 @@ function ThemeStrip(props: { field: "lightTheme" | "darkTheme" }) {
         )
       }
     >
-      <For each={list()}>{(theme) => <ThemeTile theme={theme} field={props.field} />}</For>
+      <For each={sections()}>
+        {(section) => (
+          <div class="theme-section">
+            <span class="theme-section-label">
+              {section.label}
+              <span class="muted"> {section.themes.length}</span>
+            </span>
+            <div class="theme-section-tiles">
+              <For each={section.themes}>{(theme) => <ThemeTile theme={theme} field={props.field} />}</For>
+            </div>
+          </div>
+        )}
+      </For>
     </div>
   );
 }
 
 function ThemesPage() {
+  // Base16's 251 schemes stay out of the strip until asked for, or one is in use.
+  const [base16, setBase16] = createSignal(
+    settings.lightTheme.startsWith("base16:") || settings.darkTheme.startsWith("base16:"),
+  );
   const active = () => (preferences.dark() ? "darkTheme" : "lightTheme");
   return (
     <>
@@ -196,6 +229,15 @@ function ThemesPage() {
               ]}
             />
           </Row>
+          <Row
+            label="Base16 schemes"
+            description="List 251 more color schemes from the Base16 project."
+            keys={[]}
+          >
+            <Switch class="switch" aria-label="Base16 schemes" checked={base16()} onCheckedChange={setBase16}>
+              <SwitchThumb class="switch-thumb" />
+            </Switch>
+          </Row>
         </div>
       </Group>
       <For each={["lightTheme", "darkTheme"] as const}>
@@ -204,10 +246,14 @@ function ThemesPage() {
             title={field === "lightTheme" ? "Light Mode" : "Dark Mode"}
             note={active() === field ? "Active" : undefined}
             reset={
-              settings[field] !== defaults[field] ? () => update({ [field]: defaults[field] }) : undefined
+              settings[field] !== defaults[field]
+                ? () => preferences.chooseTheme(field === "lightTheme" ? defaultLight : defaultDark)
+                : undefined
             }
           >
-            <ThemeStrip field={field} />
+            <div class="settings-card">
+              <ThemeStrip field={field} base16={base16()} />
+            </div>
           </Group>
         )}
       </For>
@@ -226,6 +272,8 @@ function FontCard(props: {
   sizeRange: [number, number];
   preview: () => JSX.Element;
   children?: JSX.Element;
+  /** More rows in the same card, under the preview. */
+  footer?: JSX.Element;
 }) {
   const [open, setOpen] = createSignal(false);
   const name = () =>
@@ -295,6 +343,9 @@ function FontCard(props: {
         {props.children}
       </div>
       <div class="preview">{props.preview()}</div>
+      <Show when={props.footer}>
+        <div class="card-rows">{props.footer}</div>
+      </Show>
     </div>
   );
 }
@@ -326,6 +377,15 @@ function TypographyPage() {
           size="codeSize"
           weight="codeWeight"
           sizeRange={[10, 20]}
+          footer={
+            <Row
+              label="Ligatures"
+              description="Join characters like => and != in fonts that support it."
+              keys={["ligatures"]}
+            >
+              <Toggle name="ligatures" label="Ligatures" />
+            </Row>
+          }
           preview={() => (
             <pre
               class="code-preview"
@@ -345,15 +405,6 @@ function TypographyPage() {
         >
           <Stepper name="lineHeight" label="Line height" icon="diffUnified" min={14} max={32} unit="px" />
         </FontCard>
-        <div class="settings-card">
-          <Row
-            label="Ligatures"
-            description="Join characters like => and != in fonts that support it."
-            keys={["ligatures"]}
-          >
-            <Toggle name="ligatures" label="Ligatures" />
-          </Row>
-        </div>
       </Group>
       <Group
         title="Interface"
@@ -542,77 +593,78 @@ function Row(props: {
   );
 }
 
-function LayoutPage() {
+function GeneralPage() {
   return (
-    <Group title="Workspace">
-      <div class="settings-card">
-        <Row label="Sidebar" description="Which side the files and comments sit on." keys={["sidebarSide"]}>
-          <Choose
-            name="sidebarSide"
-            label="Sidebar"
-            options={[
-              { value: "left", label: "Left" },
-              { value: "right", label: "Right" },
-            ]}
-          />
-        </Row>
-        <Row
-          label="Diff layout"
-          description="Side by side, one column, or split on wide windows only."
-          keys={["layout"]}
-        >
-          <Choose
-            name="layout"
+    <>
+      <Group title="Workspace">
+        <div class="settings-card">
+          <Row label="Sidebar" description="Which side the files and comments sit on." keys={["sidebarSide"]}>
+            <Choose
+              name="sidebarSide"
+              label="Sidebar"
+              options={[
+                { value: "left", label: "Left" },
+                { value: "right", label: "Right" },
+              ]}
+            />
+          </Row>
+          <Row
             label="Diff layout"
-            options={[
-              { value: "auto", label: "Auto" },
-              { value: "split", label: "Split" },
-              { value: "unified", label: "Unified" },
-            ]}
-          />
-        </Row>
-        <Row label="Wrap long lines" description="Wrap lines instead of scrolling sideways." keys={["wrap"]}>
-          <Toggle name="wrap" label="Wrap long lines" />
-        </Row>
-      </div>
-    </Group>
-  );
-}
-
-function DiffPage() {
-  return (
-    <Group title="Changes">
-      <div class="settings-card">
-        <Row
-          label="Change markers"
-          description="Colored bars, or + and − signs, beside changed lines."
-          keys={["indicators"]}
-        >
-          <Choose
-            name="indicators"
+            description="Side by side, one column, or split on wide windows only."
+            keys={["layout"]}
+          >
+            <Choose
+              name="layout"
+              label="Diff layout"
+              options={[
+                { value: "auto", label: "Auto" },
+                { value: "split", label: "Split" },
+                { value: "unified", label: "Unified" },
+              ]}
+            />
+          </Row>
+          <Row
+            label="Wrap long lines"
+            description="Wrap lines instead of scrolling sideways."
+            keys={["wrap"]}
+          >
+            <Toggle name="wrap" label="Wrap long lines" />
+          </Row>
+        </div>
+      </Group>
+      <Group title="Diff">
+        <div class="settings-card">
+          <Row
             label="Change markers"
-            options={[
-              { value: "bars", label: "Bars" },
-              { value: "classic", label: "+ / −" },
-            ]}
-          />
-        </Row>
-        <Row
-          label="Highlight changed words"
-          description="Mark the words that changed within a line."
-          keys={["wordDiff"]}
-        >
-          <Toggle name="wordDiff" label="Highlight changed words" />
-        </Row>
-        <Row
-          label="Fold generated files"
-          description="Open lockfiles, minified and generated files folded."
-          keys={["foldGenerated"]}
-        >
-          <Toggle name="foldGenerated" label="Fold generated files" />
-        </Row>
-      </div>
-    </Group>
+            description="Colored bars, or + and − signs, beside changed lines."
+            keys={["indicators"]}
+          >
+            <Choose
+              name="indicators"
+              label="Change markers"
+              options={[
+                { value: "bars", label: "Bars" },
+                { value: "classic", label: "+ / −" },
+              ]}
+            />
+          </Row>
+          <Row
+            label="Highlight changed words"
+            description="Mark the words that changed within a line."
+            keys={["wordDiff"]}
+          >
+            <Toggle name="wordDiff" label="Highlight changed words" />
+          </Row>
+          <Row
+            label="Fold generated files"
+            description="Open lockfiles, minified and generated files folded."
+            keys={["foldGenerated"]}
+          >
+            <Toggle name="foldGenerated" label="Fold generated files" />
+          </Row>
+        </div>
+      </Group>
+    </>
   );
 }
 
@@ -624,8 +676,12 @@ const pages: Array<{ id: string; title: string; icon: IconName; words: string }>
     icon: "type",
     words: "font size weight line height ligatures interface code",
   },
-  { id: "layout", title: "Layout", icon: "sidebarLeft", words: "sidebar left right split unified wrap" },
-  { id: "diff", title: "Diff", icon: "diffSplit", words: "change markers bars words generated fold" },
+  {
+    id: "general",
+    title: "General",
+    icon: "sidebarLeft",
+    words: "layout sidebar left right split unified wrap diff change markers bars words generated fold",
+  },
   { id: "shortcuts", title: "Shortcuts", icon: "key", words: "keyboard keys bindings hotkeys" },
 ];
 
@@ -731,11 +787,8 @@ export function SettingsDialog(props: { open: boolean; onOpenChange: (open: bool
             <Show when={shown() === "typography"}>
               <TypographyPage />
             </Show>
-            <Show when={shown() === "layout"}>
-              <LayoutPage />
-            </Show>
-            <Show when={shown() === "diff"}>
-              <DiffPage />
+            <Show when={shown() === "general"}>
+              <GeneralPage />
             </Show>
             <Show when={shown() === "shortcuts"}>
               <ShortcutsPage

@@ -14,6 +14,7 @@ import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import { render, type JSX } from "@solidjs/web";
 import { loadSide } from "./api.ts";
 import { preferences, type Settings } from "./settings.ts";
+import { useTheme } from "./themes.ts";
 import type { Target } from "./state.ts";
 
 export type Note = { kind: "comment"; id: string } | { kind: "composer"; target: Target };
@@ -29,6 +30,8 @@ export interface DiffViewHooks {
 }
 
 const startup = preferences.settings;
+// A community theme must be registered before the first render asks for it.
+await Promise.all([useTheme(startup.lightTheme), useTheme(startup.darkTheme)]);
 const themesOf = (settings: Settings) => ({ dark: settings.darkTheme, light: settings.lightTheme });
 // What the highlighter workers were last told, so they are re-told only on a change.
 let workers = { ...themesOf(startup), wordDiff: startup.wordDiff };
@@ -171,7 +174,8 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
       view.setOptions({ ...options });
     },
     /** Applies the reviewer's settings to the diff, including the highlighter workers. */
-    configure(settings: Settings) {
+    async configure(settings: Settings) {
+      await Promise.all([useTheme(settings.lightTheme), useTheme(settings.darkTheme)]);
       const theme = themesOf(settings);
       const lineDiffType = settings.wordDiff ? "word-alt" : "none";
       const workersChanged =
