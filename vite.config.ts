@@ -27,6 +27,7 @@ export default {};`
 export default defineConfig({
   root: "web",
   plugins: [withoutShikiGrammars(), solid()],
+  optimizeDeps: { exclude: ["@ui-sdk/core"] },
   worker: { format: "es", plugins: () => [withoutShikiGrammars()] },
   build: {
     outDir: "dist",

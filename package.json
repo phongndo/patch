@@ -11,6 +11,7 @@
     "icons": "bun scripts/icons.ts",
     "themes": "bun scripts/themes.ts",
     "test": "cargo test --release --manifest-path cli/Cargo.toml && PATCHR=cli/target/release/patchr bun test ./tests/",
+    "test:web": "vitest run --config web/vitest.config.ts",
     "typecheck": "tsrs --noEmit -p tsconfig.json",
     "lint": "oxlint --deny-warnings .",
     "format": "oxfmt --write .",
@@ -34,10 +35,12 @@
     "@solidjs/vite-plugin": "3.0.1",
     "@types/bun": "1.4.5",
     "geist": "1.9.2",
+    "jsdom": "31.0.1",
     "oxfmt": "0.80.0",
     "oxlint": "1.95.0",
     "tsrs": "7.1.0-beta.tsrs5",
-    "vite": "8.3.8"
+    "vite": "8.3.8",
+    "vitest": "5.1.1"
   },
   "engines": {
     "bun": ">=1.4.5"
