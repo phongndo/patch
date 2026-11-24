@@ -21,7 +21,7 @@ interface Definition {
 }
 
 export const actions = {
-  palette: { label: "Command palette", key: "Mod+K", group: "App", icon: "search", words: "actions" },
+  palette: { label: "Command palette", key: "Mod+K", group: "App", icon: "command", words: "actions" },
   finish: { label: "Finish, then send", key: "Mod+Enter", group: "Review", icon: "check" },
   approve: { label: "Approve…", group: "Review", icon: "check", words: "accept lgtm" },
   sendFeedback: {

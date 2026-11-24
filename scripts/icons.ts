@@ -41,5 +41,9 @@ for (const name of names) {
     .replace(/ width="16" height="16"/, ' width="16" height="16" aria-hidden="true"');
   out.push(`  ${name[0]!.toLowerCase()}${name.slice(1)}: ${JSON.stringify(svg)},`);
 }
+// Pierre has no ⌘, so this one is drawn at its weight.
+const command =
+  '<svg width="16" height="16" aria-hidden="true" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M10 4v8a2 2 0 1 0 2-2H4a2 2 0 1 0 2 2V4a2 2 0 1 0-2 2h8a2 2 0 1 0-2-2Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>';
+out.push(`  command: ${JSON.stringify(command)},`);
 out.push("} as const;", "", "export type IconName = keyof typeof icons;", "");
 await writeFile(join(import.meta.dir, "..", "web", "icons.gen.ts"), out.join("\n"));

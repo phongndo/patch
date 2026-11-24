@@ -583,7 +583,7 @@ export function App() {
               title={preferences.hint("Command palette", "palette")}
               onClick={() => openPalette()}
             >
-              <Icon name="search" />
+              <Icon name="command" />
             </button>
             <Popover open={finishing()} onOpenChange={(open) => (open ? openFinish() : setFinishing(false))}>
               <PopoverTrigger class="button primary" disabled={store.submitted}>
