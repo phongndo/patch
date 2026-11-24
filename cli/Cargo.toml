@@ -1,0 +1,35 @@
+[package]
+name = "patchr"
+version = "0.1.0"
+edition = "2024"
+description = "A browser diff review loop for coding agents."
+license = "MIT"
+publish = false
+
+[dependencies]
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "query", "json"] }
+flate2 = "1.1"
+futures-util = { version = "0.3", default-features = false }
+mime_guess = { version = "2.0.5", default-features = false }
+rust-embed = { version = "8.14.0", features = ["interpolate-folder-path"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+tokio = { version = "1.54.1", features = [
+  "rt",
+  "macros",
+  "process",
+  "net",
+  "time",
+  "signal",
+  "fs",
+  "io-util",
+  "sync",
+] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
