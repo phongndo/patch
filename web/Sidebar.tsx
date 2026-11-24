@@ -7,6 +7,7 @@ import {
   PopoverTitle,
   PopoverTrigger,
 } from "@ui-sdk/solid/popover";
+import { Tabs, TabsList, TabsPanel, TabsTab, TabsTabIcon } from "@ui-sdk/solid/tabs";
 import { CommentsPanel } from "./CommentsPanel.tsx";
 import { Icon } from "./Icon.tsx";
 import { preferences } from "./settings.ts";
@@ -46,24 +47,26 @@ export function Sidebar(props: {
   const label = (word: string) => word[0]!.toUpperCase() + word.slice(1);
 
   return (
-    <aside class="sidebar">
+    <Tabs
+      class="sidebar"
+      render={(attributes) => <aside {...attributes} />}
+      id="sidebar"
+      value={view()}
+      onValueChange={(value) => value && setView(value as View)}
+    >
       <div class="side-head">
-        <button
-          class={{ "icon-button": true, active: view() === "files" }}
-          title="Files"
-          aria-pressed={view() === "files" ? "true" : "false"}
-          onClick={() => setView("files")}
-        >
-          <Icon name="fileTree" />
-        </button>
-        <button
-          class={{ "icon-button": true, active: view() === "comments" }}
-          title="Comments"
-          aria-pressed={view() === "comments" ? "true" : "false"}
-          onClick={() => setView("comments")}
-        >
-          <Icon name="comment" />
-        </button>
+        <TabsList class="side-views" aria-label="Sidebar">
+          <TabsTab class="icon-button" value="files" aria-label="Files" title="Files">
+            <TabsTabIcon>
+              <Icon name="fileTree" />
+            </TabsTabIcon>
+          </TabsTab>
+          <TabsTab class="icon-button" value="comments" aria-label="Comments" title="Comments">
+            <TabsTabIcon>
+              <Icon name="comment" />
+            </TabsTabIcon>
+          </TabsTab>
+        </TabsList>
         <input
           class="side-search"
           ref={props.searchRef}
@@ -149,22 +152,23 @@ export function Sidebar(props: {
         </Popover>
       </div>
 
-      <div class="side-body" hidden={view() !== "files"}>
+      {/* The tree takes focus inside its shadow root, where the panel can't see it. */}
+      <TabsPanel class="side-body" value="files" keepMounted tabindex={-1}>
         <Tree
           files={state.visibleFiles()}
           search={view() === "files" ? query() : ""}
           onOpen={props.onOpenFile}
         />
-      </div>
+      </TabsPanel>
 
-      <Show when={view() === "comments"}>
+      <TabsPanel class="side-comments" value="comments">
         <CommentsPanel query={query()} onOpen={props.onOpenComment} onEdit={props.onEditComment} />
-      </Show>
+      </TabsPanel>
       <footer class="side-foot">
         <button class="icon-button" title="Settings (⌘,)" onClick={() => props.onOpenSettings()}>
           <Icon name="gear" />
         </button>
       </footer>
-    </aside>
+    </Tabs>
   );
 }

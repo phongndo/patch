@@ -1,12 +1,16 @@
 //! Chooses what to review: a view of the working tree against any base
 //! branch, one commit or a run of them, or an open pull request.
 
-import { Popover, PopoverContent, PopoverTrigger } from "@ui-sdk/solid/popover";
 import {
-  SegmentedControl,
-  SegmentedControlIndicator,
-  SegmentedControlItem,
-} from "@ui-sdk/solid/segmented-control";
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandItemIcon,
+  CommandList,
+} from "@ui-sdk/solid/command";
+import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@ui-sdk/solid/popover";
+import { Tabs, TabsIndicator, TabsList, TabsPanel, TabsTab } from "@ui-sdk/solid/tabs";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import type { Commit, Mode, PullRequest, Scope, ScopesResponse } from "../src/protocol.ts";
 import { loadPullRequests, loadScopes } from "./api.ts";
@@ -33,6 +37,10 @@ export function ScopePicker() {
 
   const scope = () => state.store.review?.scope;
   const base = () => scopes()?.base ?? state.store.review?.base;
+  const isPr = (number: number) => {
+    const current = scope();
+    return current?.kind === "pr" && current.number === number;
+  };
 
   async function refreshScopes(nextBase?: string) {
     setError("");
@@ -116,9 +124,8 @@ export function ScopePicker() {
         <Icon name="chevronSm" />
       </PopoverTrigger>
       <PopoverContent class="menu scope-menu" side="bottom" align="start" sideOffset={6}>
-        <SegmentedControl
-          class="segmented scope-tabs"
-          aria-label="Review"
+        <PopoverTitle class="sr-only">Choose what to review</PopoverTitle>
+        <Tabs
           value={tab()}
           onValueChange={(value) => {
             if (!value) return;
@@ -126,156 +133,173 @@ export function ScopePicker() {
             if (value === "prs" && !prs()) searchPrs(prQuery());
           }}
         >
-          <SegmentedControlIndicator class="segmented-indicator" />
-          <SegmentedControlItem class="segmented-item" value="changes">
-            Changes
-          </SegmentedControlItem>
-          <SegmentedControlItem class="segmented-item" value="commits">
-            Commits
-          </SegmentedControlItem>
-          <SegmentedControlItem class="segmented-item" value="prs">
-            Pull requests
-          </SegmentedControlItem>
-        </SegmentedControl>
+          <TabsList class="segmented scope-tabs" aria-label="Review">
+            <TabsIndicator class="segmented-indicator" />
+            <TabsTab class="segmented-item" value="changes">
+              Changes
+            </TabsTab>
+            <TabsTab class="segmented-item" value="commits">
+              Commits
+            </TabsTab>
+            <TabsTab class="segmented-item" value="prs">
+              Pull requests
+            </TabsTab>
+          </TabsList>
 
-        <Show when={error()}>
-          <p class="menu-error">{error()}</p>
-        </Show>
+          <Show when={error()}>
+            <p class="menu-error">{error()}</p>
+          </Show>
 
-        <Show when={tab() === "changes"}>
-          <div class="menu-group">
-            <For each={views}>
-              {(view) => (
+          <TabsPanel value="changes">
+            <div class="menu-group">
+              <For each={views}>
+                {(view) => (
+                  <button
+                    class="menu-item"
+                    aria-pressed={scope()?.kind === view.kind ? "true" : "false"}
+                    title={view.hint}
+                    onClick={() =>
+                      choose({ kind: view.kind, base: view.kind === "all" ? base() : undefined })
+                    }
+                  >
+                    <span class="menu-check">
+                      <Show when={scope()?.kind === view.kind}>
+                        <Icon name="check" />
+                      </Show>
+                    </span>
+                    {view.label}
+                    <Show when={view.kind === "all" && base()}>
+                      <span class="muted"> vs {base()}</span>
+                    </Show>
+                  </button>
+                )}
+              </For>
+            </div>
+            <div class="menu-group">
+              <p class="menu-label">Compare the branch against</p>
+              <Command
+                query={branchQuery()}
+                onQueryChange={setBranchQuery}
+                filter={false}
+                autoHighlight={branchQuery() !== ""}
+              >
+                <CommandInput
+                  class="menu-search"
+                  type="search"
+                  aria-label="Find a branch to compare against"
+                  placeholder="Find a branch"
+                />
+                <CommandEmpty class="menu-empty">No branches match.</CommandEmpty>
+                <CommandList class="menu-list" aria-label="Branches">
+                  <For each={branches()}>
+                    {(branch) => (
+                      <CommandItem
+                        class="menu-item"
+                        value={branch}
+                        aria-current={base() === branch ? "true" : undefined}
+                        onSelect={() => choose({ kind: "all", base: branch })}
+                      >
+                        <CommandItemIcon class="menu-check">
+                          <Show when={base() === branch}>
+                            <Icon name="check" />
+                          </Show>
+                        </CommandItemIcon>
+                        <span class="mono">{branch}</span>
+                      </CommandItem>
+                    )}
+                  </For>
+                </CommandList>
+              </Command>
+            </div>
+          </TabsPanel>
+
+          <TabsPanel value="commits">
+            <div class="menu-group">
+              <p class="menu-label">
+                {scopes()?.since
+                  ? `Commits since ${scopes()?.since}`
+                  : `Recent commits on ${state.store.review?.branch ?? "this branch"}`}{" "}
+                · Shift-click for a range
+              </p>
+              <div class="menu-list">
                 <button
                   class="menu-item"
-                  aria-pressed={scope()?.kind === view.kind ? "true" : "false"}
-                  title={view.hint}
-                  onClick={() => choose({ kind: view.kind, base: view.kind === "all" ? base() : undefined })}
+                  aria-pressed={scope()?.kind === "all" ? "true" : "false"}
+                  onClick={() => choose({ kind: "all", base: base() })}
                 >
                   <span class="menu-check">
-                    <Show when={scope()?.kind === view.kind}>
+                    <Show when={scope()?.kind === "all"}>
                       <Icon name="check" />
                     </Show>
                   </span>
-                  {view.label}
-                  <Show when={view.kind === "all" && base()}>
-                    <span class="muted"> vs {base()}</span>
-                  </Show>
+                  {scopes()?.since ? "All commits and uncommitted changes" : "Uncommitted changes"}
                 </button>
-              )}
-            </For>
-          </div>
-          <div class="menu-group">
-            <p class="menu-label">Compare the branch against</p>
-            <input
-              class="menu-search"
-              type="search"
-              placeholder="Find a branch"
-              value={branchQuery()}
-              onInput={(event) => setBranchQuery(event.currentTarget.value)}
-            />
-            <div class="menu-list">
-              <For each={branches()} fallback={<p class="menu-empty">No branches match.</p>}>
-                {(branch) => (
-                  <button
-                    class="menu-item"
-                    aria-pressed={base() === branch ? "true" : "false"}
-                    onClick={() => choose({ kind: "all", base: branch })}
-                  >
-                    <span class="menu-check">
-                      <Show when={base() === branch}>
-                        <Icon name="check" />
-                      </Show>
-                    </span>
-                    <span class="mono">{branch}</span>
-                  </button>
-                )}
-              </For>
-            </div>
-          </div>
-        </Show>
-
-        <Show when={tab() === "commits"}>
-          <div class="menu-group">
-            <p class="menu-label">
-              {scopes()?.since
-                ? `Commits since ${scopes()?.since}`
-                : `Recent commits on ${state.store.review?.branch ?? "this branch"}`}{" "}
-              · Shift-click for a range
-            </p>
-            <div class="menu-list">
-              <button
-                class="menu-item"
-                aria-pressed={scope()?.kind === "all" ? "true" : "false"}
-                onClick={() => choose({ kind: "all", base: base() })}
-              >
-                <span class="menu-check">
-                  <Show when={scope()?.kind === "all"}>
-                    <Icon name="check" />
-                  </Show>
-                </span>
-                {scopes()?.since ? "All commits and uncommitted changes" : "Uncommitted changes"}
-              </button>
-              <For each={commits()} fallback={<p class="menu-empty">No commits on this branch yet.</p>}>
-                {(commit) => (
-                  <button
-                    class="menu-item commit-item"
-                    aria-pressed={selected().has(commit.sha) ? "true" : "false"}
-                    title={`${commit.subject}\n${commit.author}, ${commit.when}`}
-                    onClick={(event) => pickCommit(commit, event.shiftKey)}
-                  >
-                    <span class="menu-check">
-                      <Show when={selected().has(commit.sha)}>
-                        <Icon name="check" />
-                      </Show>
-                    </span>
-                    <span class="mono muted">{commit.short}</span>
-                    <span class="commit-subject">{commit.subject}</span>
-                    <span class="muted commit-when">{commit.when}</span>
-                  </button>
-                )}
-              </For>
-            </div>
-          </div>
-        </Show>
-
-        <Show when={tab() === "prs"}>
-          <div class="menu-group">
-            <input
-              class="menu-search"
-              type="search"
-              placeholder="Search open pull requests"
-              value={prQuery()}
-              onInput={(event) => searchPrs(event.currentTarget.value)}
-            />
-            <div class="menu-list">
-              <Show when={prs()} fallback={<p class="menu-empty">Loading…</p>}>
-                <For each={prs()} fallback={<p class="menu-empty">No open pull requests match.</p>}>
-                  {(pr) => (
+                <For each={commits()} fallback={<p class="menu-empty">No commits on this branch yet.</p>}>
+                  {(commit) => (
                     <button
-                      class="menu-item pr-item"
-                      aria-pressed={
-                        scope()?.kind === "pr" && (scope() as { number: number }).number === pr.number
-                          ? "true"
-                          : "false"
-                      }
-                      onClick={() => choose({ kind: "pr", number: pr.number })}
+                      class="menu-item commit-item"
+                      aria-pressed={selected().has(commit.sha) ? "true" : "false"}
+                      title={`${commit.subject}\n${commit.author}, ${commit.when}`}
+                      onClick={(event) => pickCommit(commit, event.shiftKey)}
                     >
-                      <span class="mono muted">#{pr.number}</span>
-                      <span class="pr-text">
-                        <span class="pr-title">{pr.title}</span>
-                        <span class="muted">
-                          {pr.author} · {pr.head} → {pr.base}
-                          {pr.draft ? " · draft" : ""}
-                        </span>
+                      <span class="menu-check">
+                        <Show when={selected().has(commit.sha)}>
+                          <Icon name="check" />
+                        </Show>
                       </span>
+                      <span class="mono muted">{commit.short}</span>
+                      <span class="commit-subject">{commit.subject}</span>
+                      <span class="muted commit-when">{commit.when}</span>
                     </button>
                   )}
                 </For>
-              </Show>
+              </div>
             </div>
-          </div>
-        </Show>
+          </TabsPanel>
+
+          <TabsPanel value="prs">
+            <div class="menu-group">
+              <Command
+                query={prQuery()}
+                onQueryChange={searchPrs}
+                autoHighlight={prQuery() !== ""}
+                filter={false}
+                status={prs() ? "idle" : "loading"}
+              >
+                <CommandInput
+                  class="menu-search"
+                  type="search"
+                  aria-label="Search open pull requests"
+                  placeholder="Search open pull requests"
+                />
+                <CommandEmpty class="menu-empty">
+                  {prs() ? "No open pull requests match." : "Loading…"}
+                </CommandEmpty>
+                <CommandList class="menu-list" aria-label="Pull requests">
+                  <For each={prs()}>
+                    {(pr) => (
+                      <CommandItem
+                        class="menu-item pr-item"
+                        value={String(pr.number)}
+                        aria-current={isPr(pr.number) ? "true" : undefined}
+                        onSelect={() => choose({ kind: "pr", number: pr.number })}
+                      >
+                        <span class="mono muted">#{pr.number}</span>
+                        <span class="pr-text">
+                          <span class="pr-title">{pr.title}</span>
+                          <span class="muted">
+                            {pr.author} · {pr.head} → {pr.base}
+                            {pr.draft ? " · draft" : ""}
+                          </span>
+                        </span>
+                      </CommandItem>
+                    )}
+                  </For>
+                </CommandList>
+              </Command>
+            </div>
+          </TabsPanel>
+        </Tabs>
       </PopoverContent>
     </Popover>
   );
