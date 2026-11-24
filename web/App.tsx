@@ -1,6 +1,6 @@
 import type { DiffLineAnnotation, FileDiffMetadata, SelectedLineRange } from "@pierre/diffs";
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@ui-sdk/solid/hover-card";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@ui-sdk/solid/popover";
+import { toast, Toast, ToastRegion, ToastTitle } from "@ui-sdk/solid/toast";
 import { createEffect, createMemo, createSignal, createStore, For, onSettled, Show, lazy } from "solid-js";
 import { stayConnected } from "./api.ts";
 import { createDiffView, type DiffView, type Note } from "./diff.ts";
@@ -49,11 +49,12 @@ export function App() {
     handle.addEventListener("lostpointercapture", end, { once: true });
   }
   const [finishing, setFinishing] = createSignal(false);
-  const [disconnected, setDisconnected] = createSignal(false);
   const [sendError, setSendError] = createSignal("");
   let searchInput: HTMLInputElement | undefined;
   const [collapsed, setCollapsed] = createStore<Record<string, boolean>>({});
   let scroller: HTMLElement | undefined;
+  let approveButton: HTMLButtonElement | undefined;
+  let sendButton: HTMLButtonElement | undefined;
   let diff: DiffView | undefined;
 
   // Lines added and removed per kind of file, and in all.
@@ -178,7 +179,14 @@ export function App() {
     });
     diff.setLayout(layout());
     const disconnect = stayConnected(
-      () => setDisconnected(true),
+      () => {
+        if (!store.submitted)
+          toast.warning("Patch stopped. Your comments are saved; run /patch again to continue.", {
+            id: "disconnected",
+            duration: Infinity,
+            dismissible: false,
+          });
+      },
       () => setStale(true),
     );
     void state.load();
@@ -244,6 +252,7 @@ export function App() {
     setSendError("");
     try {
       await state.finish(decision);
+      toast.dismiss("disconnected");
       setFinishing(false);
       // The agent has the feedback; the tab has nothing left to do.
       window.close();
@@ -313,13 +322,14 @@ export function App() {
           <ScopePicker />
         </div>
         <div class="end">
-          <HoverCard delay={250} closeDelay={150}>
-            <HoverCardTrigger class="summary" render={(props) => <button type="button" {...props} />}>
+          <Popover openOnHover delay={250} closeDelay={150}>
+            <PopoverTrigger class="summary">
               <span>{state.files().length} files</span>
               <span class="add">+{number.format(totals().additions)}</span>
               <span class="del">−{number.format(totals().deletions)}</span>
-            </HoverCardTrigger>
-            <HoverCardContent class="breakdown" side="bottom" align="end" sideOffset={6}>
+            </PopoverTrigger>
+            <PopoverContent class="breakdown" side="bottom" align="end" sideOffset={6}>
+              <PopoverTitle class="sr-only">Changed lines</PopoverTitle>
               <table>
                 <tbody>
                   <For
@@ -344,8 +354,8 @@ export function App() {
                   </tr>
                 </tfoot>
               </table>
-            </HoverCardContent>
-          </HoverCard>
+            </PopoverContent>
+          </Popover>
           <div class="actions">
             <button
               class={{ "icon-button": true, refresh: true, stale: stale() }}
@@ -381,7 +391,14 @@ export function App() {
                   {commentCount()}
                 </span>
               </PopoverTrigger>
-              <PopoverContent class="finish" side="bottom" align="end" sideOffset={6}>
+              <PopoverContent
+                class="finish"
+                side="bottom"
+                align="end"
+                sideOffset={6}
+                // With comments written, Enter sends them; it never approves past them.
+                initialFocus={() => (hasFeedback() ? sendButton : approveButton)}
+              >
                 <PopoverTitle class="finish-title">{summary() || "No comments yet"}</PopoverTitle>
                 <Show when={movedCount()}>
                   <p class="finish-warning">
@@ -394,17 +411,18 @@ export function App() {
                 </Show>
                 <div class="finish-actions">
                   <span class="hint">{hasFeedback() ? "⌘↵ sends" : "⌘↵ approves"}</span>
-                  <button class="button" onClick={() => void send("approve")}>
+                  <button
+                    class="button"
+                    ref={(element) => (approveButton = element)}
+                    onClick={() => void send("approve")}
+                  >
                     <Icon name="check" />
                     Approve
                   </button>
                   <button
                     class="button primary"
                     disabled={!hasFeedback()}
-                    // With comments written, Enter sends them; it never approves past them.
-                    ref={(element) => {
-                      if (hasFeedback()) requestAnimationFrame(() => element.focus());
-                    }}
+                    ref={(element) => (sendButton = element)}
                     onClick={() => void send("comment")}
                   >
                     Send feedback
@@ -472,9 +490,13 @@ export function App() {
           <p>Sent to the agent. You can close this tab.</p>
         </div>
       </Show>
-      <Show when={disconnected() && !store.submitted}>
-        <div class="toast">Patch stopped. Your comments are saved; run /patch again to continue.</div>
-      </Show>
+      <ToastRegion align="center" aria-label="Notifications">
+        {() => (
+          <Toast class="toast">
+            <ToastTitle />
+          </Toast>
+        )}
+      </ToastRegion>
     </div>
   );
 }
