@@ -15,6 +15,7 @@ export const actions = {
   comment: { label: "Comment on the selected lines", key: "C", group: "Review" },
   viewed: { label: "Mark the file viewed", key: "V", group: "Review" },
   layout: { label: "Split or unified", key: "S", group: "Review" },
+  foldAll: { label: "Collapse or expand every file", key: "A", group: "Review" },
   refresh: { label: "Refresh the diff", key: "R", group: "Review" },
   finish: { label: "Finish, then send", key: "Mod+Enter", group: "App" },
   settings: { label: "Settings", key: "Mod+,", group: "App" },

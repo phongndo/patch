@@ -13,6 +13,8 @@ const names = [
   "Check",
   "CheckCircle",
   "ChevronSm",
+  "Chevrons",
+  "ChevronsClose",
   "Code",
   "Commit",
   "Comment",

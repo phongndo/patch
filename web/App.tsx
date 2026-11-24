@@ -120,6 +120,16 @@ export function App() {
     diff?.setCollapsed(file, value);
   }
 
+  // Collapses every listed file, or expands them all when they already are.
+  const allCollapsed = () => {
+    const files = state.visibleFiles();
+    return files.length > 0 && files.every((file) => collapsed[file.name]);
+  };
+  function toggleAll() {
+    const value = !allCollapsed();
+    for (const file of state.visibleFiles()) setFileCollapsed(file.name, value);
+  }
+
   function toggleViewed(file: string) {
     const viewed = state.toggleViewed(file);
     setFileCollapsed(file, viewed);
@@ -262,6 +272,7 @@ export function App() {
     nextFile: { run: () => idle() && step(1) },
     previousFile: { run: () => idle() && step(-1) },
     layout: { run: () => idle() && chooseLayout(layout() === "split" ? "unified" : "split") },
+    foldAll: { run: () => idle() && toggleAll() },
     refresh: { run: () => idle() && void refresh() },
     sidebar: { run: () => idle() && setSidebar((shown) => !shown) },
     search: { run: () => idle() && searchInput?.focus() },
@@ -342,6 +353,13 @@ export function App() {
               onClick={() => void refresh()}
             >
               <Icon name="refresh" />
+            </button>
+            <button
+              class="icon-button"
+              title={allCollapsed() ? "Expand every file (a)" : "Collapse every file (a)"}
+              onClick={toggleAll}
+            >
+              <Icon name={allCollapsed() ? "chevrons" : "chevronsClose"} />
             </button>
             <button
               class="icon-button"
