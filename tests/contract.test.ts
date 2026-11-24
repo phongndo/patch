@@ -53,6 +53,7 @@ async function start(...args: string[]) {
       PATCH_BROWSER: "none",
       PATCH_PORT: "0",
       XDG_STATE_HOME: state,
+      XDG_CONFIG_HOME: state,
       SSH_CONNECTION: "",
     },
     stdout: "pipe",
@@ -267,7 +268,7 @@ describe("patchr review", () => {
     for (const typed of ["--base", "--near x", "--codex t", "'unmatched"]) {
       const child = Bun.spawnSync([...command, "review", "--typed", typed, "--near", repo], {
         cwd: repo,
-        env: { ...process.env, XDG_STATE_HOME: state },
+        env: { ...process.env, XDG_STATE_HOME: state, XDG_CONFIG_HOME: state },
       });
       expect(child.exitCode).toBe(2);
       expect(child.stdout.toString()).toBe("");
@@ -292,7 +293,7 @@ describe("patchr review", () => {
     const draft = join(state, "patch", "drafts", `${receipt}.json`);
     const delivered = (key: string) =>
       Bun.spawnSync([...command, "hook", "delivered", key], {
-        env: { ...process.env, XDG_STATE_HOME: state },
+        env: { ...process.env, XDG_STATE_HOME: state, XDG_CONFIG_HOME: state },
       });
     delivered("../drafts/x");
     expect(existsSync(draft)).toBe(true);
@@ -311,6 +312,7 @@ describe("patchr review", () => {
       PATCH_BROWSER: "none",
       PATCH_PORT: "0",
       XDG_STATE_HOME: state,
+      XDG_CONFIG_HOME: state,
       SSH_CONNECTION: "",
     };
     const hook = async (prompt: string) => {
@@ -421,7 +423,7 @@ describe("patchr review", () => {
   test("a bad base fails before serving", async () => {
     const child = Bun.spawn([...command, "review", "--no-open", ...local, "--base", "nope"], {
       cwd: repo,
-      env: { ...process.env, PATCH_BROWSER: "none", XDG_STATE_HOME: state },
+      env: { ...process.env, PATCH_BROWSER: "none", XDG_STATE_HOME: state, XDG_CONFIG_HOME: state },
       stderr: "pipe",
       stdout: "pipe",
     });
