@@ -33,9 +33,15 @@ Codex's default sandbox blocks the local port it needs; allow it to escalate.
 `patchr review [dir] [--base <ref>] [--uncommitted | --staged] [--remote | --local]`
 is what the command runs. By default it shows what a pull request would: the branch since
 it left its base, plus uncommitted and untracked files. A review is one pass:
-comment, send, and the next `/patch` starts fresh. A draft only carries comments
-over a run that was cut off (an agent's timeout) or feedback that did not reach
-the agent, for 12 hours.
+comment, send, and the next `/patch` starts empty. Comments live in the tab: a
+reload keeps them, closing with any unsent asks first, and if Patch is cut off
+(an agent's timeout) the tab can still copy them. Feedback the agent's harness
+refuses is kept in `~/.local/state/patch/unsent`, and its path is shown.
+
+⌘K opens the command palette, which has every command, file, comment and
+setting. ⌘/ comments on the selected lines or the line under the pointer, ⌃J and
+⌃K step through changes, ⌃N and ⌃P through comments and ⌥↓ and ⌥↑ through files,
+⌘⇧V marks the file viewed and ⌘↵ finishes. Off a Mac the motions are on Alt. Settings › Shortcuts lists them all; any command can be given a key.
 
 Settings (⌘, or the gear at the bottom of the sidebar) cover themes, fonts and
 sizes, layout, the diff, and every keyboard shortcut. They are kept in
