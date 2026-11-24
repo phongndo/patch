@@ -1,19 +1,54 @@
 import type { DiffLineAnnotation, FileDiffMetadata, SelectedLineRange } from "@pierre/diffs";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@ui-sdk/solid/popover";
 import { toast, Toast, ToastAction, ToastRegion, ToastTitle } from "@ui-sdk/solid/toast";
-import { createEffect, createMemo, createSignal, createStore, For, onSettled, Show, lazy } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  createStore,
+  flush,
+  For,
+  onSettled,
+  Show,
+  lazy,
+} from "solid-js";
+import type { Comment } from "../src/protocol.ts";
 import { stayConnected } from "./api.ts";
+import type { Action } from "./commands.ts";
 import { createDiffView, type DiffView, type Note } from "./diff.ts";
 import { copyText, feedbackText } from "./feedback.ts";
-import { bindActions } from "./hotkeys.ts";
+import { bindActions, type Handler } from "./hotkeys.ts";
 import { Icon } from "./Icon.tsx";
 import { moved } from "./CommentsPanel.tsx";
 import { CommentCard, Composer } from "./Notes.tsx";
-import { isShown, kindOf, kinds, opensCollapsed, state, stats, type Kind, type Target } from "./state.ts";
+import { openPalette, Palette } from "./Palette.tsx";
+import {
+  isGeneral,
+  isShown,
+  kindOf,
+  kinds,
+  opensCollapsed,
+  state,
+  stats,
+  type Kind,
+  type Target,
+} from "./state.ts";
 import { ScopePicker } from "./ScopePicker.tsx";
 import { defaults, preferences } from "./settings.ts";
 import { Sidebar } from "./Sidebar.tsx";
 import { Splitter } from "./splitter.ts";
+import {
+  filterOpen,
+  palette,
+  scopeOpen,
+  setScopeOpen,
+  setSettingsOpen,
+  setSettingsPage,
+  setSidebarView,
+  settingsOpen,
+  type SettingsPage,
+  type SidebarView,
+} from "./ui.ts";
 
 const SettingsDialog = lazy(() =>
   import("./SettingsDialog.tsx").then((m) => ({ default: m.SettingsDialog })),
@@ -38,6 +73,8 @@ export function App() {
     document.documentElement.style.setProperty("--sidebar", `${width}px`),
   );
   const [finishing, setFinishing] = createSignal(false);
+  // Which button Finish opens on; by default the one that fits what is written.
+  const [finishOn, setFinishOn] = createSignal<"approve" | "comment">();
   const [sendError, setSendError] = createSignal("");
   let searchInput: HTMLInputElement | undefined;
   const [collapsed, setCollapsed] = createStore<Record<string, boolean>>({});
@@ -87,6 +124,12 @@ export function App() {
         metadata: { kind: "composer", target: composer },
       });
     return annotations;
+  }
+
+  function comment() {
+    const target = diff?.commentTarget();
+    if (target) openComposer(target.file, target.range);
+    else toast.info("Select lines first, or point at one.", { id: "hint" });
   }
 
   function openComposer(file: string, range: SelectedLineRange) {
@@ -243,10 +286,62 @@ export function App() {
     if (next) diff?.scrollToFile(next);
   };
 
-  function jumpTo(comment: { file: string; side: "additions" | "deletions"; end: number }) {
+  function openFile(path: string) {
+    if (collapsed[path] && !state.isViewed(path)) setFileCollapsed(path, false);
+    diff?.scrollToFile(path);
+  }
+
+  function jumpTo(comment: Pick<Comment, "id" | "file" | "side" | "end">) {
     setFinishing(false);
+    setLastComment(comment.id);
     if (collapsed[comment.file]) setFileCollapsed(comment.file, false);
     diff?.scrollToLine(comment.file, comment.end, comment.side);
+  }
+
+  function openComment(comment: Comment) {
+    if (isGeneral(comment) || moved(comment)) showSidebar("comments");
+    else jumpTo(comment);
+  }
+
+  function editComment(comment: Comment) {
+    if (isGeneral(comment)) {
+      showSidebar("comments");
+      state.composeGeneral(comment.id);
+      return;
+    }
+    jumpTo(comment);
+    state.compose({ ...comment });
+  }
+
+  // Stepping through comments goes in the order the diff shows them.
+  const [lastComment, setLastComment] = createSignal<string>();
+  function stepComment(direction: 1 | -1) {
+    const order = new Map(state.visibleFiles().map((file, index) => [file.name, index]));
+    const list = store.comments
+      .filter((comment) => order.has(comment.file) && !moved(comment))
+      .toSorted((a, b) => order.get(a.file)! - order.get(b.file)! || a.end - b.end);
+    if (!list.length) {
+      toast.info("No comments in the diff yet.", { id: "hint" });
+      return;
+    }
+    const at = list.findIndex((comment) => comment.id === lastComment());
+    const next = at < 0 ? (direction > 0 ? 0 : list.length - 1) : at + direction;
+    jumpTo(list[(next + list.length) % list.length]!);
+  }
+
+  function nextUnviewed() {
+    const names = state.visibleFiles().map((file) => file.name);
+    const here = names.indexOf(currentFile() ?? "");
+    const next = [...names.slice(here + 1), ...names.slice(0, here + 1)].find(
+      (name) => !state.isViewed(name),
+    );
+    if (next) openFile(next);
+    else toast.info("Every file is viewed.", { id: "hint" });
+  }
+
+  function showSidebar(view: SidebarView) {
+    setSidebar(() => true);
+    setSidebarView(view);
   }
 
   async function copyFeedback() {
@@ -260,10 +355,15 @@ export function App() {
     else toast.error("The browser did not allow copying.", { id: "hint" });
   }
 
-  /** Opens Finish with everything written counted. */
-  function openFinish() {
+  /** Opens Finish with everything written counted, on one of its buttons. */
+  function openFinish(on?: "approve" | "comment") {
     state.keepWriting();
+    if (on === "comment" && !hasFeedback()) {
+      toast.info("There are no comments to send yet.", { id: "hint" });
+      return;
+    }
     setSendError("");
+    setFinishOn(on);
     setFinishing(true);
   }
 
@@ -290,43 +390,134 @@ export function App() {
     await state.load(store.review?.scope);
   }
 
-  const [settingsOpen, openSettings] = createSignal(false);
   const [settingsOpened, setSettingsOpened] = createSignal(false);
-  const setSettingsOpen = (open: boolean) => {
+  createEffect(settingsOpen, (open) => {
     if (open) setSettingsOpened(true);
-    openSettings(open);
+  });
+  const openSettings = (page?: SettingsPage) => {
+    if (page) setSettingsPage(page);
+    setSettingsOpen(true);
   };
-  const idle = () => !state.composer() && !finishing() && !store.submitted && !settingsOpen();
-  bindActions({
-    nextFile: { run: () => idle() && step(1) },
-    previousFile: { run: () => idle() && step(-1) },
-    layout: { run: () => idle() && chooseLayout(layout() === "split" ? "unified" : "split") },
-    foldAll: { run: () => idle() && toggleAll() },
-    refresh: { run: () => idle() && void refresh() },
-    sidebar: { run: () => idle() && setSidebar((shown) => !shown) },
-    search: { run: () => idle() && searchInput?.focus() },
-    viewed: {
-      run: () => {
-        const file = idle() ? currentFile() : undefined;
-        if (file && toggleViewed(file)) step(1);
-      },
-    },
-    comment: {
-      run: () => {
-        const selection = idle() ? diff?.view.getSelectedLines() : undefined;
-        if (selection) openComposer(selection.id, selection.range);
-      },
-    },
+
+  const running = () => !store.submitted && palette() === undefined;
+  const idle = () => running() && !finishing() && !settingsOpen() && !scopeOpen() && !filterOpen();
+  const flip = (name: "wrap" | "wordDiff" | "foldGenerated" | "ligatures") => ({
+    run: () => preferences.update({ [name]: !settings[name] }),
+  });
+  const page = (action: Action) => ({ run: () => openPalette(action) });
+  const base = () => (store.review?.scope.kind === "all" ? store.review.scope.base : undefined);
+  const withCurrentFile = (run: (file: string) => void) => () => {
+    const file = currentFile();
+    if (file) run(file);
+  };
+
+  const handlers: Record<Action, Handler> = {
+    palette: { run: () => openPalette(), enabled: () => running() && !settingsOpen() },
     finish: {
-      inInputs: true,
+      enabled: () => running() && !settingsOpen(),
       run: () => {
-        if (state.composer() || store.submitted || settingsOpen()) return;
         if (finishing()) void send(hasFeedback() ? "comment" : "approve");
         else openFinish();
       },
     },
-    settings: { inInputs: true, run: () => setSettingsOpen(true) },
-  });
+    approve: { run: () => openFinish("approve") },
+    sendFeedback: { run: () => openFinish("comment") },
+    copyFeedback: { run: () => void copyFeedback() },
+    viewed: {
+      run: withCurrentFile((file) => {
+        if (toggleViewed(file)) step(1);
+      }),
+    },
+    refresh: { run: () => void refresh() },
+
+    comment: { run: comment },
+    generalComment: {
+      run: () => {
+        showSidebar("comments");
+        state.composeGeneral();
+      },
+    },
+    nextComment: { run: () => stepComment(1) },
+    previousComment: { run: () => stepComment(-1) },
+    goToComment: page("goToComment"),
+    editComment: page("editComment"),
+    deleteComment: page("deleteComment"),
+    deleteAllComments: page("deleteAllComments"),
+    clearSelection: { run: () => diff?.clearSelection() },
+
+    nextChange: { run: () => void diff?.stepChange(1) },
+    previousChange: { run: () => void diff?.stepChange(-1) },
+    nextFile: { run: () => step(1) },
+    previousFile: { run: () => step(-1) },
+    nextUnviewed: { run: nextUnviewed },
+    goToFile: page("goToFile"),
+    search: {
+      run: () => {
+        setSidebar(() => true);
+        flush();
+        searchInput?.focus();
+      },
+    },
+    find: { run: () => diff?.find() },
+
+    scope: { run: () => setScopeOpen(true) },
+    reviewBranch: { run: () => void state.load({ kind: "all", base: base() }) },
+    reviewUncommitted: { run: () => void state.load({ kind: "uncommitted" }) },
+    reviewStaged: { run: () => void state.load({ kind: "staged" }) },
+    chooseBase: page("chooseBase"),
+    chooseCommit: page("chooseCommit"),
+    choosePull: page("choosePull"),
+
+    foldFile: { run: withCurrentFile((file) => setFileCollapsed(file, !collapsed[file])) },
+    foldAll: { run: toggleAll },
+    layout: { run: () => chooseLayout(layout() === "split" ? "unified" : "split") },
+    layoutAuto: {
+      run: () => {
+        setLayout(innerWidth >= 1200 ? "split" : "unified");
+        preferences.update({ layout: "auto" });
+      },
+    },
+    wrap: flip("wrap"),
+    wordDiff: flip("wordDiff"),
+    indicators: {
+      run: () => preferences.update({ indicators: settings.indicators === "bars" ? "classic" : "bars" }),
+    },
+    contrast: page("contrast"),
+    foldGenerated: flip("foldGenerated"),
+    sidebar: { run: () => setSidebar((shown) => !shown) },
+    sidebarSide: {
+      run: () => preferences.update({ sidebarSide: settings.sidebarSide === "left" ? "right" : "left" }),
+    },
+    sidebarWidth: { run: () => preferences.update({ sidebarWidth: defaults.sidebarWidth }) },
+    showFiles: { run: () => showSidebar("files") },
+    showComments: { run: () => showSidebar("comments") },
+    filterFiles: page("filterFiles"),
+    clearFilter: { run: () => state.clearFilter() },
+
+    appearance: page("appearance"),
+    lightTheme: page("lightTheme"),
+    darkTheme: page("darkTheme"),
+    codeFont: page("codeFont"),
+    uiFont: page("uiFont"),
+    codeBigger: { run: () => preferences.step("codeSize", 1) },
+    codeSmaller: { run: () => preferences.step("codeSize", -1) },
+    linesTaller: { run: () => preferences.step("lineHeight", 1) },
+    linesShorter: { run: () => preferences.step("lineHeight", -1) },
+    codeBolder: { run: () => preferences.step("codeWeight", 1) },
+    codeLighter: { run: () => preferences.step("codeWeight", -1) },
+    textBigger: { run: () => preferences.step("textSize", 1) },
+    textSmaller: { run: () => preferences.step("textSize", -1) },
+    textBolder: { run: () => preferences.step("uiWeight", 1) },
+    textLighter: { run: () => preferences.step("uiWeight", -1) },
+    ligatures: flip("ligatures"),
+
+    settings: { run: () => openSettings(), enabled: running },
+    shortcuts: { run: () => openSettings("shortcuts") },
+    settingsThemes: { run: () => openSettings("themes") },
+    settingsTypography: { run: () => openSettings("typography") },
+    restoreDefaults: page("restoreDefaults"),
+  };
+  bindActions(handlers, idle);
 
   return (
     <div class={{ app: true, "no-sidebar": !sidebar(), "sidebar-right": settings.sidebarSide === "right" }}>
@@ -378,6 +569,13 @@ export function App() {
           </Popover>
           <div class="actions">
             <button
+              class="icon-button"
+              title={preferences.hint("Command palette", "palette")}
+              onClick={() => openPalette()}
+            >
+              <Icon name="search" />
+            </button>
+            <button
               class={{ "icon-button": true, refresh: true, stale: stale() }}
               title={preferences.hint(stale() ? "The repository changed · refresh" : "Refresh", "refresh")}
               onClick={() => void refresh()}
@@ -416,8 +614,14 @@ export function App() {
                 side="bottom"
                 align="end"
                 sideOffset={6}
+                // The Enter that opened this may still be held; it must not press a button too.
+                onKeyDown={(event: KeyboardEvent) => event.repeat && event.preventDefault()}
                 // With comments written, Enter sends them; it never approves past them.
-                initialFocus={() => (hasFeedback() ? sendButton : approveButton)}
+                initialFocus={() =>
+                  (finishOn() ?? (hasFeedback() ? "comment" : "approve")) === "comment"
+                    ? sendButton
+                    : approveButton
+                }
               >
                 <PopoverTitle class="finish-title">{summary() || "No comments yet"}</PopoverTitle>
                 <Show when={movedCount()}>
@@ -433,7 +637,11 @@ export function App() {
                   </button>
                 </Show>
                 <div class="finish-actions">
-                  <span class="hint">{hasFeedback() ? "⌘↵ sends" : "⌘↵ approves"}</span>
+                  <span class="hint">
+                    <Show when={preferences.keyText("finish")}>
+                      {preferences.keyText("finish")} {hasFeedback() ? "sends" : "approves"}
+                    </Show>
+                  </span>
                   <button
                     class="button"
                     ref={(element) => (approveButton = element)}
@@ -462,11 +670,8 @@ export function App() {
         onFind={(text) => diff?.find(text)}
         onOpenFile={(path) => diff?.scrollToFile(path)}
         onOpenComment={jumpTo}
-        onOpenSettings={() => setSettingsOpen(true)}
-        onEditComment={(comment) => {
-          jumpTo(comment);
-          state.compose({ ...comment });
-        }}
+        onOpenSettings={() => openSettings()}
+        onEditComment={editComment}
       />
 
       <Splitter
@@ -487,6 +692,14 @@ export function App() {
       <Show when={settingsOpened()}>
         <SettingsDialog open={settingsOpen()} onOpenChange={setSettingsOpen} />
       </Show>
+
+      <Palette
+        run={(action) => handlers[action].run()}
+        onOpenFile={openFile}
+        onOpenComment={openComment}
+        onEditComment={editComment}
+        onRestoreDefaults={() => preferences.reset()}
+      />
 
       <main class="diff" ref={(element) => (scroller = element)} />
 

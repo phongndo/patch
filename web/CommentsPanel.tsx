@@ -4,8 +4,10 @@
 
 import { createMemo, createSignal, For, onSettled, Show } from "solid-js";
 import type { Comment } from "../src/protocol.ts";
+import { isPageShortcut } from "./hotkeys.ts";
 import { Icon } from "./Icon.tsx";
 import { lineLabel } from "./Notes.tsx";
+import { preferences } from "./settings.ts";
 import { isGeneral, isShown, state } from "./state.ts";
 
 /** A line comment whose lines are no longer in the diff on screen; it is still sent as written. */
@@ -39,6 +41,7 @@ function GeneralEditor(props: { id?: string }) {
         value={body()}
         onInput={(event) => state.setGeneralText(event.currentTarget.value)}
         onKeyDown={(event) => {
+          if (isPageShortcut(event)) return;
           event.stopPropagation();
           if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
             event.preventDefault();
@@ -172,7 +175,7 @@ export function CommentsPanel(props: {
             <span class="count">{general().length || ""}</span>
             <button
               class="icon-button"
-              title="Add a general comment, about the whole change"
+              title={preferences.hint("Add a general comment, about the whole change", "generalComment")}
               onClick={() => state.composeGeneral()}
             >
               <Icon name="plus" />
@@ -216,7 +219,9 @@ export function CommentsPanel(props: {
           <p class="empty">
             {props.query.trim()
               ? "No comments match the search."
-              : "No line comments yet. Click a line number's + in the diff, or select lines and press c."}
+              : `No line comments yet. Click a line number's + in the diff, or select lines and ${
+                  preferences.keyText("comment") ? `press ${preferences.keyText("comment")}` : "run Comment"
+                }.`}
           </p>
         </Show>
       </div>

@@ -4,24 +4,9 @@
 
 import { createEffect, createMemo, createRoot, createSignal, createStore, snapshot } from "solid-js";
 import { formatForDisplay, type Hotkey } from "@tanstack/hotkeys";
+import { definitionOf, type Action } from "./commands.ts";
 import type { Theme } from "./themes.gen.ts";
 import { defaultDark, defaultLight } from "./themes.defaults.gen.ts";
-
-/** Every rebindable action, in the order Settings lists them. */
-export const actions = {
-  nextFile: { label: "Next file", key: "Alt+ArrowDown", group: "Navigation" },
-  previousFile: { label: "Previous file", key: "Alt+ArrowUp", group: "Navigation" },
-  search: { label: "Search files and comments", key: "Mod+K", group: "Navigation" },
-  sidebar: { label: "Show or hide the sidebar", key: "Mod+B", group: "Navigation" },
-  comment: { label: "Comment on the selected lines", key: "Mod+/", group: "Review" },
-  viewed: { label: "Mark the file viewed", key: "Mod+Shift+V", group: "Review" },
-  layout: { label: "Split or unified", key: "Mod+\\", group: "Review" },
-  foldAll: { label: "Collapse or expand every file", key: "Mod+Shift+ArrowUp", group: "Review" },
-  refresh: { label: "Refresh the diff", key: "Mod+R", group: "Review" },
-  finish: { label: "Finish, then send", key: "Mod+Enter", group: "App" },
-  settings: { label: "Settings", key: "Mod+,", group: "App" },
-} as const;
-export type Action = keyof typeof actions;
 
 export const fontPresets = {
   ui: [
@@ -68,7 +53,7 @@ export interface Settings {
   contrast: "low" | "medium" | "high";
   wordDiff: boolean;
   foldGenerated: boolean;
-  /** Bindings that differ from the defaults. */
+  /** Bindings that differ from the defaults; an empty one has no key. */
   keys: Partial<Record<Action, string>>;
 }
 
@@ -104,6 +89,16 @@ declare global {
   }
 }
 
+/** What each number may be, and how far one press moves it. */
+export const ranges = {
+  textSize: { min: 11, max: 17, step: 1 },
+  codeSize: { min: 10, max: 20, step: 1 },
+  lineHeight: { min: 14, max: 32, step: 1 },
+  uiWeight: { min: 100, max: 900, step: 100 },
+  codeWeight: { min: 100, max: 900, step: 100 },
+} as const;
+export type Numeric = keyof typeof ranges;
+
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, Math.round(value)));
 
 /** Keeps only known keys with the default's type, so a hand-edited file cannot break the page. */
@@ -114,11 +109,10 @@ function sanitize(saved: unknown): Settings {
       if (key in defaults && typeof value === typeof (defaults as unknown as Record<string, unknown>)[key])
         out[key] = value;
   const settings = out as unknown as Settings;
-  settings.textSize = clamp(settings.textSize, 11, 17);
-  settings.codeSize = clamp(settings.codeSize, 10, 20);
-  settings.lineHeight = clamp(settings.lineHeight, 14, 32);
-  settings.uiWeight = clamp(settings.uiWeight / 100, 1, 9) * 100;
-  settings.codeWeight = clamp(settings.codeWeight / 100, 1, 9) * 100;
+  for (const name of Object.keys(ranges) as Numeric[]) {
+    const { min, max, step } = ranges[name];
+    settings[name] = clamp(Math.round(settings[name] / step) * step, min, max);
+  }
   if (!["low", "medium", "high"].includes(settings.contrast)) settings.contrast = defaults.contrast;
   return settings;
 }
@@ -182,6 +176,15 @@ function tint(root: HTMLElement, contrast: Settings["contrast"], isDark: boolean
     );
 }
 
+export const displayKey = (key: string) => {
+  if (!key) return "";
+  try {
+    return formatForDisplay(key as Hotkey);
+  } catch {
+    return key;
+  }
+};
+
 function createSettings() {
   const [settings, setSettings] = createStore<Settings>(sanitize(window.__PATCH_SETTINGS__));
   const media = matchMedia("(prefers-color-scheme: dark)");
@@ -228,19 +231,21 @@ function createSettings() {
     }, 300);
   }
 
-  const keyFor = (action: Action): string => settings.keys[action] ?? actions[action].key;
+  /** The action's key, or an empty string when it has none. */
+  const keyFor = (action: Action): string => settings.keys[action] ?? definitionOf(action).key ?? "";
+  /** The action's key as this platform writes it. */
+  const keyText = (action: Action) => displayKey(keyFor(action));
   /** A button's tooltip with the action's current shortcut, as in "Refresh (⌘R)". */
-  const hint = (text: string, action: Action) => {
-    try {
-      return `${text} (${formatForDisplay(keyFor(action) as Hotkey)})`;
-    } catch {
-      return text;
-    }
+  const hint = (text: string, action: Action) => (keyText(action) ? `${text} (${keyText(action)})` : text);
+
+  const step = (name: Numeric, direction: 1 | -1) => {
+    const { min, max, step: by } = ranges[name];
+    update({ [name]: clamp(settings[name] + direction * by, min, max) });
   };
 
   function bind(action: Action, key: string | undefined) {
     const keys = { ...snapshot(settings).keys };
-    if (key === undefined || key === actions[action].key) delete keys[action];
+    if (key === undefined || key === (definitionOf(action).key ?? "")) delete keys[action];
     else keys[action] = key;
     update({ keys });
   }
@@ -259,7 +264,9 @@ function createSettings() {
     reset: () => update(structuredClone(defaults)),
     dark,
     keyFor,
+    keyText,
     hint,
+    step,
     bind,
     chooseTheme,
   };

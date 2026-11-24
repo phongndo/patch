@@ -11,10 +11,9 @@ import { Tabs, TabsList, TabsPanel, TabsTab, TabsTabIcon } from "@ui-sdk/solid/t
 import { CommentsPanel } from "./CommentsPanel.tsx";
 import { Icon } from "./Icon.tsx";
 import { preferences } from "./settings.ts";
-import { kindOf, kinds, state, statuses, statusOf, type Kind, type Status } from "./state.ts";
+import { kindOf, kinds, state, statuses, statusOf } from "./state.ts";
 import { Tree } from "./Tree.tsx";
-
-type View = "files" | "comments";
+import { filterOpen, setFilterOpen, setSidebarView, sidebarView as view, type SidebarView } from "./ui.ts";
 
 export function Sidebar(props: {
   searchRef: (element: HTMLInputElement) => void;
@@ -24,8 +23,6 @@ export function Sidebar(props: {
   onEditComment: (comment: Comment) => void;
   onOpenSettings: () => void;
 }) {
-  const [view, setView] = createSignal<View>("files");
-
   const [query, setQuery] = createSignal("");
   // Only the kinds and statuses this diff has are offered.
   const present = createMemo(() => ({
@@ -52,16 +49,26 @@ export function Sidebar(props: {
       render={(attributes) => <aside {...attributes} />}
       id="sidebar"
       value={view()}
-      onValueChange={(value) => value && setView(value as View)}
+      onValueChange={(value) => value && setSidebarView(value as SidebarView)}
     >
       <div class="side-head">
         <TabsList class="side-views" aria-label="Sidebar">
-          <TabsTab class="icon-button" value="files" aria-label="Files" title="Files">
+          <TabsTab
+            class="icon-button"
+            value="files"
+            aria-label="Files"
+            title={preferences.hint("Files", "showFiles")}
+          >
             <TabsTabIcon>
               <Icon name="fileTree" />
             </TabsTabIcon>
           </TabsTab>
-          <TabsTab class="icon-button" value="comments" aria-label="Comments" title="Comments">
+          <TabsTab
+            class="icon-button"
+            value="comments"
+            aria-label="Comments"
+            title={preferences.hint("Comments", "showComments")}
+          >
             <TabsTabIcon>
               <Icon name="comment" />
             </TabsTabIcon>
@@ -85,7 +92,7 @@ export function Sidebar(props: {
             }
           }}
         />
-        <Popover>
+        <Popover open={filterOpen()} onOpenChange={setFilterOpen}>
           <PopoverTrigger
             class={{ "icon-button": true, active: filtered() }}
             title={filtered() ? "Filtered" : "Filter by kind or Git status"}
@@ -134,14 +141,7 @@ export function Sidebar(props: {
               </For>
             </div>
             <div class="menu-group">
-              <button
-                class="menu-item"
-                disabled={!filtered()}
-                onClick={() => {
-                  state.setHiddenStatuses(new Set<Status>());
-                  state.setHiddenKinds(new Set<Kind>());
-                }}
-              >
+              <button class="menu-item" disabled={!filtered()} onClick={() => state.clearFilter()}>
                 <span class="status status-clear">
                   <Icon name="x" />
                 </span>
@@ -165,7 +165,11 @@ export function Sidebar(props: {
         <CommentsPanel query={query()} onOpen={props.onOpenComment} onEdit={props.onEditComment} />
       </TabsPanel>
       <footer class="side-foot">
-        <button class="icon-button" title="Settings (⌘,)" onClick={() => props.onOpenSettings()}>
+        <button
+          class="icon-button"
+          title={preferences.hint("Settings", "settings")}
+          onClick={() => props.onOpenSettings()}
+        >
           <Icon name="gear" />
         </button>
       </footer>

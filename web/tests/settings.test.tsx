@@ -4,6 +4,7 @@ import { beforeEach, expect, test, vi } from "vitest";
 import { defaults, preferences } from "../settings.ts";
 import { SettingsDialog } from "../SettingsDialog.tsx";
 import { themes } from "../themes.gen.ts";
+import { setSettingsPage } from "../ui.ts";
 import { $, click, mount, named, nameOf, press, settle, type } from "./dom.tsx";
 
 const agent = createAgent();
@@ -13,6 +14,7 @@ beforeEach(async () => {
   closed = 0;
   vi.stubGlobal("fetch", async () => new Response("{}"));
   preferences.reset();
+  setSettingsPage("general");
   mount(() => {
     const [open, setOpen] = createSignal(true);
     return (

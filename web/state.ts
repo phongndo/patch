@@ -99,6 +99,29 @@ function fingerprint(file: FileDiffMetadata): string {
   return String(hash);
 }
 
+/** A run of changed lines, as the diff selects it. */
+export interface Change {
+  file: string;
+  side: Side;
+  start: number;
+  end: number;
+}
+
+/** Every run of changed lines in a file, in order; a replaced run is its new side. */
+export function changesOf(file: FileDiffMetadata): Change[] {
+  return file.hunks.flatMap((hunk) =>
+    hunk.hunkContent.flatMap((part) => {
+      if (part.type !== "change") return [];
+      const side = part.additions ? "additions" : "deletions";
+      const start =
+        side === "additions"
+          ? hunk.additionStart + part.additionLineIndex - hunk.additionLineIndex
+          : hunk.deletionStart + part.deletionLineIndex - hunk.deletionLineIndex;
+      return [{ file: file.name, side, start, end: start + part[side] - 1 }];
+    }),
+  );
+}
+
 /** The whole text of files whose hidden context was expanded, by name. */
 const expanded = new Map<string, Record<Side, string[]>>();
 export const rememberFile = (name: string, oldText: string, newText: string) =>
@@ -197,6 +220,10 @@ function createReviewState() {
   /** Kinds and Git statuses the reviewer filtered out of the tree and the diff. */
   const [hiddenStatuses, setHiddenStatuses] = createSignal<ReadonlySet<Status>>(new Set());
   const [hiddenKinds, setHiddenKinds] = createSignal<ReadonlySet<Kind>>(new Set());
+  const clearFilter = () => {
+    setHiddenStatuses(new Set<Status>());
+    setHiddenKinds(new Set<Kind>());
+  };
   const visibleFiles = createMemo(() => {
     const statuses = hiddenStatuses();
     const kinds = hiddenKinds();
@@ -412,6 +439,7 @@ function createReviewState() {
     setHiddenStatuses,
     hiddenKinds,
     setHiddenKinds,
+    clearFilter,
     composer,
     compose,
     cancelComposer,

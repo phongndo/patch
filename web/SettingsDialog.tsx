@@ -4,7 +4,7 @@
 //! saved by patchr for the next review.
 
 import { type JSX } from "@solidjs/web";
-import { formatForDisplay, HotkeyRecorder, type Hotkey } from "@tanstack/hotkeys";
+import { HotkeyRecorder } from "@tanstack/hotkeys";
 import { Dialog, DialogBackdrop, DialogClose, DialogContent, DialogTitle } from "@ui-sdk/solid/dialog";
 import { Field, FieldDescription, FieldLabel } from "@ui-sdk/solid/field";
 import { Input } from "@ui-sdk/solid/input";
@@ -24,11 +24,21 @@ import {
 } from "@ui-sdk/solid/segmented-control";
 import { Switch, SwitchThumb } from "@ui-sdk/solid/switch";
 import { createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { actionGroups, actionNames, definitionOf, type Action } from "./commands.ts";
 import { Icon } from "./Icon.tsx";
 import type { IconName } from "./icons.gen.ts";
-import { actions, defaults, fontPresets, preferences, type Action, type Settings } from "./settings.ts";
+import {
+  defaults,
+  displayKey,
+  fontPresets,
+  preferences,
+  ranges,
+  type Numeric,
+  type Settings,
+} from "./settings.ts";
 import { defaultDark, defaultLight } from "./themes.defaults.gen.ts";
 import { themes, type Theme } from "./themes.gen.ts";
+import { setSettingsPage, settingsPage, type SettingsPage } from "./ui.ts";
 
 const { settings, update } = preferences;
 
@@ -75,26 +85,17 @@ function Toggle(props: { name: Toggleable }) {
   );
 }
 
-type Numeric = { [K in keyof Settings]: Settings[K] extends number ? K : never }[keyof Settings];
-
 /** A number field with arrows and a unit, like a native stepper. */
-function Stepper(props: {
-  name: Numeric;
-  label: string;
-  icon: IconName;
-  min: number;
-  max: number;
-  step?: number;
-  unit?: string;
-}) {
+function Stepper(props: { name: Numeric; label: string; icon: IconName; unit?: string }) {
+  const range = () => ranges[props.name];
   return (
     <Field class="field-group">
       <FieldLabel class="field-name">{props.label}</FieldLabel>
       <span class="stepper-row">
         <NumberInput
-          min={props.min}
-          max={props.max}
-          step={props.step ?? 1}
+          min={range().min}
+          max={range().max}
+          step={range().step}
           value={settings[props.name]}
           onValueChange={(value, details) => {
             if (value === null) details.cancel();
@@ -277,7 +278,6 @@ function FontCard(props: {
   presets: ReadonlyArray<{ label: string; value: string }>;
   size: Numeric;
   weight: Numeric;
-  sizeRange: [number, number];
   preview: () => JSX.Element;
   children?: JSX.Element;
   /** More rows in the same card, under the preview. */
@@ -345,15 +345,8 @@ function FontCard(props: {
         </Popover>
       </div>
       <div class="field-grid">
-        <Stepper
-          name={props.size}
-          label="Font size"
-          icon="type"
-          min={props.sizeRange[0]}
-          max={props.sizeRange[1]}
-          unit="px"
-        />
-        <Stepper name={props.weight} label="Weight" icon="textBold" min={100} max={900} step={100} />
+        <Stepper name={props.size} label="Font size" icon="type" unit="px" />
+        <Stepper name={props.weight} label="Weight" icon="textBold" />
         {props.children}
       </div>
       <div class="preview">{props.preview()}</div>
@@ -390,7 +383,6 @@ function TypographyPage() {
           presets={fontPresets.code}
           size="codeSize"
           weight="codeWeight"
-          sizeRange={[10, 20]}
           footer={
             <Row
               label="Ligatures"
@@ -417,7 +409,7 @@ function TypographyPage() {
             </pre>
           )}
         >
-          <Stepper name="lineHeight" label="Line height" icon="diffUnified" min={14} max={32} unit="px" />
+          <Stepper name="lineHeight" label="Line height" icon="diffUnified" unit="px" />
         </FontCard>
       </Group>
       <Group
@@ -437,7 +429,6 @@ function TypographyPage() {
           presets={fontPresets.ui}
           size="textSize"
           weight="uiWeight"
-          sizeRange={[11, 17]}
           preview={() => (
             <p
               class="ui-preview"
@@ -458,14 +449,6 @@ function TypographyPage() {
 
 /* Shortcuts */
 
-const display = (key: string) => {
-  try {
-    return formatForDisplay(key as Hotkey);
-  } catch {
-    return key;
-  }
-};
-
 /** One rebindable action: click, press the new keys, and it is saved. */
 function Binding(props: { action: Action }) {
   const [recording, setRecording] = createSignal(false);
@@ -476,13 +459,30 @@ function Binding(props: { action: Action }) {
   function record() {
     setProblem("");
     recorder = new HotkeyRecorder({
+      // Safari leaves focus where it was, like in the search field, when a button is clicked.
+      ignoreInputs: false,
+      // Two keys can be written differently and still be one press, like ? and Shift+/.
+      detectConflicts: {
+        includeDisabled: true,
+        exclude: (registration) => registration.options.meta?.name === definitionOf(props.action).label,
+      },
+      onReject: ({ conflicts }) => {
+        const name = conflicts?.[0]?.registration.options.meta?.name;
+        setProblem(name ? `Used by “${name}”` : "That key cannot be used");
+      },
       onRecord(hotkey) {
         setRecording(false);
-        const taken = (Object.keys(actions) as Action[]).find(
+        const taken = actionNames.find(
           (other) => other !== props.action && preferences.keyFor(other) === hotkey,
         );
-        if (taken) return setProblem(`Used by “${actions[taken].label}”`);
-        preferences.bind(props.action, hotkey);
+        if (taken) return setProblem(`Used by “${definitionOf(taken).label}”`);
+        setProblem("");
+        preferences.bind(props.action, hotkey as string);
+      },
+      onClear() {
+        setRecording(false);
+        recorder?.stop();
+        preferences.bind(props.action, "");
       },
       onCancel: () => setRecording(false),
     });
@@ -499,19 +499,23 @@ function Binding(props: { action: Action }) {
       <Show when={settings.keys[props.action] !== undefined}>
         <button
           class="reset"
-          title={`Back to ${display(actions[props.action].key)}`}
+          title={`Back to ${displayKey(definitionOf(props.action).key ?? "") || "no shortcut"}`}
           onClick={() => preferences.bind(props.action, undefined)}
         >
           <Icon name="refresh" />
         </button>
       </Show>
       <button
-        class={{ "key-chip": true, recording: recording() }}
-        aria-label={`${actions[props.action].label}: ${display(key())}`}
-        title={recording() ? "Press the new keys · Esc cancels" : "Click, then press the new keys"}
+        class={{ "key-chip": true, recording: recording(), unbound: !key() }}
+        aria-label={`${definitionOf(props.action).label}: ${displayKey(key()) || "no shortcut"}`}
+        title={
+          recording()
+            ? "Press the new keys · Esc cancels · ⌫ removes the shortcut"
+            : "Click, then press the new keys"
+        }
         onClick={() => (recording() ? recorder?.cancel() : record())}
       >
-        {recording() ? "Press keys…" : display(key())}
+        {recording() ? "Press keys…" : displayKey(key()) || "None"}
       </button>
     </span>
   );
@@ -520,20 +524,23 @@ function Binding(props: { action: Action }) {
 function ShortcutsPage(props: { filter: string }) {
   const groups = createMemo(() => {
     const text = props.filter.trim().toLowerCase();
-    const rows = (Object.keys(actions) as Action[]).filter(
+    const rows = actionNames.filter(
       (action) =>
         !text ||
-        actions[action].label.toLowerCase().includes(text) ||
-        display(preferences.keyFor(action)).toLowerCase().includes(text) ||
+        definitionOf(action).label.toLowerCase().includes(text) ||
+        preferences.keyText(action).toLowerCase().includes(text) ||
         preferences.keyFor(action).toLowerCase().includes(text),
     );
-    return [...Map.groupBy(rows, (action) => actions[action].group)];
+    return actionGroups
+      .map((group) => [group, rows.filter((action) => definitionOf(action).group === group)] as const)
+      .filter(([, members]) => members.length);
   });
   return (
     <>
       <p class="page-note">
-        Click a shortcut and press the new keys. Keys another shortcut already uses are refused, and each one
-        can go back to its default.
+        Click a shortcut and press the new keys, or Backspace to remove it. Keys another shortcut already uses
+        are refused, and each one can go back to its default. The command palette (
+        {preferences.keyText("palette")}) has every one of these.
       </p>
       <For each={groups()} fallback={<p class="settings-empty">No shortcuts match.</p>}>
         {([group, rows]) => (
@@ -542,7 +549,7 @@ function ShortcutsPage(props: { filter: string }) {
               <For each={rows}>
                 {(action) => (
                   <div class="setting">
-                    <span class="setting-label">{actions[action].label}</span>
+                    <span class="setting-label">{definitionOf(action).label}</span>
                     <Binding action={action} />
                   </div>
                 )}
@@ -705,7 +712,7 @@ function GeneralPage() {
   );
 }
 
-const pages: Array<{ id: string; title: string; icon: IconName; words: string }> = [
+const pages: Array<{ id: SettingsPage; title: string; icon: IconName; words: string }> = [
   {
     id: "general",
     title: "General",
@@ -723,13 +730,12 @@ const pages: Array<{ id: string; title: string; icon: IconName; words: string }>
   { id: "shortcuts", title: "Shortcuts", icon: "key", words: "keyboard keys bindings hotkeys" },
 ];
 
-const pageWords = (id: string) => {
+const pageWords = (id: SettingsPage) => {
   const found = pages.find((p) => p.id === id)!;
   return `${found.title} ${found.words}`.toLowerCase();
 };
 
 export function SettingsDialog(props: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const [page, setPage] = createSignal(pages[0]!.id);
   const [query, setQuery] = createSignal("");
   let search: HTMLInputElement | undefined;
 
@@ -737,14 +743,15 @@ export function SettingsDialog(props: { open: boolean; onOpenChange: (open: bool
   const matching = createMemo(() => {
     const text = query().trim().toLowerCase();
     if (!text) return pages;
-    const findsShortcut = (Object.keys(actions) as Action[]).some((action) =>
-      `${actions[action].label} ${display(preferences.keyFor(action))}`.toLowerCase().includes(text),
+    const findsShortcut = actionNames.some((action) =>
+      `${definitionOf(action).label} ${preferences.keyText(action)}`.toLowerCase().includes(text),
     );
     return pages.filter(
       (p) => `${p.title} ${p.words}`.toLowerCase().includes(text) || (p.id === "shortcuts" && findsShortcut),
     );
   });
-  const shown = () => (matching().some((p) => p.id === page()) ? page() : (matching()[0]?.id ?? page()));
+  const shown = () =>
+    matching().some((p) => p.id === settingsPage()) ? settingsPage() : (matching()[0]?.id ?? settingsPage());
   const title = () => pages.find((p) => p.id === shown())!.title;
 
   return (
@@ -793,7 +800,7 @@ export function SettingsDialog(props: { open: boolean; onOpenChange: (open: bool
                   class="settings-nav-item"
                   aria-current={shown() === candidate.id ? "page" : undefined}
                   disabled={!matching().includes(candidate)}
-                  onClick={() => setPage(candidate.id)}
+                  onClick={() => setSettingsPage(candidate.id)}
                 >
                   <Icon name={candidate.icon} />
                   {candidate.title}

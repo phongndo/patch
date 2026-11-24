@@ -1,4 +1,5 @@
 import { onSettled, Show } from "solid-js";
+import { isPageShortcut } from "./hotkeys.ts";
 import { Icon } from "./Icon.tsx";
 import { state, type Target } from "./state.ts";
 
@@ -61,7 +62,8 @@ export function Composer(props: { target: Target }) {
         value={body()}
         onInput={(event) => state.setComposerText(event.currentTarget.value)}
         onKeyDown={(event) => {
-          // Keys typed here belong to the comment, not to page shortcuts or the diff's find.
+          // Keys typed here belong to the comment, not to the diff around it.
+          if (isPageShortcut(event)) return;
           event.stopPropagation();
           if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
             event.preventDefault();

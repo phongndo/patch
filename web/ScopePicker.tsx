@@ -11,11 +11,14 @@ import {
 } from "@ui-sdk/solid/command";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@ui-sdk/solid/popover";
 import { Tabs, TabsIndicator, TabsList, TabsPanel, TabsTab } from "@ui-sdk/solid/tabs";
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import type { Commit, Mode, PullRequest, Scope, ScopesResponse } from "../src/protocol.ts";
 import { loadPullRequests, loadScopes } from "./api.ts";
+import { listMotions } from "./hotkeys.ts";
 import { Icon } from "./Icon.tsx";
+import { preferences } from "./settings.ts";
 import { state } from "./state.ts";
+import { scopeOpen as open, setScopeOpen as setOpen } from "./ui.ts";
 
 type Tab = "changes" | "commits" | "prs";
 
@@ -26,7 +29,6 @@ const views: Array<{ kind: Mode; label: string; hint: string }> = [
 ];
 
 export function ScopePicker() {
-  const [open, setOpen] = createSignal(false);
   const [tab, setTab] = createSignal<Tab>("changes");
   const [scopes, setScopes] = createSignal<ScopesResponse>();
   const [branchQuery, setBranchQuery] = createSignal("");
@@ -50,6 +52,11 @@ export function ScopePicker() {
       setError(failure instanceof Error ? failure.message : String(failure));
     }
   }
+
+  // The command opens it as well as the button.
+  createEffect(open, (shown) => {
+    if (shown) void refreshScopes(base());
+  });
 
   let prTimer: ReturnType<typeof setTimeout> | undefined;
   function searchPrs(query: string) {
@@ -106,16 +113,10 @@ export function ScopePicker() {
   }
 
   return (
-    <Popover
-      open={open()}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (next) void refreshScopes(base());
-      }}
-    >
+    <Popover open={open()} onOpenChange={setOpen}>
       <PopoverTrigger
         class="scope-trigger"
-        title={`${state.store.review?.repository ?? ""} · choose what to review`}
+        title={preferences.hint(`${state.store.review?.repository ?? ""} · choose what to review`, "scope")}
       >
         <Icon
           name={scope()?.kind === "pr" ? "brandGithub" : scope()?.kind === "commits" ? "commit" : "branch"}
@@ -185,6 +186,7 @@ export function ScopePicker() {
               >
                 <CommandInput
                   class="menu-search"
+                  onKeyDown={listMotions}
                   type="search"
                   aria-label="Find a branch to compare against"
                   placeholder="Find a branch"
@@ -268,6 +270,7 @@ export function ScopePicker() {
               >
                 <CommandInput
                   class="menu-search"
+                  onKeyDown={listMotions}
                   type="search"
                   aria-label="Search open pull requests"
                   placeholder="Search open pull requests"
