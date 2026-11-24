@@ -330,6 +330,24 @@ pub async fn list_commits(root: &Path, base: Option<&str>) -> (Vec<Commit>, Opti
     (log(root, &["-n", "50", "HEAD"]).await, None)
 }
 
+/// A cheap summary of the working tree: HEAD, the status of every changed
+/// path, and each changed file's size and modification time, so a second edit
+/// to an already modified file still counts as a change.
+pub async fn fingerprint(root: &Path) -> String {
+    let head = try_git(root, &["rev-parse", "--verify", "--quiet", "HEAD"]).await.unwrap_or_default();
+    let status = git(root, &["status", "--porcelain=v1", "-z", "--untracked-files=all"]).await.unwrap_or_default();
+    let mut out = format!("{head}\n{status}");
+    for entry in status.split('\0') {
+        if let Some(path) = entry.get(3..)
+            && let Ok(meta) = std::fs::metadata(root.join(path))
+        {
+            let modified = meta.modified().ok().and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok());
+            out.push_str(&format!("\n{path}:{}:{}", meta.len(), modified.map(|d| d.as_nanos()).unwrap_or(0)));
+        }
+    }
+    out
+}
+
 pub fn safe_path(path: &str) -> bool {
     !path.is_empty() && !path.starts_with('/') && !path.split(['/', '\\']).any(|part| part == "..")
 }

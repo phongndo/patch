@@ -201,6 +201,30 @@ describe("patchr review", () => {
     }
   }, 20_000);
 
+  test("an open page hears when the repository changes", async () => {
+    const { child, origin } = await start("--uncommitted");
+    try {
+      const live = new AbortController();
+      const stream = await fetch(`${origin}/api/live`, { signal: live.signal });
+      const reader = stream.body!.getReader();
+      // Let the first check record the current state, then change a file that is already modified.
+      await Bun.sleep(3500);
+      await writeFile(join(repo, "a.ts"), "one\nTWO\nthree\nfour\nfive\n");
+      let text = "";
+      const deadline = Date.now() + 10_000;
+      while (!text.includes("event: changed") && Date.now() < deadline) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += new TextDecoder().decode(value);
+      }
+      live.abort();
+      expect(text).toContain("event: changed");
+      await writeFile(join(repo, "a.ts"), "one\nTWO\nthree\nfour\n");
+    } finally {
+      child.kill();
+    }
+  }, 20_000);
+
   test("on the base branch, the commits are its recent history", async () => {
     const saved = repo;
     repo = await mkdtemp(join(tmpdir(), "patch-contract-main-"));

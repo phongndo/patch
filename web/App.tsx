@@ -159,7 +159,10 @@ export function App() {
       scopeKey: () => store.review?.scopeKey ?? "",
     });
     diff.setLayout(layout());
-    const disconnect = stayConnected(() => setDisconnected(true));
+    const disconnect = stayConnected(
+      () => setDisconnected(true),
+      () => setStale(true),
+    );
     void state.load();
     return () => {
       disconnect();
@@ -177,6 +180,9 @@ export function App() {
           collapsed[file.name] ?? (store.viewed.includes(file.name) || opensCollapsed(file));
       setCollapsed(() => initial);
       diff?.setFiles(files, (file) => initial[file.name] ?? false);
+      const anchor = keepPlace;
+      keepPlace = undefined;
+      if (anchor) requestAnimationFrame(() => diff?.restore(anchor));
     },
   );
 
@@ -219,11 +225,21 @@ export function App() {
     }
   }
 
+  // The repository changed since the diff was read; refreshing reads it again in place.
+  const [stale, setStale] = createSignal(false);
+  let keepPlace: ReturnType<DiffView["anchor"]> | undefined;
+  async function refresh() {
+    keepPlace = diff?.anchor();
+    setStale(false);
+    await state.load(store.review?.scope);
+  }
+
   const idle = () => !state.composer() && !finishing() && !store.submitted;
   hotkeys([
     ["J", () => idle() && step(1)],
     ["K", () => idle() && step(-1)],
     ["S", () => idle() && setLayout((value) => (value === "split" ? "unified" : "split"))],
+    ["R", () => idle() && void refresh()],
     ["B", () => idle() && setSidebar((shown) => !shown)],
     ["/", () => idle() && searchInput?.focus()],
     ["Mod+F", () => searchInput?.focus()],
@@ -300,6 +316,13 @@ export function App() {
             </HoverCardContent>
           </HoverCard>
           <div class="actions">
+            <button
+              class={{ "icon-button": true, refresh: true, stale: stale() }}
+              title={stale() ? "The repository changed · refresh (r)" : "Refresh (r)"}
+              onClick={() => void refresh()}
+            >
+              <Icon name="refresh" />
+            </button>
             <button
               class="icon-button"
               title={layout() === "split" ? "Split · switch to unified (s)" : "Unified · switch to split (s)"}

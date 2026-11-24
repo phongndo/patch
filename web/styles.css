@@ -955,3 +955,20 @@ input {
 .pr-text .muted {
   font-size: var(--text-meta);
 }
+
+/* A dot on the refresh button when the repository moved; nothing else shifts. */
+.icon-button.refresh {
+  position: relative;
+}
+
+.icon-button.refresh.stale::after {
+  content: "";
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3b9ee0;
+  box-shadow: 0 0 0 2px var(--panel);
+}

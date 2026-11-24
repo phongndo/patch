@@ -73,8 +73,10 @@ export async function submit(key: string, submission: Submission) {
 }
 
 /** Holds a stream open so the server can tell when the tab is gone. */
-export function stayConnected(onLost: () => void) {
+/** Holds a stream open so Patch can tell when the tab is gone, and hears when the repository changes. */
+export function stayConnected(onLost: () => void, onChanged: () => void) {
   const source = new EventSource("/api/live");
+  source.addEventListener("changed", onChanged);
   source.onerror = () => {
     if (source.readyState === EventSource.CLOSED) onLost();
   };

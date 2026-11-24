@@ -38,6 +38,8 @@ const LEAVE_GRACE: Duration = Duration::from_secs(8);
 /// that suspended the tab) may stay away.
 const SILENT_GRACE: Duration = Duration::from_secs(30 * 60);
 const COOKIE: &str = "patch_session";
+/// How often an open page's repository is checked for changes.
+const WATCH_EVERY: Duration = Duration::from_secs(3);
 
 pub enum Outcome {
     Submitted(Submission),
@@ -70,6 +72,8 @@ struct App {
     live: Mutex<Live>,
     outcome: Mutex<Option<oneshot::Sender<Outcome>>>,
     gzip: Mutex<HashMap<String, Arc<Vec<u8>>>>,
+    /// Bumped when the repository changes, so open pages can offer a refresh.
+    changes: tokio::sync::watch::Sender<u64>,
 }
 
 pub struct Session {
@@ -112,12 +116,30 @@ pub async fn start(options: Options, public_url: impl FnOnce(u16) -> String) -> 
         live: Mutex::new(Live { connections: 0, leaving: false, timer: None }),
         outcome: Mutex::new(Some(sender)),
         gzip: Mutex::new(HashMap::new()),
+        changes: tokio::sync::watch::channel(0).0,
     });
+    tokio::spawn(watch_repository(app.clone()));
     let router = Router::new().fallback(handle).with_state(app);
     tokio::spawn(async move {
         let _ = axum::serve(listener, router).await;
     });
     Ok(Session { url: public_url(port), outcome: receiver })
+}
+
+/// Checks the repository while a page is open and tells it when anything moved.
+async fn watch_repository(app: Arc<App>) {
+    let mut last: Option<String> = None;
+    loop {
+        tokio::time::sleep(WATCH_EVERY).await;
+        if app.live.lock().unwrap().connections == 0 {
+            continue;
+        }
+        let now = git::fingerprint(&app.options.root).await;
+        if last.as_ref().is_some_and(|last| *last != now) {
+            app.changes.send_modify(|version| *version += 1);
+        }
+        last = Some(now);
+    }
 }
 
 fn settle(app: &App, outcome: Outcome) {
@@ -294,13 +316,18 @@ fn live_stream(app: Arc<App>) -> Response {
             timer.abort();
         }
     }
+    let changes = app.changes.subscribe();
     let guard = Connection(app);
-    let stream = futures_util::stream::once(async { Ok::<_, std::convert::Infallible>(Event::default().retry(Duration::from_secs(1))) })
-        .chain(futures_util::stream::pending())
-        .map(move |event| {
-            let _keep = &guard;
-            event
-        });
+    let first = futures_util::stream::once(async { Event::default().retry(Duration::from_secs(1)) });
+    let changed = futures_util::stream::unfold(changes, |mut changes| async move {
+        changes.changed().await.ok()?;
+        let version = *changes.borrow_and_update();
+        Some((Event::default().event("changed").data(version.to_string()), changes))
+    });
+    let stream = first.chain(changed).chain(futures_util::stream::pending()).map(move |event| {
+        let _keep = &guard;
+        Ok::<_, std::convert::Infallible>(event)
+    });
     Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))).into_response()
 }
 

@@ -139,7 +139,7 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     setFiles(next: FileDiffMetadata[], collapsed: (file: FileDiffMetadata) => boolean) {
       notes.clear();
       headers.clear();
-      versions.clear();
+      // Versions keep counting across reloads: CodeView redraws a file only when its version moves.
       files = new Map(next.map((file) => [file.name, file]));
       view.setItems(next.map((file) => item(file, collapsed(file))));
     },
@@ -171,6 +171,11 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     },
     scrollToLine(name: string, lineNumber: number, side: "additions" | "deletions") {
       view.scrollTo({ type: "line", id: name, lineNumber, side, align: "center", behavior: "smooth-auto" });
+    },
+    /** Where the reader is, to come back to after the files are replaced. */
+    anchor: () => view.getScrollAnchor(view.getScrollTop()),
+    restore(anchor: ReturnType<typeof view.getScrollAnchor>) {
+      if (anchor) view.scrollToAnchor(anchor, "instant");
     },
     topFile(): string | undefined {
       return view.getScrollAnchor(view.getScrollTop())?.id;
