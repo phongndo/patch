@@ -8,11 +8,14 @@
     "jsxImportSource": "@solidjs/web",
     "types": ["bun", "vite/client"],
     "strict": true,
+    "allowJs": true,
+    "checkJs": true,
     "noUncheckedIndexedAccess": true,
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src", "web", "scripts", "tests"]
+  "include": ["src", "web", "scripts", "tests", "npm", "cli/harness", "*.ts"],
+  "exclude": ["node_modules", "web/dist"]
 }

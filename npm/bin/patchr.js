@@ -16,7 +16,9 @@ try {
 }
 
 const child = spawn(binary, process.argv.slice(2), { stdio: "inherit" });
-for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => child.kill(signal));
+/** @type {NodeJS.Signals[]} */
+const signals = ["SIGINT", "SIGTERM", "SIGHUP"];
+for (const signal of signals) process.on(signal, () => child.kill(signal));
 child.on("error", (error) => {
   console.error(`patchr: ${error.message}`);
   process.exit(1);
