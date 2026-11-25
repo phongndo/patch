@@ -90,17 +90,16 @@ keeps the page on 127.0.0.1 for `ssh -L` forwarding instead.
 
 `nix develop` has Bun and Rust; run `bun install` once.
 
-| Command                 | Purpose                                         |
-| ----------------------- | ----------------------------------------------- |
-| `bun run dev`           | Rebuild the page on change and review this repo |
-| `bun run build`         | Compile `cli/target/release/patchr`             |
-| `bun run install:local` | Build, then `patchr install` that               |
-| `bun run test`          | Rust, server and installer tests                |
-| `bun run test:web`      | The page's tests                                |
-| `bun run check`         | tsrs, oxlint and oxfmt                          |
-
-To release, set the version where `bun scripts/release.ts check` looks, push it
-to `main` and run `gh workflow run release.yml`, which also makes the tag.
+| Command                 | Purpose                                            |
+| ----------------------- | -------------------------------------------------- |
+| `bun run dev`           | Review this repo with the working copy, live       |
+| `bun run build`         | Compile `cli/target/release/patchr`                |
+| `bun run install:local` | Build, then `patchr install` that                  |
+| `bun run test`          | Rust, server and installer tests                   |
+| `bun run test:web`      | The page's tests                                   |
+| `bun run check`         | tsrs, oxlint, oxfmt, rustfmt and Clippy            |
+| `hk install`            | Check commits and pushes; `hk fix` formats         |
+| `bun run bump 0.2.0`    | Set the version, for `gh workflow run release.yml` |
 
 The CLI is `cli/` (Rust). The page is `web/`: Solid 2,
 [Pierre](https://pierre.computer) Diffs, Trees and Icons, UI SDK for the
