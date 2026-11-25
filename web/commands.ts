@@ -94,7 +94,7 @@ export const actions = {
     icon: "pencil",
     words: "working tree",
   },
-  reviewStaged: { label: "Review staged changes", group: "Scope", icon: "check", words: "index" },
+  reviewStaged: { label: "Review staged changes", group: "Scope", icon: "plus", words: "index" },
   chooseBase: { label: "Compare against a branch…", group: "Scope", icon: "branch", words: "base" },
   chooseCommit: { label: "Review a commit…", group: "Scope", icon: "commit", words: "sha history" },
   choosePull: { label: "Review a pull request…", group: "Scope", icon: "brandGithub", words: "pr github" },

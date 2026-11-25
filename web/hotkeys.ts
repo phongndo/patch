@@ -50,6 +50,14 @@ export const isPageShortcut = (event: KeyboardEvent) =>
     );
   });
 
+/** Whether a key press in a text field is a command's chord; a plain letter is typing. */
+export const isPressed = (event: KeyboardEvent, action: Action) => {
+  const key = bound(action);
+  return (
+    key !== undefined && isModified(key) && matchesKeyboardEvent(event, key as RegisterableHotkey as never)
+  );
+};
+
 export function bindActions(handlers: Record<Action, Handler>, idle: () => boolean) {
   createEffect(
     () =>

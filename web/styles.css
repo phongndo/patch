@@ -989,13 +989,30 @@ input {
   white-space: nowrap;
 }
 
+/* As wide and as tall on every tab, so switching moves nothing. */
 .scope-menu {
-  width: 420px;
+  display: flex;
+  flex-direction: column;
+  width: min(520px, calc(100vw - 16px));
+  padding: 0;
+  overflow: hidden;
+}
+
+.scope-menu:not([data-open], [data-ending-style]) {
+  display: none;
+}
+
+.scope-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .scope-tabs {
   display: flex;
-  margin: 2px 2px 6px;
+  flex: none;
+  margin: 8px 8px 0;
 }
 
 .scope-tabs .segmented-item {
@@ -1003,31 +1020,45 @@ input {
   justify-content: center;
 }
 
+.scope-search {
+  height: 40px;
+}
+
+/* Their icons and text line up with the rows'. */
+.scope-menu :is(.scope-search, .palette-foot) {
+  padding-inline: 12px;
+}
+
+.scope-panel {
+  flex: 0 1 320px;
+  min-height: 0;
+  padding: 4px;
+  overflow: auto;
+  scroll-padding: 4px;
+  overscroll-behavior: contain;
+  outline: none;
+}
+
+.scope-panel :is(.menu-empty, .menu-error) {
+  margin: 8px;
+}
+
+.scope-panel .menu-empty:empty {
+  margin: 0;
+}
+
+.scope-panel .menu-item {
+  user-select: none;
+}
+
+.scope-panel .ranged:not([data-highlighted]) {
+  background: color-mix(in srgb, var(--hover) 55%, transparent);
+}
+
 .menu-label {
   margin: 4px 8px 6px;
   color: var(--muted);
   font-size: var(--text-meta);
-}
-
-.menu-search {
-  width: calc(100% - 8px);
-  height: var(--control);
-  margin: 0 4px 6px;
-  padding: 0 10px;
-  border: 1px solid transparent;
-  border-radius: var(--control-radius);
-  background: var(--hover);
-  outline: none;
-}
-
-.menu-search:focus {
-  border-color: var(--line-strong);
-}
-
-.menu-list {
-  display: grid;
-  max-height: 300px;
-  overflow: auto;
 }
 
 .menu-empty,
@@ -1057,50 +1088,8 @@ input {
   height: var(--icon-meta);
 }
 
-/* In the scope picker a check marks the choice; nothing is dimmed, and the fill
-   is left to what the pointer or the keyboard is on. */
-.scope-menu .menu-item[aria-pressed="false"] {
-  color: var(--fg);
-}
-
 .mono {
   font-family: var(--mono);
-  font-size: var(--text-meta);
-}
-
-.commit-item,
-.pr-item {
-  height: auto;
-  min-height: var(--control);
-  padding-block: 4px;
-}
-
-.commit-subject {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.commit-when {
-  flex: none;
-  font-size: var(--text-meta);
-}
-
-.pr-text {
-  display: grid;
-  min-width: 0;
-}
-
-.pr-title,
-.pr-text .muted {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.pr-text .muted {
   font-size: var(--text-meta);
 }
 

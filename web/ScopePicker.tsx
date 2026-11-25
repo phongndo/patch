@@ -1,117 +1,285 @@
 //! Chooses what to review: a view of the working tree against any base
-//! branch, one commit or a run of them, or an open pull request.
+//! branch, one commit or a run of them, or an open pull request. Every tab is
+//! one list under one search field, and the field keeps focus throughout. Each
+//! row is one thing to review, so at most one is checked, save in a run of
+//! commits.
 
 import {
   Command,
   CommandEmpty,
+  CommandGroup,
+  CommandGroupLabel,
   CommandInput,
   CommandItem,
-  CommandItemIcon,
   CommandList,
+  createCommandController,
 } from "@ui-sdk/solid/command";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@ui-sdk/solid/popover";
 import { Tabs, TabsIndicator, TabsList, TabsPanel, TabsTab } from "@ui-sdk/solid/tabs";
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show, untrack } from "solid-js";
 import type { Commit, Mode, PullRequest, Scope, ScopesResponse } from "../src/protocol.ts";
 import { loadPullRequests, loadScopes } from "./api.ts";
-import { listMotions } from "./hotkeys.ts";
+import { definitionOf, type Action } from "./commands.ts";
+import { isPressed, listMotions } from "./hotkeys.ts";
 import { Icon } from "./Icon.tsx";
-import { search } from "./search.ts";
+import type { IconName } from "./icons.gen.ts";
+import { Marked } from "./Marked.tsx";
+import { search, type Searchable } from "./search.ts";
 import { preferences } from "./settings.ts";
 import { state } from "./state.ts";
 import { scopeOpen as open, setScopeOpen as setOpen } from "./ui.ts";
 
-type Tab = "changes" | "commits" | "prs";
+const tabs = [
+  { value: "changes", label: "Changes", find: "Search views and branches" },
+  { value: "commits", label: "Commits", find: "Search commits" },
+  { value: "prs", label: "Pull requests", find: "Search open pull requests" },
+] as const;
+type Tab = (typeof tabs)[number]["value"];
 
-const views: Array<{ kind: Mode; label: string; hint: string }> = [
-  { kind: "all", label: "Branch", hint: "Everything since the base, with uncommitted files" },
-  { kind: "uncommitted", label: "Uncommitted", hint: "Changes not committed yet, untracked files too" },
-  { kind: "staged", label: "Staged", hint: "What the next commit would hold" },
+const views: Array<{ kind: Mode; action: Action; label: string; hint: string }> = [
+  {
+    kind: "all",
+    action: "reviewBranch",
+    label: "Branch",
+    hint: "Everything since the base, with uncommitted files",
+  },
+  {
+    kind: "uncommitted",
+    action: "reviewUncommitted",
+    label: "Uncommitted",
+    hint: "Changes not committed yet, untracked files too",
+  },
+  {
+    kind: "staged",
+    action: "reviewStaged",
+    label: "Staged",
+    hint: "What the next commit would hold",
+  },
 ];
+
+interface Row extends Searchable {
+  id: string;
+  icon: IconName;
+  detail?: string;
+  hint?: string;
+  keys?: string;
+  checked: boolean;
+  marks?: ReadonlySet<number>;
+  /** Between the two ends of the run of commits being chosen. */
+  ranged?: boolean;
+  pick: (extend: boolean) => void;
+}
+
+const message = (failure: unknown) => (failure instanceof Error ? failure.message : String(failure));
 
 export function ScopePicker() {
   const [tab, setTab] = createSignal<Tab>("changes");
+  const [query, setQuery] = createSignal("");
   const [scopes, setScopes] = createSignal<ScopesResponse>();
-  const [branchQuery, setBranchQuery] = createSignal("");
-  const [prQuery, setPrQuery] = createSignal("");
-  const [prs, setPrs] = createSignal<PullRequest[]>();
-  const [error, setError] = createSignal("");
-  const [anchor, setAnchor] = createSignal<string>();
+  const [scopesError, setScopesError] = createSignal("");
+  const [pulls, setPulls] = createSignal<PullRequest[]>();
+  const [pullsError, setPullsError] = createSignal("");
+  const [searching, setSearching] = createSignal(false);
+  const [highlighted, setHighlighted] = createSignal<string | null>(null);
+  // One end of a run of commits, while the other is being chosen.
+  const [mark, setMark] = createSignal<string>();
 
   const scope = () => state.store.review?.scope;
-  const base = () => scopes()?.base ?? state.store.review?.base;
-  const isPr = (number: number) => {
-    const current = scope();
-    return current?.kind === "pr" && current.number === number;
+  // The base last compared against, also while something else is under review.
+  const base = createMemo<string | undefined>((last) => {
+    const review = state.store.review;
+    return (review?.scope.kind === "all" ? review.base : undefined) ?? last ?? scopes()?.base;
+  });
+  const choose = (next: Scope) => {
+    setOpen(false);
+    void state.load(next);
   };
-
-  async function refreshScopes(nextBase?: string) {
-    setError("");
-    try {
-      setScopes(await loadScopes(nextBase));
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
-    }
-  }
+  const chooseView = (kind: Mode) => choose({ kind, base: kind === "all" ? base() : undefined });
 
   // The command opens it as well as the button.
   createEffect(open, (shown) => {
-    if (shown) void refreshScopes(base());
+    if (!shown) return;
+    const kind = untrack(scope)?.kind;
+    setTab(kind === "commits" ? "commits" : kind === "pr" ? "prs" : "changes");
+    setQuery("");
+    setMark(undefined);
+    setScopesError("");
+    loadScopes(untrack(base)).then(setScopes, (failure) => setScopesError(message(failure)));
   });
 
-  let prTimer: ReturnType<typeof setTimeout> | undefined;
-  function searchPrs(query: string) {
-    setPrQuery(query);
-    clearTimeout(prTimer);
-    prTimer = setTimeout(async () => {
-      setError("");
-      try {
-        setPrs(await loadPullRequests(query));
-      } catch (failure) {
-        setPrs([]);
-        setError(failure instanceof Error ? failure.message : String(failure));
-      }
-    }, 250);
-  }
-
-  function choose(next: Scope) {
-    setOpen(false);
-    void state.load(next);
-  }
-
-  const branches = createMemo(() => {
-    const all = (scopes()?.branches ?? []).map((label) => ({ label, path: true }));
-    return search(all, branchQuery())
-      .slice(0, 100)
-      .map(({ entry }) => entry.label);
+  const pullQuery = createMemo(() => (open() && tab() === "prs" ? query().trim() : undefined));
+  createEffect(pullQuery, (text) => {
+    if (text === undefined) return;
+    let wanted = true;
+    setSearching(true);
+    const timer = setTimeout(
+      async () => {
+        let found: PullRequest[] = [];
+        let problem = "";
+        try {
+          found = await loadPullRequests(text);
+        } catch (failure) {
+          problem = message(failure);
+        }
+        if (!wanted) return;
+        setPulls(found);
+        setPullsError(problem);
+        setSearching(false);
+      },
+      text ? 250 : 0,
+    );
+    return () => {
+      wanted = false;
+      clearTimeout(timer);
+    };
   });
 
-  // Commits are listed newest first; a range runs from the older pick to the newer.
+  // Commits are listed newest first; a run goes from the older end to the newer.
   const commits = () => scopes()?.commits ?? [];
-  const selected = createMemo(() => {
-    const current = scope();
-    if (current?.kind !== "commits") return new Set<string>();
+  const between = (a: string | undefined, b: string | undefined): Commit[] => {
     const list = commits();
-    const newer = list.findIndex((commit) => commit.sha === current.to);
-    const older = list.findIndex((commit) => commit.sha === current.from);
-    if (newer < 0 || older < 0) return new Set<string>();
+    const ends = [a, b].map((sha) => list.findIndex((commit) => commit.sha === sha));
+    return ends.includes(-1) ? [] : list.slice(Math.min(...ends), Math.max(...ends) + 1);
+  };
+  const reviewed = createMemo(() => {
+    const current = scope();
     return new Set(
-      list.slice(Math.min(newer, older), Math.max(newer, older) + 1).map((commit) => commit.sha),
+      current?.kind === "commits" ? between(current.from, current.to).map((commit) => commit.sha) : [],
     );
   });
+  const marked = createMemo(() =>
+    between(mark(), highlighted()?.replace("commit:", "")).map((commit) => commit.sha),
+  );
 
-  function pickCommit(commit: Commit, extend: boolean) {
-    const list = commits();
-    const start = extend ? anchor() : undefined;
-    if (!start) {
-      setAnchor(commit.sha);
-      return choose({ kind: "commits", from: commit.sha, to: commit.sha });
-    }
-    const a = list.findIndex((item) => item.sha === start);
-    const b = list.findIndex((item) => item.sha === commit.sha);
-    const newer = list[Math.min(a, b)]!;
-    const older = list[Math.max(a, b)]!;
-    choose({ kind: "commits", from: older.sha, to: newer.sha });
+  /** Shift takes the commit as one end of a run; the one under review is an end already. */
+  function pickCommit({ sha }: Commit, extend: boolean) {
+    const start = mark() ?? (extend && reviewed().size === 1 ? [...reviewed()][0] : undefined);
+    if (extend && !start) return void setMark(sha);
+    const run = between(start ?? sha, sha);
+    choose({ kind: "commits", from: run.at(-1)!.sha, to: run[0]!.sha });
+  }
+
+  const find = (rows: Row[]) =>
+    search(rows, query())
+      .slice(0, 100)
+      .map(({ entry, marks }): Row => ({ ...entry, marks }));
+  const viewRows = () =>
+    views.map((view): Row => {
+      const { icon, words } = definitionOf(view.action);
+      // On the base itself there is nothing to compare.
+      const against =
+        view.kind === "all" && base() !== state.store.review?.branch && base() ? `vs ${base()}` : undefined;
+      return {
+        id: `view:${view.kind}`,
+        label: view.label,
+        icon,
+        detail: against,
+        words: `${words ?? ""} ${against ?? ""}`,
+        hint: view.hint,
+        keys: preferences.keyText(view.action),
+        checked: scope()?.kind === view.kind,
+        pick: () => chooseView(view.kind),
+      };
+    });
+  // The base is already what Branch compares against, and a branch has no changes against itself.
+  const branchRows = () =>
+    (scopes()?.branches ?? [])
+      .filter((branch) => branch !== base() && branch !== state.store.review?.branch)
+      .map((branch): Row => ({
+        id: `branch:${branch}`,
+        label: branch,
+        path: true,
+        icon: "branch",
+        checked: false,
+        pick: () => choose({ kind: "all", base: branch }),
+      }));
+  const commitRows = () =>
+    commits().map((commit): Row => ({
+      id: `commit:${commit.sha}`,
+      label: commit.subject,
+      icon: "commit",
+      detail: `${commit.short} · ${commit.when}`,
+      words: `${commit.sha} ${commit.author}`,
+      hint: `${commit.subject}\n${commit.author}, ${commit.when}\nShift-click two for a range`,
+      checked: reviewed().has(commit.sha) || commit.sha === mark(),
+      ranged: marked().includes(commit.sha),
+      pick: (extend) => pickCommit(commit, extend),
+    }));
+  const pullRows = () => {
+    const current = scope();
+    const rows = (pulls() ?? []).map((pull): Row => ({
+      id: `pull:${pull.number}`,
+      label: pull.title,
+      icon: "brandGithub",
+      detail: `${pull.draft ? "Draft · " : ""}#${pull.number} · ${pull.author}`,
+      words: `${pull.number} ${pull.author} ${pull.head}`,
+      hint: `${pull.title}\n${pull.head} → ${pull.base}`,
+      checked: current?.kind === "pr" && current.number === pull.number,
+      pick: () => choose({ kind: "pr", number: pull.number }),
+    }));
+    // GitHub searches. Until it answers, Enter must not take one the last search found.
+    const matches = new Map(find(rows).map((row) => [row.id, row.marks]));
+    return rows
+      .filter((row) => !searching() || matches.has(row.id))
+      .map((row): Row => ({ ...row, marks: matches.get(row.id) }));
+  };
+  const sections = createMemo(() => {
+    if (!open()) return [];
+    const { since } = scopes() ?? {};
+    const all = {
+      changes: () => [
+        { label: "", rows: find(viewRows()) },
+        { label: "Compare against", rows: find(branchRows()) },
+      ],
+      commits: () => [
+        {
+          label: since ? `Since ${since}` : `Recent on ${state.store.review?.branch ?? "this branch"}`,
+          rows: find(commitRows()),
+        },
+      ],
+      prs: () => [{ label: "", rows: pullRows() }],
+    }[tab()]();
+    return all.filter(({ rows }) => rows.length);
+  });
+
+  const error = () => (tab() === "prs" ? pullsError() : scopesError());
+  const loading = () => !error() && (tab() === "prs" ? searching() : !scopes());
+  const empty = () => {
+    if (error()) return "";
+    if (loading()) return "Loading…";
+    if (query().trim()) return "Nothing matches.";
+    return tab() === "prs" ? "No open pull requests." : "No commits yet.";
+  };
+
+  // Starts on what is under review, and on the best match after each letter.
+  const command = createCommandController();
+  const listed = createMemo(() => `${open()}\n${tab()}\n${query()}\n${loading()}`);
+  createEffect(
+    () =>
+      listed() &&
+      untrack(() => {
+        const rows = sections().flatMap((section) => section.rows);
+        return ((query().trim() ? undefined : rows.find((row) => row.checked)) ?? rows[0])?.id;
+      }),
+    (start) => queueMicrotask(() => void (start && command.setValue(start))),
+  );
+
+  function show(next: Tab) {
+    setTab(next);
+    setMark(undefined);
+  }
+  function onKeyDown(event: KeyboardEvent & { currentTarget: HTMLInputElement }) {
+    const view = views.find(({ action }) => isPressed(event, action));
+    const arrow = { ArrowLeft: -1, ArrowRight: 1 }[event.key];
+    const modified = event.ctrlKey || event.metaKey || event.altKey || event.shiftKey;
+    if (view) chooseView(view.kind);
+    else if (arrow && !modified && !event.currentTarget.value) {
+      const at = tabs.findIndex(({ value }) => value === tab());
+      show(tabs[(at + arrow + tabs.length) % tabs.length]!.value);
+    } else if (event.key === "Escape" && mark()) setMark(undefined);
+    else return listMotions(event);
+    event.preventDefault();
+    event.stopPropagation();
   }
 
   return (
@@ -126,184 +294,107 @@ export function ScopePicker() {
         <span class="scope-label">{state.store.review?.label ?? "Loading"}</span>
         <Icon name="chevronSm" />
       </PopoverTrigger>
-      <PopoverContent class="menu scope-menu" side="bottom" align="start" sideOffset={6}>
+      <PopoverContent
+        class="menu scope-menu"
+        side="bottom"
+        align="start"
+        sideOffset={6}
+        initialFocus="[data-autofocus]"
+      >
         <PopoverTitle class="sr-only">Choose what to review</PopoverTitle>
-        <Tabs
-          value={tab()}
-          onValueChange={(value) => {
-            if (!value) return;
-            setTab(value as Tab);
-            if (value === "prs" && !prs()) searchPrs(prQuery());
-          }}
-        >
+        <Tabs class="scope-body" value={tab()} onValueChange={(value) => value && show(value as Tab)}>
           <TabsList class="segmented scope-tabs" aria-label="Review">
             <TabsIndicator class="segmented-indicator" />
-            <TabsTab class="segmented-item" value="changes">
-              Changes
-            </TabsTab>
-            <TabsTab class="segmented-item" value="commits">
-              Commits
-            </TabsTab>
-            <TabsTab class="segmented-item" value="prs">
-              Pull requests
-            </TabsTab>
+            <For each={tabs}>
+              {({ value, label }) => (
+                <TabsTab class="segmented-item" value={value}>
+                  {label}
+                </TabsTab>
+              )}
+            </For>
           </TabsList>
-
-          <Show when={error()}>
-            <p class="menu-error">{error()}</p>
-          </Show>
-
-          <TabsPanel value="changes">
-            <div class="menu-group">
-              <For each={views}>
-                {(view) => (
-                  <button
-                    class="menu-item"
-                    aria-pressed={scope()?.kind === view.kind ? "true" : "false"}
-                    title={view.hint}
-                    onClick={() =>
-                      choose({ kind: view.kind, base: view.kind === "all" ? base() : undefined })
-                    }
-                  >
-                    <span class="menu-check">
-                      <Show when={scope()?.kind === view.kind}>
-                        <Icon name="check" />
+          <Command
+            class="scope-body"
+            filter={false}
+            query={query()}
+            onQueryChange={setQuery}
+            onValueChange={setHighlighted}
+            controller={command}
+            status={loading() ? "loading" : "idle"}
+          >
+            <div class="palette-search scope-search">
+              <Icon name="search" />
+              <CommandInput
+                class="palette-input"
+                data-autofocus
+                onKeyDown={onKeyDown}
+                aria-label={tabs.find(({ value }) => value === tab())!.find}
+                placeholder={tabs.find(({ value }) => value === tab())!.find}
+              />
+            </div>
+            {/* The field has focus, and moves through the list. */}
+            <TabsPanel class="scope-panel" value={tab()} tabindex={-1}>
+              <Show when={error()}>
+                <p class="menu-error">{error()}</p>
+              </Show>
+              <CommandEmpty class="menu-empty">{empty()}</CommandEmpty>
+              <CommandList aria-label={tabs.find(({ value }) => value === tab())!.label}>
+                <For each={sections()} keyed={(section) => section.label}>
+                  {(section) => (
+                    <CommandGroup class="palette-group">
+                      <Show when={section().label}>
+                        <CommandGroupLabel class="menu-label">{section().label}</CommandGroupLabel>
                       </Show>
-                    </span>
-                    {view.label}
-                    <Show when={view.kind === "all" && base()}>
-                      <span class="muted"> vs {base()}</span>
-                    </Show>
-                  </button>
-                )}
-              </For>
-            </div>
-            <div class="menu-group">
-              <p class="menu-label">Compare the branch against</p>
-              <Command
-                query={branchQuery()}
-                onQueryChange={setBranchQuery}
-                filter={false}
-                autoHighlight={branchQuery() !== ""}
-              >
-                <CommandInput
-                  class="menu-search"
-                  onKeyDown={listMotions}
-                  type="search"
-                  aria-label="Find a branch to compare against"
-                  placeholder="Find a branch"
-                />
-                <CommandEmpty class="menu-empty">No branches match.</CommandEmpty>
-                <CommandList class="menu-list" aria-label="Branches">
-                  <For each={branches()}>
-                    {(branch) => (
-                      <CommandItem
-                        class="menu-item"
-                        value={branch}
-                        aria-current={base() === branch ? "true" : undefined}
-                        onSelect={() => choose({ kind: "all", base: branch })}
-                      >
-                        <CommandItemIcon class="menu-check">
-                          <Show when={base() === branch}>
-                            <Icon name="check" />
-                          </Show>
-                        </CommandItemIcon>
-                        <span class="mono">{branch}</span>
-                      </CommandItem>
-                    )}
-                  </For>
-                </CommandList>
-              </Command>
-            </div>
-          </TabsPanel>
-
-          <TabsPanel value="commits">
-            <div class="menu-group">
-              <p class="menu-label">
-                {scopes()?.since
-                  ? `Commits since ${scopes()?.since}`
-                  : `Recent commits on ${state.store.review?.branch ?? "this branch"}`}{" "}
-                · Shift-click for a range
-              </p>
-              <div class="menu-list">
-                <button
-                  class="menu-item"
-                  aria-pressed={scope()?.kind === "all" ? "true" : "false"}
-                  onClick={() => choose({ kind: "all", base: base() })}
-                >
-                  <span class="menu-check">
-                    <Show when={scope()?.kind === "all"}>
-                      <Icon name="check" />
-                    </Show>
-                  </span>
-                  {scopes()?.since ? "All commits and uncommitted changes" : "Uncommitted changes"}
-                </button>
-                <For each={commits()} fallback={<p class="menu-empty">No commits on this branch yet.</p>}>
-                  {(commit) => (
-                    <button
-                      class="menu-item commit-item"
-                      aria-pressed={selected().has(commit.sha) ? "true" : "false"}
-                      title={`${commit.subject}\n${commit.author}, ${commit.when}`}
-                      onClick={(event) => pickCommit(commit, event.shiftKey)}
-                    >
-                      <span class="menu-check">
-                        <Show when={selected().has(commit.sha)}>
-                          <Icon name="check" />
-                        </Show>
-                      </span>
-                      <span class="mono muted">{commit.short}</span>
-                      <span class="commit-subject">{commit.subject}</span>
-                      <span class="muted commit-when">{commit.when}</span>
-                    </button>
+                      <For each={section().rows} keyed={(row) => row.id}>
+                        {(row) => (
+                          <CommandItem
+                            class={{ "menu-item": true, "palette-item": true, ranged: row().ranged ?? false }}
+                            value={row().id}
+                            label={row().label}
+                            title={row().hint}
+                            aria-current={row().checked ? "true" : undefined}
+                            onSelect={(event) =>
+                              row().pick((event as KeyboardEvent | MouseEvent).shiftKey ?? false)
+                            }
+                          >
+                            <span class="palette-icon" aria-hidden="true">
+                              <Icon name={row().icon} />
+                            </span>
+                            <Marked label={row().label} marks={row().marks} />
+                            <Show when={row().detail}>
+                              <span class="palette-detail">{row().detail}</span>
+                            </Show>
+                            <Show when={row().keys}>
+                              <kbd class="palette-keys">{row().keys}</kbd>
+                            </Show>
+                            <span class="menu-check">
+                              <Show when={row().checked}>
+                                <Icon name="check" />
+                              </Show>
+                            </span>
+                          </CommandItem>
+                        )}
+                      </For>
+                    </CommandGroup>
                   )}
                 </For>
-              </div>
-            </div>
-          </TabsPanel>
-
-          <TabsPanel value="prs">
-            <div class="menu-group">
-              <Command
-                query={prQuery()}
-                onQueryChange={searchPrs}
-                autoHighlight={prQuery() !== ""}
-                filter={false}
-                status={prs() ? "idle" : "loading"}
-              >
-                <CommandInput
-                  class="menu-search"
-                  onKeyDown={listMotions}
-                  type="search"
-                  aria-label="Search open pull requests"
-                  placeholder="Search open pull requests"
-                />
-                <CommandEmpty class="menu-empty">
-                  {prs() ? "No open pull requests match." : "Loading…"}
-                </CommandEmpty>
-                <CommandList class="menu-list" aria-label="Pull requests">
-                  <For each={prs()}>
-                    {(pr) => (
-                      <CommandItem
-                        class="menu-item pr-item"
-                        value={String(pr.number)}
-                        aria-current={isPr(pr.number) ? "true" : undefined}
-                        onSelect={() => choose({ kind: "pr", number: pr.number })}
-                      >
-                        <span class="mono muted">#{pr.number}</span>
-                        <span class="pr-text">
-                          <span class="pr-title">{pr.title}</span>
-                          <span class="muted">
-                            {pr.author} · {pr.head} → {pr.base}
-                            {pr.draft ? " · draft" : ""}
-                          </span>
-                        </span>
-                      </CommandItem>
-                    )}
-                  </For>
-                </CommandList>
-              </Command>
-            </div>
-          </TabsPanel>
+              </CommandList>
+            </TabsPanel>
+            <footer class="palette-foot">
+              <span>
+                ↵ review
+                {marked().length > 1 ? ` ${marked().length} commits` : ""}
+              </span>
+              <Show when={tab() === "commits" && !mark()}>
+                <span>⇧↵ {reviewed().size === 1 ? "extend the range" : "start a range"}</span>
+              </Show>
+              <span>↑↓ move</span>
+              <Show when={!query()}>
+                <span>←→ switch</span>
+              </Show>
+              <span>esc {mark() ? "cancel range" : query() ? "clear" : "close"}</span>
+            </footer>
+          </Command>
         </Tabs>
       </PopoverContent>
     </Popover>

@@ -1,5 +1,6 @@
 import { flush } from "solid-js";
 import { beforeEach, expect, test, vi } from "vitest";
+import type { ReviewResponse } from "../../src/protocol.ts";
 import { $, click, mount, named, nameOf, press, settle, type } from "./dom.tsx";
 
 vi.mock("../diff.ts", () => ({
@@ -10,21 +11,32 @@ vi.mock("../Tree.tsx", () => ({ Tree: () => <div class="tree" /> }));
 
 const { App } = await import("../App.tsx");
 const { state } = await import("../state.ts");
+const { setScopeOpen } = await import("../ui.ts");
 const { toast } = await import("@ui-sdk/solid/toast");
 
 const pull = { number: 7, title: "Fix it", author: "ann", head: "fix", base: "main", draft: false };
+const commits = [
+  { sha: "c3", short: "c3", subject: "third", author: "ann", when: "now" },
+  { sha: "c2", short: "c2", subject: "second", author: "ann", when: "now" },
+  { sha: "c1", short: "c1", subject: "first", author: "ann", when: "now" },
+];
 const asked: string[] = [];
+let reviewed: Partial<ReviewResponse> | undefined;
 
 beforeEach(async () => {
   asked.length = 0;
+  reviewed = undefined;
+  setScopeOpen(false);
   toast.dismiss();
   vi.stubGlobal("fetch", async (url: string) => {
     asked.push(url);
     const body = url.startsWith("/api/scopes")
-      ? { branches: ["main", "dev", "feature"], base: "main", since: "main", commits: [] }
+      ? { branches: ["main", "dev", "feature"], base: "main", since: "main", commits }
       : url.startsWith("/api/prs")
         ? [pull]
-        : { error: "none" };
+        : reviewed && url.startsWith("/api/review")
+          ? { repository: "demo", branch: "feature", scopeKey: "k", patch: "", session: "run", ...reviewed }
+          : { error: "none" };
     return new Response(JSON.stringify(body), { status: "error" in body ? 500 : 200 });
   });
   mount(() => <App />);
@@ -105,28 +117,124 @@ test("the sidebar's views are tabs, and the file list stays mounted", async () =
   expect(document.querySelector(".comments-panel")).toBeNull();
 });
 
-test("the scope picker is named, and its branches filter and choose from the keyboard", async () => {
-  await click($(".scope-trigger"));
+const picker = async () => {
+  if (!document.querySelector(".scope-menu[data-open]")) await click($(".scope-trigger"));
+  await settle();
+  return $<HTMLInputElement>(".scope-menu input");
+};
+const rows = () => [...document.querySelectorAll<HTMLElement>('.scope-menu[data-open] [role="option"]')];
+const labels = () => rows().map((row) => row.querySelector(".palette-label")!.textContent);
+const highlighted = () =>
+  document.querySelector(".scope-menu [data-highlighted] .palette-label")?.textContent;
+const checked = () =>
+  rows()
+    .filter((row) => row.getAttribute("aria-current") === "true")
+    .map((row) => row.querySelector(".palette-label")!.textContent);
+const shownTab = () => $('.scope-menu [role="tab"][aria-selected="true"]').textContent!.trim();
+const isOpen = () => document.querySelector(".scope-menu[data-open]") !== null;
+
+test("the scope picker is named, opens on its search, and lists each thing to review once", async () => {
+  const search = await picker();
   expect(nameOf($(".scope-menu"))).toBe("Choose what to review");
-  const search = named("combobox", "Find a branch to compare against") as HTMLInputElement;
-  const options = () =>
-    [...document.querySelectorAll('.scope-menu [role="option"]')].map((e) => e.textContent);
-  expect(options()).toEqual(["main", "dev", "feature"]);
-  expect($('.scope-menu [role="option"][aria-current="true"]').textContent).toBe("main");
-  expect(document.querySelector(".scope-menu [data-highlighted]")).toBeNull();
+  expect(document.activeElement).toBe(search);
+  expect(nameOf(search)).toBe("Search views and branches");
+  // Main is what Branch compares against already.
+  expect(labels()).toEqual(["Branch", "Uncommitted", "Staged", "dev", "feature"]);
+  expect(rows()[0]!.querySelector(".palette-detail")!.textContent).toBe("vs main");
+  expect(highlighted()).toBe("Branch");
   await type(search, "fea");
-  expect(options()).toEqual(["feature"]);
+  expect(labels()).toEqual(["feature"]);
   await press(search, "Enter");
   expect(asked).toContain("/api/review?scope=all&base=feature");
-  expect(document.querySelector(".scope-menu[data-open]")).toBeNull();
+  expect(isOpen()).toBe(false);
 });
 
-test("its tabs load pull requests when shown, and one can be chosen", async () => {
-  await click($(".scope-trigger"));
+test("its views are found by name and chosen from the keyboard", async () => {
+  await type(await picker(), "un");
+  await press($(".scope-menu input"), "Enter");
+  expect(asked).toContain("/api/review?scope=uncommitted");
+});
+
+test("the arrows switch its tabs only while nothing is typed, and the field keeps focus", async () => {
+  const search = await picker();
+  await press(search, "ArrowRight");
+  expect(shownTab()).toBe("Commits");
+  expect(labels()).toEqual(["third", "second", "first"]);
+  await press(search, "ArrowRight");
+  expect(shownTab()).toBe("Pull requests");
+  await press(search, "ArrowRight");
+  expect(shownTab()).toBe("Changes");
+  await type(search, "fea");
+  expect((await press(search, "ArrowRight")).defaultPrevented).toBe(false);
+  expect(shownTab()).toBe("Changes");
+  expect(document.activeElement).toBe(search);
+});
+
+test("Shift with Enter starts a run of commits, Escape drops it, and Enter reviews it", async () => {
+  const search = await picker();
+  await press(search, "ArrowRight");
+  await press(search, "Enter", { shiftKey: true });
+  expect(isOpen()).toBe(true);
+  expect(checked()).toEqual(["third"]);
+  await press(search, "Escape");
+  expect(isOpen()).toBe(true);
+  expect(checked()).toEqual([]);
+  await press(search, "Enter", { shiftKey: true });
+  await press(search, "ArrowDown");
+  await press(search, "ArrowDown");
+  expect($(".scope-menu .palette-foot").textContent).toContain("review 3 commits");
+  await press(search, "Enter");
+  expect(asked).toContain("/api/review?scope=commits&from=c1&to=c3");
+  expect(isOpen()).toBe(false);
+});
+
+test("it opens on the tab of what is under review, and Shift-click extends from that commit", async () => {
+  reviewed = { scope: { kind: "commits", from: "c3", to: "c3" }, label: "Commit c3" };
+  await state.load();
+  await picker();
+  expect(shownTab()).toBe("Commits");
+  expect(checked()).toEqual(["third"]);
+  rows()[1]!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, shiftKey: true }));
+  await settle();
+  expect(asked).toContain("/api/review?scope=commits&from=c2&to=c3");
+});
+
+test("a chosen base is what it compares against, and stays so while another view is reviewed", async () => {
+  reviewed = { scope: { kind: "all", base: "dev" }, base: "dev", label: "feature vs dev", branch: "feature" };
+  await state.load();
+  await picker();
+  expect(checked()).toEqual(["Branch"]);
+  expect(rows()[0]!.querySelector(".palette-detail")!.textContent).toBe("vs dev");
+  expect(labels()).toEqual(["Branch", "Uncommitted", "Staged", "main"]);
+  reviewed = { scope: { kind: "staged" }, label: "feature · staged", branch: "feature" };
+  await state.load();
+  await settle();
+  expect(checked()).toEqual(["Staged"]);
+  await click(rows()[0]!);
+  expect(asked).toContain("/api/review?scope=all&base=dev");
+});
+
+test("pull requests load when shown, and one can be chosen", async () => {
+  await picker();
   await click(named("tab", "Pull requests"));
-  await settle(320);
-  await click($('.scope-menu [role="option"]'));
+  await settle();
+  expect(asked).toContain("/api/prs?q=");
+  await click(rows()[0]!);
   expect(asked).toContain("/api/review?scope=pr&pr=7");
+});
+
+test("until GitHub answers a search, only pull requests that match are offered", async () => {
+  await picker();
+  await click(named("tab", "Pull requests"));
+  await settle();
+  const search = $<HTMLInputElement>(".scope-menu input");
+  await type(search, "zzzz");
+  expect(labels()).toEqual([]);
+  await press(search, "Enter");
+  expect(isOpen()).toBe(true);
+  // GitHub searches more than the title.
+  await settle(320);
+  expect(labels()).toEqual(["Fix it"]);
 });
 
 test("losing the connection shows one toast that Escape can't dismiss", async () => {
