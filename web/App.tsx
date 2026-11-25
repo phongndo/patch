@@ -460,7 +460,7 @@ export function App() {
     },
     find: { run: () => diff?.find() },
 
-    scope: { run: () => setScopeOpen(true) },
+    scope: { run: () => setScopeOpen((shown) => !shown), enabled: () => idle() || scopeOpen() },
     reviewBranch: { run: () => void state.load({ kind: "all", base: base() }) },
     reviewUncommitted: { run: () => void state.load({ kind: "uncommitted" }) },
     reviewStaged: { run: () => void state.load({ kind: "staged" }) },

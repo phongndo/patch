@@ -62,7 +62,8 @@ reload keeps them, closing with any unsent asks first, and if Patch is cut off
 refuses is kept in `~/.local/state/patch/unsent`, and its path is shown.
 
 ⌘K opens the command palette, which has every command, file, comment and
-setting. ⌘/ comments on the selected lines or the line under the pointer, ⌃J and
+setting, and ⌘O chooses what to review: ← → switch its tabs and ⇧↵ starts a run
+of commits. ⌘/ comments on the selected lines or the line under the pointer, ⌃J and
 ⌃K step through changes, ⌃N and ⌃P through comments and ⌥↓ and ⌥↑ through files,
 ⌘⇧V marks the file viewed and ⌘↵ finishes. Off a Mac the motions are on Alt. Settings › Shortcuts lists them all; any command can be given a key.
 

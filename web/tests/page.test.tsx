@@ -11,6 +11,7 @@ vi.mock("../Tree.tsx", () => ({ Tree: () => <div class="tree" /> }));
 
 const { App } = await import("../App.tsx");
 const { state } = await import("../state.ts");
+const { preferences } = await import("../settings.ts");
 const { setScopeOpen } = await import("../ui.ts");
 const { toast } = await import("@ui-sdk/solid/toast");
 
@@ -212,6 +213,21 @@ test("a chosen base is what it compares against, and stays so while another view
   expect(checked()).toEqual(["Staged"]);
   await click(rows()[0]!);
   expect(asked).toContain("/api/review?scope=all&base=dev");
+});
+
+test("its key opens and closes it, also while typing, and a view's own key works inside it", async () => {
+  const toggle = () => press(document.activeElement ?? document.body, "o", { code: "KeyO", ctrlKey: true });
+  $<HTMLInputElement>(".side-search").focus();
+  expect((await toggle()).defaultPrevented).toBe(true);
+  expect(isOpen()).toBe(true);
+  await toggle();
+  expect(isOpen()).toBe(false);
+  preferences.bind("reviewStaged", "Alt+S");
+  await toggle();
+  expect(rows()[2]!.querySelector("kbd")!.textContent).toBe("Alt+S");
+  await press($(".scope-menu input"), "s", { code: "KeyS", altKey: true });
+  expect(asked).toContain("/api/review?scope=staged");
+  preferences.bind("reviewStaged", undefined);
 });
 
 test("pull requests load when shown, and one can be chosen", async () => {

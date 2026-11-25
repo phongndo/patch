@@ -86,7 +86,13 @@ export const actions = {
   search: { label: "Search files and comments", key: "Mod+Shift+F", group: "Navigation", icon: "search" },
   find: { label: "Find in the diff", key: "Mod+F", group: "Navigation", icon: "search", words: "text" },
 
-  scope: { label: "Choose what to review", group: "Scope", icon: "branch", words: "picker" },
+  scope: {
+    label: "Choose what to review",
+    key: "Mod+O",
+    group: "Scope",
+    icon: "branch",
+    words: "picker open",
+  },
   reviewBranch: { label: "Review the branch", group: "Scope", icon: "branch", words: "all changes" },
   reviewUncommitted: {
     label: "Review uncommitted changes",
@@ -171,6 +177,7 @@ export type Action = keyof typeof actions;
 /** Commands whose keys also work while typing. The others leave their keys to the field, like ⌘⇧V and ⌘⇧↑. */
 export const whileTyping: ReadonlySet<Action> = new Set<Action>([
   "palette",
+  "scope",
   "goToFile",
   "find",
   "search",
