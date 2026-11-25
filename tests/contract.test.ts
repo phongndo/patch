@@ -258,7 +258,7 @@ describe("patchr review", () => {
     }
   });
 
-  // Waiting, mostly: these three run at once.
+  // Waiting, mostly: these run at once.
   test.concurrent("a page that leaves ends the review as closed, not approved", async () => {
     const { child, origin, stdout } = await start("--uncommitted");
     try {
@@ -267,6 +267,23 @@ describe("patchr review", () => {
       expect(stream.headers.get("content-type")).toContain("text/event-stream");
       await post(`${origin}/api/leave`, {});
       live.abort();
+      const started = performance.now();
+      expect(await stdout).toContain("closed without feedback");
+      expect(performance.now() - started).toBeLessThan(15_000);
+      await child.exited;
+    } finally {
+      child.kill();
+    }
+  }, 20_000);
+
+  test.concurrent("a page heard leaving only after it is gone ends the review as soon", async () => {
+    const { child, origin, stdout } = await start("--uncommitted");
+    try {
+      const live = new AbortController();
+      await fetch(`${origin}/api/live`, { signal: live.signal });
+      live.abort();
+      await Bun.sleep(300);
+      await post(`${origin}/api/leave`, {});
       const started = performance.now();
       expect(await stdout).toContain("closed without feedback");
       expect(performance.now() - started).toBeLessThan(15_000);

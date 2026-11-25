@@ -571,7 +571,15 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
             }
         }
         (Method::POST, "/api/leave") => {
-            app.live.lock().unwrap().leaving = true;
+            let gone = {
+                let mut live = app.live.lock().unwrap();
+                live.leaving = true;
+                live.connections == 0
+            };
+            // Word of it can arrive after the page is gone.
+            if gone {
+                end_after(&app, paced(LEAVE_GRACE), Outcome::Closed);
+            }
             json(StatusCode::OK, &serde_json::json!({ "ok": true }))
         }
         (Method::GET, "/api/live") => live_stream(app.clone()),
