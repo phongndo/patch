@@ -21,8 +21,9 @@ import { actionGroups, actionNames, definitionOf, type Action } from "./commands
 import { listMotions } from "./hotkeys.ts";
 import { Icon } from "./Icon.tsx";
 import type { IconName } from "./icons.gen.ts";
+import { Marked } from "./Marked.tsx";
 import { lineLabel } from "./Notes.tsx";
-import { search, segments, type Searchable } from "./search.ts";
+import { search, type Searchable } from "./search.ts";
 import { fontPresets, preferences, type Settings } from "./settings.ts";
 import {
   isGeneral,
@@ -511,11 +512,7 @@ export function Palette(props: {
                         <span class="palette-icon" aria-hidden="true">
                           <Icon name={entry().icon} />
                         </span>
-                        <span class="palette-label">
-                          <For each={segments(entry().label, entry().marks ?? new Set())} keyed={false}>
-                            {(part) => <span class={{ marked: part().marked }}>{part().text}</span>}
-                          </For>
-                        </span>
+                        <Marked label={entry().label} marks={entry().marks} />
                         <Show when={query().trim() && !current() && entry().group}>
                           <span class="palette-detail">{entry().group}</span>
                         </Show>
