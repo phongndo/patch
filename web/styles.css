@@ -852,7 +852,8 @@ input {
   cursor: pointer;
 }
 
-.menu-item:hover:not(:disabled),
+/* In a searched list the highlight follows the pointer when it moves, so a resting one shows nothing. */
+.menu-item:not(.palette-item):hover:not(:disabled),
 .menu-item[data-highlighted] {
   background: var(--hover);
 }
