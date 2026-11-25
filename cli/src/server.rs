@@ -346,10 +346,15 @@ fn live_stream(app: Arc<App>) -> Response {
 }
 
 fn content_type(path: &str) -> String {
-    mime_guess::from_path(path).first_raw().map(|kind| match kind {
-        "text/html" | "text/css" | "text/javascript" | "application/javascript" | "image/svg+xml" => format!("{kind}; charset=utf-8"),
-        other => other.to_string(),
-    }).unwrap_or_else(|| "application/octet-stream".into())
+    mime_guess::from_path(path)
+        .first_raw()
+        .map(|kind| match kind {
+            "text/html" | "text/css" | "text/javascript" | "application/javascript" | "image/svg+xml" => {
+                format!("{kind}; charset=utf-8")
+            }
+            other => other.to_string(),
+        })
+        .unwrap_or_else(|| "application/octet-stream".into())
 }
 
 fn compressible(path: &str) -> bool {
@@ -380,8 +385,7 @@ async fn asset(app: &App, headers: &HeaderMap, path: &str) -> Response {
         },
         None => return (StatusCode::NOT_FOUND, "Not found").into_response(),
     };
-    let bytes: std::borrow::Cow<'static, [u8]> =
-        if path == "/index.html" { with_settings(&bytes).into() } else { bytes };
+    let bytes: std::borrow::Cow<'static, [u8]> = if path == "/index.html" { with_settings(&bytes).into() } else { bytes };
     let immutable = path.starts_with("/a/");
     let mut response = Response::new(Body::empty());
     let out = response.headers_mut();
@@ -590,11 +594,7 @@ mod tests {
     }
 
     fn params(query: &str) -> HashMap<String, String> {
-        query
-            .split('&')
-            .filter_map(|pair| pair.split_once('='))
-            .map(|(k, v)| (k.to_string(), v.to_string()))
-            .collect()
+        query.split('&').filter_map(|pair| pair.split_once('=')).map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
 
     #[test]

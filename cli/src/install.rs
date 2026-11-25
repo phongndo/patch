@@ -240,11 +240,8 @@ fn is_patch_hook(handler: &Value) -> bool {
 /// Patch's leaves an empty group or a placeholder where others follow, and
 /// adding it reuses one.
 fn codex_hooks(text: &str, install: bool) -> Result<Option<String>, String> {
-    let before: Value = if text.trim().is_empty() {
-        json!({})
-    } else {
-        serde_json::from_str(text).map_err(|error| error.to_string())?
-    };
+    let before: Value =
+        if text.trim().is_empty() { json!({}) } else { serde_json::from_str(text).map_err(|error| error.to_string())? };
     let groups = before["hooks"]["UserPromptSubmit"].as_array();
     let had = groups.into_iter().flatten().filter_map(|group| group["hooks"].as_array()).flatten().any(is_patch_hook);
     if !had && !install {
@@ -258,9 +255,10 @@ fn codex_hooks(text: &str, install: bool) -> Result<Option<String>, String> {
 
     let empty = json!({ "hooks": [] });
     // The first one stays, pointed at this binary; any other is a leftover.
-    let first = groups.iter().enumerate().find_map(|(index, group)| {
-        Some((index, group["hooks"].as_array()?.iter().position(is_patch_hook)?))
-    });
+    let first = groups
+        .iter()
+        .enumerate()
+        .find_map(|(index, group)| Some((index, group["hooks"].as_array()?.iter().position(is_patch_hook)?)));
     for (index, group) in groups.iter_mut().enumerate() {
         let Some(handlers) = group["hooks"].as_array_mut() else { continue };
         for at in (0..handlers.len()).rev() {
@@ -365,7 +363,9 @@ fn taken<'a>(target: &'a Target, written: &Written) -> Option<&'a Path> {
     let file = target.files.iter().find(|(file, content)| is_theirs(file, content, written));
     // Something of theirs in the folder Patch would fill counts too.
     let beside = target.replaces.as_ref().filter(|old| {
-        old.parent().is_some_and(|dir| target.files.iter().any(|(file, _)| file.starts_with(dir))) && old.exists() && !is_ours(old)
+        old.parent().is_some_and(|dir| target.files.iter().any(|(file, _)| file.starts_with(dir)))
+            && old.exists()
+            && !is_ours(old)
     });
     file.map(|(file, _)| file.as_path()).or(beside.map(PathBuf::as_path))
 }
@@ -696,8 +696,12 @@ fn report(rows: &[(&str, Setup)], files: &[PathBuf], placement: &Placement, dry_
         return;
     }
     if rows.is_empty() {
-        let known: Vec<_> =
-            targets(&home_dir()).into_iter().flat_map(|target| target.harnesses).map(|(name, _)| name).filter(|name| *name != SKILLS).collect();
+        let known: Vec<_> = targets(&home_dir())
+            .into_iter()
+            .flat_map(|target| target.harnesses)
+            .map(|(name, _)| name)
+            .filter(|name| *name != SKILLS)
+            .collect();
         eprintln!("No agent harness found. Patch works with {}.", known.join(", "));
         eprintln!("Install one, then run: {} install", patchr());
     } else if rows.iter().any(|(_, setup)| matches!(setup, Setup::Done(_))) {
@@ -813,12 +817,15 @@ mod tests {
     fn commands(text: &str) -> Vec<Vec<String>> {
         let value: Value = serde_json::from_str(text).unwrap();
         let groups = value["hooks"]["UserPromptSubmit"].as_array().unwrap().iter();
-        groups.map(|group| group["hooks"].as_array().unwrap().iter().map(|h| h["command"].as_str().unwrap().into()).collect()).collect()
+        groups
+            .map(|group| group["hooks"].as_array().unwrap().iter().map(|h| h["command"].as_str().unwrap().into()).collect())
+            .collect()
     }
 
     #[test]
     fn removing_the_codex_hook_moves_no_other() {
-        let before = r#"{"hooks":{"UserPromptSubmit":[{"hooks":[{"command":"'/old/patchr' hook codex"}]},{"hooks":[{"command":"z"}]}]}}"#;
+        let before =
+            r#"{"hooks":{"UserPromptSubmit":[{"hooks":[{"command":"'/old/patchr' hook codex"}]},{"hooks":[{"command":"z"}]}]}}"#;
         let removed = codex_hooks(before, false).unwrap().unwrap();
         assert_eq!(commands(&removed), [vec![], vec!["z".to_string()]]);
         assert!(codex_hooks(&removed, false).unwrap().is_none());

@@ -22,6 +22,7 @@ pub struct Slot {
 
 type Id = rustix::fs::Stat;
 
+#[allow(clippy::unnecessary_cast)] // their types differ between systems
 fn id(stat: &Id) -> (u64, u64) {
     (stat.st_dev as u64, stat.st_ino as u64)
 }

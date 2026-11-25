@@ -208,9 +208,8 @@ async fn review(args: &[String]) -> Result<(), String> {
     let over_ssh = std::env::var_os("SSH_CONNECTION").is_some();
     let remote = args.remote.unwrap_or(over_ssh);
     let (options, public): (server::Options, Box<dyn FnOnce(u16) -> String>) = if remote {
-        let (ip, name) = tailscale().ok_or(
-            "Remote review needs Tailscale on this machine. Use --local and forward the port with ssh -L instead.",
-        )?;
+        let (ip, name) = tailscale()
+            .ok_or("Remote review needs Tailscale on this machine. Use --local and forward the port with ssh -L instead.")?;
         let secret = random_token(24);
         let short = name.split('.').next().unwrap_or(&name).to_string();
         let port = args.port.unwrap_or_else(|| free_port(ip));

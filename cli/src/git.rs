@@ -68,11 +68,7 @@ pub async fn run(program: &str, cwd: &Path, args: &[&str], options: Run<'_>) -> 
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     let mut child = command.spawn().map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            format!("{program} is not installed.")
-        } else {
-            error.to_string()
-        }
+        if error.kind() == std::io::ErrorKind::NotFound { format!("{program} is not installed.") } else { error.to_string() }
     })?;
     if let (Some(input), Some(mut pipe)) = (options.stdin, child.stdin.take()) {
         pipe.write_all(input).await.map_err(|error| error.to_string())?;
@@ -109,9 +105,7 @@ pub async fn find_root(directory: &Path) -> Result<PathBuf> {
 }
 
 async fn is_commit(root: &Path, reference: &str) -> bool {
-    try_git(root, &["rev-parse", "--verify", "--quiet", "--end-of-options", &format!("{reference}^{{commit}}")])
-        .await
-        .is_some()
+    try_git(root, &["rev-parse", "--verify", "--quiet", "--end-of-options", &format!("{reference}^{{commit}}")]).await.is_some()
 }
 
 /// The branch a pull request would target: the requested one, else the remote's default, else main/master.
@@ -249,11 +243,7 @@ pub async fn read_review(root: &Path, scope: &Scope) -> Result<Review> {
         args.extend(DIFF_FLAGS);
         args.extend([parent.as_str(), to.as_str(), "--"]);
         let patch = checked(git(root, &args).await?)?;
-        let label = if first == to {
-            format!("Commit {}", &to[..7])
-        } else {
-            format!("Commits {}–{}", &first[..7], &to[..7])
-        };
+        let label = if first == to { format!("Commit {}", &to[..7]) } else { format!("Commits {}–{}", &first[..7], &to[..7]) };
         return Ok(Review {
             repository,
             branch,

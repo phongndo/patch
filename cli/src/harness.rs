@@ -325,7 +325,9 @@ mod tests {
     #[test]
     fn finds_the_last_applied_edit() {
         let change = |status: &str, changes: &str| {
-            format!(r#"{{"payload":{{"type":"item_completed","item":{{"type":"FileChange","status":"{status}","changes":{changes}}}}}}}"#)
+            format!(
+                r#"{{"payload":{{"type":"item_completed","item":{{"type":"FileChange","status":"{status}","changes":{changes}}}}}}}"#
+            )
         };
         let transcript = [
             change("completed", r#"{"/a/x.rs":{"type":"update","move_path":null},"/b/c d.rs":{"type":"delete"}}"#),

@@ -117,10 +117,7 @@ mod tests {
 
     #[test]
     fn comments_carry_location_lines_and_a_safe_fence() {
-        let s = Submission {
-            decision: Decision::Comment,
-            comments: vec![comment("additions", 2, 3, &["const x = 1;", "```"])],
-        };
+        let s = Submission { decision: Decision::Comment, comments: vec![comment("additions", 2, 3, &["const x = 1;", "```"])] };
         let text = format(&s, "demo", "/repo");
         assert!(text.contains("### src/a.ts:2-3"));
         assert!(text.contains("````ts\nconst x = 1;\n```\n````"));
@@ -141,10 +138,7 @@ mod tests {
         first.body = "Split this PR.".into();
         let mut second = first.clone();
         second.body = "Add tests.\nFor both paths.".into();
-        let s = Submission {
-            decision: Decision::Comment,
-            comments: vec![comment("additions", 2, 2, &[]), first, second],
-        };
+        let s = Submission { decision: Decision::Comment, comments: vec![comment("additions", 2, 2, &[]), first, second] };
         let text = format(&s, "demo", "/repo");
         assert!(text.contains("## General\n\n- Split this PR.\n- Add tests.\n  For both paths.\n\n## src/a.ts"));
     }

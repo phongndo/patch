@@ -79,10 +79,9 @@ struct View {
 
 pub async fn read_pull_request(root: &Path, number: u64) -> Result<PullRequestDiff> {
     let number = number.to_string();
-    let view: View = serde_json::from_str(
-        &gh(root, &["pr", "view", &number, "--json", "number,title,url,baseRefOid,headRefOid"]).await?,
-    )
-    .map_err(|error| error.to_string())?;
+    let view: View =
+        serde_json::from_str(&gh(root, &["pr", "view", &number, "--json", "number,title,url,baseRefOid,headRefOid"]).await?)
+            .map_err(|error| error.to_string())?;
     let patch = gh(root, &["pr", "diff", &number, "--color", "never"]).await?;
     Ok(PullRequestDiff {
         number: view.number,

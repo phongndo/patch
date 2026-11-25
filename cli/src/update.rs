@@ -38,7 +38,10 @@ fn run_script() -> Result<(), String> {
 /// The patchr that mise selects for the user, wherever its versions are.
 fn mise_patchr() -> Result<PathBuf, String> {
     let output = Command::new("mise").args(["which", "patchr"]).current_dir(home_dir()).stderr(Stdio::null()).output();
-    let path = output.ok().filter(|output| output.status.success()).map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string());
+    let path = output
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string());
     let path = path.filter(|path| !path.is_empty()).map(PathBuf::from);
     path.ok_or("mise selects no Patch for your home folder. Where it does, run: mise exec -- patchr install".into())
 }
@@ -57,11 +60,14 @@ pub fn update() -> Result<(), String> {
     match &channel {
         // The script ends with the new version's own `patchr install`.
         Channel::Unmanaged => return run_script(),
-        Channel::Nix if copied => return Err("Patch came from Nix. Run: nix run --refresh github:phongndo/patch -- install".into()),
+        Channel::Nix if copied => {
+            return Err("Patch came from Nix. Run: nix run --refresh github:phongndo/patch -- install".into());
+        }
         Channel::Nix => return Err("Patch came from Nix. Update the profile or flake that has it; your harnesses follow.".into()),
         Channel::Homebrew { .. } | Channel::Mise { .. } => {}
     }
-    let command = channel.upgrade().ok_or("Update Patch with the package manager that installed it, then run its patchr install.")?;
+    let command =
+        channel.upgrade().ok_or("Update Patch with the package manager that installed it, then run its patchr install.")?;
     eprintln!("Updating with: {}", command.join(" "));
     run(Path::new(&command[0]), &command[1..])?;
     let updated = match &channel {

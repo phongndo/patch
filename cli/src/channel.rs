@@ -7,8 +7,14 @@ use crate::install::{bin_path, home_dir};
 
 #[derive(Debug, PartialEq)]
 pub enum Channel {
-    Homebrew { prefix: PathBuf, formula: String },
-    Mise { tool: PathBuf, inside: PathBuf },
+    Homebrew {
+        prefix: PathBuf,
+        formula: String,
+    },
+    Mise {
+        tool: PathBuf,
+        inside: PathBuf,
+    },
     Nix,
     /// A file nobody else manages: the install script's, npm's or a build's.
     Unmanaged,
@@ -29,7 +35,9 @@ pub fn of(real: &Path) -> Channel {
     if let Some(at) = names.iter().position(|name| name == "Cellar").filter(|at| at + 2 < names.len()) {
         return Channel::Homebrew { prefix: path(&parts[..at]), formula: names[at + 1].to_string() };
     }
-    if let Some(at) = names.windows(2).position(|pair| pair[0] == "mise" && pair[1] == "installs").filter(|at| at + 4 < names.len()) {
+    if let Some(at) =
+        names.windows(2).position(|pair| pair[0] == "mise" && pair[1] == "installs").filter(|at| at + 4 < names.len())
+    {
         return Channel::Mise { tool: path(&parts[..at + 3]), inside: path(&parts[at + 4..]) };
     }
     Channel::Unmanaged
