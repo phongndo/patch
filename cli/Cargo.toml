@@ -27,10 +27,12 @@ tokio = { version = "1.54.1", features = [
   "sync",
 ] }
 
-# Quick to build, and quick enough for the tests that run it.
+# Patch itself compiles at once; what it depends on is compiled once.
 [profile.dev]
-opt-level = 1
 debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 1
 
 [profile.release]
 opt-level = 3

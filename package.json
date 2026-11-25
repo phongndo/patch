@@ -10,7 +10,7 @@
     "install:local": "bun run build && ./cli/target/release/patchr install",
     "icons": "bun scripts/icons.ts",
     "themes": "bun scripts/themes.ts",
-    "test": "bun run test:rust && bun run test:cli",
+    "test": "cargo build --manifest-path cli/Cargo.toml --all-targets && bun run --parallel test:rust test:cli",
     "test:rust": "cargo test --manifest-path cli/Cargo.toml",
     "test:cli": "cargo build --manifest-path cli/Cargo.toml && PATCHR=cli/target/debug/patchr bun test ./tests/",
     "test:web": "vitest run --config web/vitest.config.ts",
