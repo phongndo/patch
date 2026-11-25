@@ -20,7 +20,11 @@
         linux-aarch64 = "sha256-GGVqO/DqVkH1eWrkITt1JVV5pwoP3tLzN5M3hVaM34Q=";
         linux-x64 = "sha256-lFWbO1KJlaSUUvnyQEzsdPLv19BuCgAKjNIUsCw2Zus=";
       };
-      forAll = f: nixpkgs.lib.genAttrs (builtins.attrNames systems) (system: f system nixpkgs.legacyPackages.${system});
+      forAll =
+        f:
+        nixpkgs.lib.genAttrs (builtins.attrNames systems) (
+          system: f system nixpkgs.legacyPackages.${system}
+        );
     in
     {
       # The released binary, which the release workflow records after publishing it.
@@ -69,7 +73,14 @@
               bun
               pkgs.git
               pkgs.cargo
+              pkgs.clippy
               pkgs.rustc
+              pkgs.rustfmt
+              # For the Git hooks (hk.pkl).
+              pkgs.actionlint
+              pkgs.hk
+              pkgs.nixfmt
+              pkgs.shellcheck
             ];
           };
         }

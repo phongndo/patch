@@ -1,0 +1,88 @@
+amends "package://github.com/jdx/hk/releases/download/v2.13.0/hk@2.13.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v2.13.0/hk@2.13.0#/Builtins.pkl"
+
+// Hooks only check. Agents often share this working tree, so nothing is stashed
+// or rewritten under them; `hk fix` formats.
+local rust = List("cli/**/*.rs", "cli/Cargo.toml", "cli/Cargo.lock")
+local script = List("**/*.ts", "**/*.tsx", "**/*.js")
+// Kept as their authors wrote them.
+local vendored = List(".agents/**", ".claude/**", "web/themes/**", "patches/**")
+
+local fast = new Mapping<String, Step | Group> {
+  ["merge-conflict"] = (Builtins.check_merge_conflict) { exclude = vendored }
+  ["private-key"] = Builtins.detect_private_key
+  ["large-file"] = Builtins.check_added_large_files
+  ["oxfmt"] {
+    glob = List("**/*.ts", "**/*.tsx", "**/*.js", "**/*.json", "**/*.css", "**/*.html", "**/*.md", "**/*.yml")
+    exclude = vendored
+    check = "node_modules/.bin/oxfmt --check --no-error-on-unmatched-pattern {{files}}"
+    fix = "node_modules/.bin/oxfmt --write --no-error-on-unmatched-pattern {{files}}"
+  }
+  ["oxlint"] {
+    glob = script
+    check = "node_modules/.bin/oxlint --deny-warnings {{files}}"
+    fix = "node_modules/.bin/oxlint --fix {{files}}"
+  }
+  ["tsrs"] {
+    glob = script
+    check = "node_modules/.bin/tsrs --noEmit -p tsconfig.json"
+  }
+  ["rustfmt"] {
+    glob = "cli/**/*.rs"
+    check = "cargo fmt --manifest-path cli/Cargo.toml --check"
+    fix = "cargo fmt --manifest-path cli/Cargo.toml"
+  }
+  ["nixfmt"] {
+    glob = "**/*.nix"
+    check = "nixfmt --check {{files}}"
+    fix = "nixfmt {{files}}"
+  }
+  ["shellcheck"] {
+    glob = "**/*.sh"
+    check = "shellcheck {{files}}"
+  }
+  ["actionlint"] {
+    glob = ".github/workflows/*.yml"
+    check = "actionlint {{files}}"
+  }
+  ["versions"] {
+    glob = List("package.json", "cli/Cargo.toml", "cli/Cargo.lock", "cli/harness/claude/plugin.json")
+    check = "bun scripts/release.ts check"
+  }
+}
+
+local slow = new Mapping<String, Step | Group> {
+  ["clippy"] {
+    glob = rust
+    check = "bun run --silent lint:rust"
+  }
+  ["rust-tests"] {
+    glob = rust
+    check = "bun run --silent test:rust"
+    depends = "clippy"
+  }
+  ["page-tests"] {
+    glob = List("web/**", "src/**")
+    check = "bun run --silent test:web"
+  }
+}
+
+hooks {
+  ["pre-commit"] { steps = fast }
+  ["pre-push"] {
+    steps {
+      ...fast
+      ...slow
+    }
+  }
+  ["check"] {
+    steps {
+      ...fast
+      ...slow
+    }
+  }
+  ["fix"] {
+    fix = true
+    steps = fast
+  }
+}
