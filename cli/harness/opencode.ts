@@ -77,6 +77,9 @@ export default {
     async function review(sessionID: string, typed: string) {
       const current = open.get(sessionID);
       if (current) {
+        // Its tab may be gone.
+        if (current.url)
+          spawn(PATCHR, ["hook", "reopen", current.url], { stdio: "ignore" }).on("error", () => {});
         await notice(
           sessionID,
           current.url ? `Patch is already open at ${current.url}` : "Patch is already opening.",

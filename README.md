@@ -59,7 +59,8 @@ it left its base, plus uncommitted and untracked files. A review is one pass:
 comment, send, and the next `/patch` starts empty. Comments live in the tab: a
 reload keeps them, closing with any unsent asks first, and if Patch is cut off
 (an agent's timeout) the tab can still copy them. Closing the tab ends the
-review; a tab that sleeps, is suspended or loses its connection does not. Feedback the agent's harness
+review; a tab that sleeps, is suspended or loses its connection does not, and
+`/patch` opens it again if it is gone. Feedback the agent's harness
 refuses is kept in `~/.local/state/patch/unsent`, and its path is shown.
 
 ⌘K opens the command palette, which has every command, file, comment and

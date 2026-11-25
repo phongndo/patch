@@ -93,6 +93,8 @@ export default function (pi: ExtensionAPI) {
     description: "Review the current changes in Patch, a browser diff viewer",
     handler: async (typed, ctx) => {
       if (open) {
+        // Its tab may be gone.
+        if (open.url) spawn(PATCHR, ["hook", "reopen", open.url], { stdio: "ignore" }).on("error", () => {});
         notify(
           ctx,
           open.url ? `Patch is already open at ${open.url}` : "Patch is already opening.",

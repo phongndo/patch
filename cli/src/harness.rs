@@ -205,6 +205,7 @@ fn open_for_codex(codex: &Codex, typed: &str, input: &Value) -> Result<String, S
             Err(TryLockError::WouldBlock) => {}
         }
         if let Some(url) = codex.url() {
+            crate::reopen(&url);
             return Ok(format!("Patch is already open at {url}"));
         }
         // Starting, or handing over its feedback.

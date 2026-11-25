@@ -358,6 +358,50 @@ describe("patchr review", () => {
     }
   }, 30_000);
 
+  test.concurrent("a review whose page is lost is opened again, and an open one is not", async () => {
+    const opened = join(state, `opened-${crypto.randomUUID()}`);
+    const browser = `${opened}.sh`;
+    await writeFile(browser, `#!/bin/sh\necho "$1" >> '${opened}'\n`, { mode: 0o755 });
+    // Over SSH, it would open none.
+    const env = { ...process.env, PATCH_BROWSER: browser, PATCH_TEST_HURRY: "1", SSH_CONNECTION: undefined };
+    const child = Bun.spawn([...command, "review", ...local], {
+      cwd: repo,
+      env: { ...env, XDG_STATE_HOME: state, XDG_CONFIG_HOME: state },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    try {
+      let said = "";
+      for await (const chunk of child.stderr) {
+        said += new TextDecoder().decode(chunk);
+        if (/open at \S+\s/.test(said)) break;
+      }
+      const url = said.match(/open at (\S+)/)![1]!;
+      const times = async () => {
+        await Bun.sleep(300);
+        return (
+          await Bun.file(opened)
+            .text()
+            .catch(() => "")
+        )
+          .split("\n")
+          .filter(Boolean).length;
+      };
+      const reopen = () => Bun.spawn([...command, "hook", "reopen", url], { env }).exited;
+      await reopen();
+      expect(await times()).toBe(1); // still on its way
+      const drop = await visit(url.slice(0, -1), "a");
+      await Bun.sleep(hurry ? 1200 : 11_000);
+      await reopen();
+      expect(await times()).toBe(1);
+      await drop();
+      await reopen();
+      expect(await times()).toBe(2);
+    } finally {
+      child.kill();
+    }
+  }, 30_000);
+
   test.concurrent("an adapter's review finds the repository near a file, and closing it prints nothing", async () => {
     const other = await mkdtemp(join(tmpdir(), "patch-other-"));
     Bun.spawnSync(["git", "init", "-q", other]);

@@ -141,6 +141,25 @@ fn parse_words(parsed: &mut Args, args: &[String], adapter: bool) -> Result<(), 
     Ok(())
 }
 
+/// Opens a running review's page again when no browser has it any more.
+pub fn reopen(url: &str) {
+    let Some(host) = url.strip_prefix("http://").and_then(|rest| rest.strip_suffix('/')) else { return };
+    // Only a local review opens a browser; its answer says whether it wants one.
+    let Some(port) = host.strip_prefix("127.0.0.1:").and_then(|port| port.parse::<u16>().ok()) else { return };
+    let ask = || -> std::io::Result<String> {
+        let wait = std::time::Duration::from_secs(2);
+        let mut stream = std::net::TcpStream::connect_timeout(&SocketAddr::from((Ipv4Addr::LOCALHOST, port)), wait)?;
+        stream.set_read_timeout(Some(wait))?;
+        write!(stream, "GET /api/reopen HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n")?;
+        let mut answer = String::new();
+        stream.read_to_string(&mut answer)?;
+        Ok(answer)
+    };
+    if ask().is_ok_and(|answer| answer.ends_with("{\"reopen\":true}")) {
+        open_browser(url);
+    }
+}
+
 fn open_browser(url: &str) {
     let browser = std::env::var("PATCH_BROWSER").or_else(|_| std::env::var("BROWSER")).ok();
     if browser.as_deref() == Some("none") {
@@ -224,6 +243,7 @@ async fn review(args: &[String]) -> Result<(), String> {
                 secret: Some(secret),
                 dev,
                 unopened,
+                opens: false,
             },
             Box::new(move |port| format!("http://{link}:{port}/?t={token}")),
         )
@@ -237,6 +257,7 @@ async fn review(args: &[String]) -> Result<(), String> {
                 secret: None,
                 dev,
                 unopened,
+                opens: args.open && !over_ssh,
             },
             Box::new(|port| format!("http://127.0.0.1:{port}/")),
         )
@@ -306,6 +327,12 @@ fn main() -> ExitCode {
         "hook" if rest.first().is_some_and(|name| name == "delivered") => {
             if let Some(receipt) = rest.get(1) {
                 harness::delivered(receipt);
+            }
+            Ok(())
+        }
+        "hook" if rest.first().is_some_and(|name| name == "reopen") => {
+            if let Some(url) = rest.get(1) {
+                reopen(url);
             }
             Ok(())
         }

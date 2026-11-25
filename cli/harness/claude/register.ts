@@ -68,7 +68,9 @@ export const register: Register = (on) => {
   on("command.run", { command: "patch" }, async ($, e, next) => {
     if (!interactive) return next(e);
     if (open) {
-      const text = open.url ? `Patch is already open at ${open.url}` : "Patch is already opening.";
+      // Its tab may be gone.
+      if (open.url) await $.process.run([PATCHR, "hook", "reopen", open.url]).catch(() => undefined);
+      const text = open?.url ? `Patch is already open at ${open.url}` : "Patch is already opening.";
       return answerWith($, text, working);
     }
     const run = { url: "" };

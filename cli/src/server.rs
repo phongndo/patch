@@ -42,6 +42,8 @@ const LOAD_GRACE: Duration = Duration::from_secs(60);
 /// crash) is waited for, and its harness ends the review with the session. This
 /// is for a review whose harness died too.
 const SILENT_GRACE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+/// A page opened this recently is still on its way and not opened again.
+const OPENING: Duration = Duration::from_secs(10);
 const COOKIE: &str = "patch_session";
 /// How often an open page's repository is checked for changes.
 const WATCH_EVERY: Duration = Duration::from_secs(3);
@@ -72,6 +74,8 @@ pub struct Options {
     pub dev: Option<PathBuf>,
     /// How long to wait for the page to be opened at all; None waits forever.
     pub unopened: Option<Duration>,
+    /// Whether this review opens the browser itself, and so may again.
+    pub opens: bool,
 }
 
 #[derive(Default)]
@@ -107,6 +111,7 @@ struct App {
     session: String,
     reviews: Mutex<HashMap<String, (Review, HashSet<String>)>>,
     live: Mutex<Live>,
+    started: Instant,
     outcome: Mutex<Option<oneshot::Sender<Outcome>>>,
     gzip: Mutex<HashMap<String, Arc<Vec<u8>>>>,
     /// Bumped when the repository changes, so open pages can offer a refresh.
@@ -165,6 +170,7 @@ pub async fn start(options: Options, public_url: impl FnOnce(u16) -> String) -> 
         session: crate::random_token(24),
         reviews: Mutex::new(HashMap::new()),
         live: Mutex::default(),
+        started: Instant::now(),
         outcome: Mutex::new(Some(sender)),
         gzip: Mutex::new(HashMap::new()),
         changes: tokio::sync::watch::channel(0).0,
@@ -622,6 +628,11 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
             json(StatusCode::OK, &serde_json::json!({ "ok": true }))
         }
         (Method::GET, "/api/live") => live_stream(app.clone(), page),
+        (Method::GET, "/api/reopen") => {
+            let mut live = app.live.lock().unwrap();
+            let lost = !live.connected() && !live.expected() && app.started.elapsed() > paced(OPENING);
+            json(StatusCode::OK, &serde_json::json!({ "reopen": app.options.opens && lost }))
+        }
         (Method::GET | Method::HEAD, _) => asset(&app, &headers, &path).await,
         _ => (StatusCode::METHOD_NOT_ALLOWED, "Method not allowed").into_response(),
     }
@@ -641,6 +652,7 @@ mod tests {
             secret: None,
             dev: None,
             unopened: Some(Duration::from_millis(20)),
+            opens: false,
         };
         let mut session = start(options, |port| port.to_string()).await.unwrap();
         let outcome = tokio::time::timeout(Duration::from_secs(5), &mut session.outcome).await.unwrap();
