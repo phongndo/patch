@@ -17,6 +17,9 @@ command[command.length - 1] =
 // The TypeScript server predates --local; it is always local.
 const local = command.some((part) => part.endsWith("cli.ts")) ? [] : ["--local"];
 
+// A development build hurries through its waits; a release build does not.
+const hurry = command[0]!.includes("/debug/");
+
 let repo: string;
 let state: string;
 
@@ -54,6 +57,7 @@ async function start(...args: string[]) {
       ...process.env,
       PATCH_BROWSER: "none",
       PATCH_PORT: "0",
+      PATCH_TEST_HURRY: "1",
       XDG_STATE_HOME: state,
       XDG_CONFIG_HOME: state,
       SSH_CONNECTION: "",
@@ -300,7 +304,7 @@ describe("patchr review", () => {
       const stream = await fetch(`${origin}/api/live`, { signal: live.signal });
       const reader = stream.body!.getReader();
       // Let the first check record the current state, then change a file that is already modified.
-      await Bun.sleep(3500);
+      await Bun.sleep(hurry ? 500 : 3500);
       await writeFile(join(repo, "a.ts"), "one\nTWO\nthree\nfour\nfive\n");
       let text = "";
       const deadline = Date.now() + 10_000;

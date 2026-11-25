@@ -40,6 +40,13 @@ const COOKIE: &str = "patch_session";
 /// How often an open page's repository is checked for changes.
 const WATCH_EVERY: Duration = Duration::from_secs(3);
 
+/// The tests of a development build don't sit through the waits. A release
+/// build keeps them, and its tests do.
+fn paced(wait: Duration) -> Duration {
+    let hurry = cfg!(debug_assertions) && std::env::var_os("PATCH_TEST_HURRY").is_some();
+    if hurry { wait / 10 } else { wait }
+}
+
 pub enum Outcome {
     Submitted(Submission),
     Closed,
@@ -150,7 +157,7 @@ pub async fn start(options: Options, public_url: impl FnOnce(u16) -> String) -> 
 async fn watch_repository(app: Arc<App>) {
     let mut last: Option<String> = None;
     loop {
-        tokio::time::sleep(WATCH_EVERY).await;
+        tokio::time::sleep(paced(WATCH_EVERY)).await;
         if app.live.lock().unwrap().connections == 0 {
             continue;
         }
@@ -290,7 +297,7 @@ fn on_disconnect(app: &Arc<App>) {
     if live.connections > 0 {
         return;
     }
-    let grace = if live.leaving { LEAVE_GRACE } else { SILENT_GRACE };
+    let grace = if live.leaving { paced(LEAVE_GRACE) } else { SILENT_GRACE };
     drop(live);
     end_after(app, grace, Outcome::Closed);
 }
