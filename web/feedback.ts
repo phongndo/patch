@@ -17,12 +17,16 @@ export function feedbackText(all: readonly Comment[], repository: string): strin
   const out = [
     `# Review feedback (${repository})`,
     "",
-    "The user reviewed the changes and left feedback. Address every comment, then summarize what you changed.",
+    "The user reviewed the changes and left the numbered comments below. Address every one: make the change it asks for or, if it only asks a question, answer it without changing code for it. Then say what you did for each, by number.",
   ];
+  let number = 0;
   const general = comments.filter((comment) => !comment.file);
   if (general.length) {
     out.push("", "## General", "");
-    for (const { body } of general) out.push(`- ${body.trim().replaceAll("\n", "\n  ")}`);
+    for (const { body } of general) {
+      const mark = `${++number}. `;
+      out.push(mark + body.trim().replaceAll("\n", `\n${" ".repeat(mark.length)}`));
+    }
   }
   const order = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
   let current = "";
@@ -31,10 +35,15 @@ export function feedbackText(all: readonly Comment[], repository: string): strin
     .toSorted((a, b) => order(a.file.toLowerCase(), b.file.toLowerCase()) || a.start - b.start)) {
     if (comment.file !== current) out.push("", `## ${comment.file}`);
     current = comment.file;
-    const lines = comment.start === comment.end ? comment.start : `${comment.start}-${comment.end}`;
-    const side = comment.side === "deletions" ? " (old side, removed lines)" : "";
+    const lines =
+      comment.start === 0
+        ? " (the whole file)"
+        : comment.start === comment.end
+          ? `:${comment.start}`
+          : `:${comment.start}-${comment.end}`;
+    const side = comment.side === "deletions" && comment.start > 0 ? " (old side, removed lines)" : "";
     const scope = comment.scope ? ` (in ${comment.scope})` : "";
-    out.push("", `### ${comment.file}:${lines}${side}${scope}`);
+    out.push("", `### ${++number}. ${comment.file}${lines}${side}${scope}`);
     if (comment.excerpt.length) {
       const fence = fenceFor(comment.excerpt);
       out.push("", fence + language(comment.file), ...comment.excerpt, fence);

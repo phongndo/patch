@@ -40,23 +40,18 @@ export const actions = {
   refresh: { label: "Refresh the diff", key: "Mod+R", group: "Review", icon: "refresh", words: "reload" },
 
   comment: { label: "Comment on the selected lines", key: "Mod+/", group: "Comments", icon: "comment" },
+  fileComment: { label: "Comment on the file", group: "Comments", icon: "comment", words: "whole" },
   generalComment: {
-    label: "Add a general comment",
+    label: "Comment on the whole change",
     group: "Comments",
     icon: "plus",
-    words: "note whole change",
+    words: "general note add",
   },
   nextComment: { label: "Next comment", key: `${motion}+N`, group: "Comments", icon: "comment" },
   previousComment: { label: "Previous comment", key: `${motion}+P`, group: "Comments", icon: "comment" },
   goToComment: { label: "Go to comment…", group: "Comments", icon: "comment", words: "jump open" },
   editComment: { label: "Edit comment…", group: "Comments", icon: "pencil", words: "change" },
   deleteComment: { label: "Delete comment…", group: "Comments", icon: "trash", words: "remove" },
-  deleteAllComments: {
-    label: "Delete every comment…",
-    group: "Comments",
-    icon: "trash",
-    words: "clear remove",
-  },
   clearSelection: { label: "Clear the line selection", group: "Comments", icon: "x", words: "deselect" },
 
   nextChange: {
@@ -82,7 +77,7 @@ export const actions = {
     words: "unviewed",
   },
   goToFile: { label: "Go to file…", key: "Mod+P", group: "Navigation", icon: "fileTree", words: "open jump" },
-  search: { label: "Search files and comments", key: "Mod+Shift+F", group: "Navigation", icon: "search" },
+  search: { label: "Search files", key: "Mod+Shift+F", group: "Navigation", icon: "search" },
   find: { label: "Find in the diff", key: "Mod+F", group: "Navigation", icon: "search", words: "text" },
 
   scope: {

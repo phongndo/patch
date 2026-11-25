@@ -19,7 +19,7 @@ vi.mock("../Tree.tsx", () => ({ Tree: () => <div class="tree" /> }));
 const { App } = await import("../App.tsx");
 const { actionNames, definitionOf } = await import("../commands.ts");
 const { preferences, defaults } = await import("../settings.ts");
-const { state } = await import("../state.ts");
+const { state, wholeChange, wholeFile } = await import("../state.ts");
 const ui = await import("../ui.ts");
 
 const patch = (line: string) => `diff --git a/a.ts b/a.ts
@@ -76,7 +76,6 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   state.cancelComposer();
-  state.cancelGeneral();
   state.clearFilter();
   state.deleteComments(state.store.comments.map((comment) => comment.id));
   await settle();
@@ -124,7 +123,7 @@ test("plain letters do nothing, wherever the pointer is", async () => {
 });
 
 test("typing finds commands, files and comments, and Enter runs the best after closing", async () => {
-  state.saveGeneral("rename the widget");
+  state.saveComment(wholeChange, "rename the widget");
   await settle();
   await open();
   await type(search(), "b.md");
@@ -210,13 +209,13 @@ test("keys run commands, but not under the palette or Settings, or while typing"
 });
 
 test("holding the key that saves a comment never finishes, and it only saves while writing", async () => {
-  state.composeGeneral();
-  state.setGeneralText("hello");
+  state.compose(wholeChange);
+  state.setComposerText("hello");
   ui.setSidebarView("comments");
   await settle();
   const down = async (repeat: boolean) => {
     const init = { key: "Enter", code: "Enter", ctrlKey: true, bubbles: true, cancelable: true, repeat };
-    (document.querySelector(".general-editor textarea") ?? document.body).dispatchEvent(
+    (document.querySelector(".composer textarea") ?? document.body).dispatchEvent(
       new KeyboardEvent("keydown", init),
     );
     await settle();
@@ -281,9 +280,125 @@ test("half-written comments survive refreshing, filtering and opening another", 
 
   state.compose({ file: "b.md", side: "additions", start: 1, end: 1 });
   state.setComposerText("second");
-  state.composeGeneral();
+  state.compose(wholeChange);
   await settle();
   expect(state.store.comments.map((comment) => comment.body)).toEqual(["first thought", "second"]);
+});
+
+const editor = () => document.querySelector<HTMLTextAreaElement>(".composer textarea");
+const listed = () => [...document.querySelectorAll(".comment-body")].map((e) => e.textContent);
+const button = (text: string) =>
+  [...document.querySelectorAll<HTMLElement>("button")].find(
+    (e) => e.textContent!.trim() === text || e.title === text,
+  )!;
+
+test("every way out of the editor keeps the text, and an empty one leaves nothing", async () => {
+  ui.setSidebarView("comments");
+  await settle();
+  for (const leave of [
+    () => press(editor()!, "Escape"),
+    () => press(editor()!, "Enter", mod),
+    () => click($(".composer [type=submit]")),
+  ]) {
+    await click(button("Overall comment"));
+    state.setComposerText("keep me");
+    await settle();
+    await leave();
+    expect(listed()).toEqual(["keep me"]);
+    expect(editor()).toBeNull();
+    state.deleteComments(state.store.comments.map((comment) => comment.id));
+    await settle();
+  }
+  await click(button("Overall comment"));
+  await press(editor()!, "Escape");
+  expect(editor()).toBeNull();
+  expect(listed()).toEqual([]);
+});
+
+test("an input method's Escape stays in the editor", async () => {
+  ui.setSidebarView("comments");
+  state.compose(wholeChange);
+  state.setComposerText("か");
+  await settle();
+  await press(editor()!, "Escape", { isComposing: true });
+  expect(editor()).not.toBeNull();
+});
+
+test("what is deleted, discarded or emptied can be put back", async () => {
+  ui.setSidebarView("comments");
+  state.saveComment(wholeChange, "first");
+  await settle();
+  const undo = async () => {
+    await click(button("Undo"));
+    expect(listed()).toEqual(["first"]);
+  };
+  await click($(".comment-card .note-delete"));
+  expect(listed()).toEqual([]);
+  await undo();
+
+  await click($(".comment-item"));
+  expect(editor()!.value).toBe("first");
+  state.setComposerText("");
+  await settle();
+  await press(editor()!, "Escape");
+  expect(listed()).toEqual([]);
+  await undo();
+
+  await click(button("Overall comment"));
+  state.setComposerText("never mind");
+  await settle();
+  await click(button("Discard"));
+  expect(listed()).toEqual(["first"]);
+  await click(button("Undo"));
+  expect(listed()).toEqual(["first", "never mind"]);
+});
+
+test("comments are listed as the diff has them, and each opens where it can be read", async () => {
+  ui.setSidebarView("comments");
+  state.saveComment({ file: "a.ts", side: "additions", start: 2, end: 2 }, "on a line");
+  state.saveComment({ file: "b.md", side: "additions", start: 1, end: 1 }, "in the next file");
+  state.saveComment(wholeFile("a.ts"), "on the file");
+  state.saveComment(wholeChange, "overall");
+  await settle();
+  expect(listed()).toEqual(["overall", "on the file", "on a line", "in the next file"]);
+
+  // Once its lines change, a comment goes above its file's first.
+  const line2 = state.store.comments.find((comment) => comment.body === "on a line")!;
+  expect(state.lineOf(line2)).toBe(2);
+  line = "OTHER";
+  await state.load();
+  await settle();
+  expect(state.lineOf(line2)).toBe(0);
+  expect($(".comments-panel").textContent).toContain("lines changed");
+  const item = (text: string) =>
+    [...document.querySelectorAll<HTMLElement>(".comment-item")].find((e) => e.textContent!.includes(text))!;
+  calls.length = 0;
+  await click(item("on a line"));
+  expect(calls).toContain("scrollToFile");
+  expect(calls).not.toContain("scrollToLine");
+  await click(item("in the next file"));
+  expect(calls).toContain("scrollToLine");
+  expect(editor()).toBeNull();
+
+  // One the diff has no place for is edited in the list.
+  state.setHiddenKinds(new Set(["docs"] as const));
+  await settle();
+  await click(item("in the next file"));
+  expect(editor()!.closest(".comments-panel")).not.toBeNull();
+  expect(editor()!.value).toBe("in the next file");
+});
+
+test("a comment on a file or the whole change survives a refresh while it is written", async () => {
+  for (const target of [wholeFile("a.ts"), wholeChange]) {
+    state.compose(target);
+    state.setComposerText("still typing");
+    line = line === "TWO" ? "OTHER" : "TWO";
+    await state.load();
+    await settle();
+    expect(state.composer()).toMatchObject({ file: target.file, start: 0 });
+    expect(state.composerText()).toBe("still typing");
+    state.cancelComposer();
+  }
 });
 
 test("a comment is drawn only where its lines still read the same", async () => {
@@ -316,7 +431,7 @@ test("a viewed mark lasts only as long as the file's changes", async () => {
 test("a send that failed says so, offers a copy, and keeps the review", async () => {
   const close = vi.spyOn(window, "close").mockImplementation(() => {});
   close.mockClear();
-  state.saveGeneral("hello");
+  state.saveComment(wholeChange, "hello");
   await settle();
   const working = fetch;
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) =>
@@ -340,14 +455,14 @@ test("the tab keeps a run's comments over a reload, asks before losing them, and
   };
   expect(asks()).toBe(false);
   sessionStorage.setItem("patch:older", "{}");
-  state.saveGeneral("hello");
+  state.saveComment(wholeChange, "hello");
   await settle();
   expect(asks()).toBe(true);
   expect(JSON.parse(sessionStorage.getItem("patch:run1")!).comments[0].body).toBe("hello");
 
   vi.spyOn(window, "close").mockImplementation(() => {});
-  state.composeGeneral();
-  state.setGeneralText("and one more thing");
+  state.compose(wholeChange);
+  state.setComposerText("and one more thing");
   flush();
   await key("Enter", mod);
   await settle();

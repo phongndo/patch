@@ -7,6 +7,7 @@ import { createMemo, createRoot, createSignal, createStore, flush, snapshot } fr
 import type { Comment, ReviewResponse, Scope, Side } from "../src/protocol.ts";
 import { loadReview, submit } from "./api.ts";
 
+/** What a comment is about, as `Comment` says it. */
 export interface Target {
   file: string;
   side: Side;
@@ -15,6 +16,9 @@ export interface Target {
   /** Set when editing an existing comment. */
   id?: string;
 }
+
+export const wholeFile = (file: string): Target => ({ file, side: "additions", start: 0, end: 0 });
+export const wholeChange = wholeFile("");
 
 /** What the tab remembers of a run. */
 interface Saved {
@@ -176,22 +180,13 @@ export function sortFiles(files: FileDiffMetadata[]): FileDiffMetadata[] {
   });
 }
 
-// randomUUID exists only on secure pages (HTTPS, localhost); a remote review
-// over plain HTTP on the tailnet has getRandomValues only.
 /** General comments are about the whole change: no file and no lines. */
 export const isGeneral = (comment: Pick<Comment, "file">) => comment.file === "";
+/** A comment about lines, rather than a whole file or change. */
+const hasLines = (comment: Pick<Comment, "start">) => comment.start > 0;
 
-const generalComment = (body: string): Comment => ({
-  id: newId(),
-  file: "",
-  side: "additions",
-  start: 0,
-  end: 0,
-  body,
-  excerpt: [],
-  createdAt: Date.now(),
-});
-
+// randomUUID exists only on secure pages (HTTPS, localhost); a remote review
+// over plain HTTP on the tailnet has getRandomValues only.
 const newId = () =>
   Array.from(crypto.getRandomValues(new Uint8Array(4)), (byte) => byte.toString(16).padStart(2, "0")).join(
     "",
@@ -210,13 +205,10 @@ function createReviewState() {
   // Parsed diffs stay out of the store: they go to the highlighter workers,
   // which cannot clone store proxies, and they never change in place.
   const [files, setFiles] = createSignal<FileDiffMetadata[]>([]);
-  // What is being written lives here, not in the editor: the diff drops and
-  // redraws its editors as files, filters and layout change.
+  // What is being written lives here, not in the editor: the diff drops and redraws
+  // its editors as files, filters and layout change. There is one at a time.
   const [composer, setComposer] = createSignal<Target>();
   const [composerText, setComposerText] = createSignal("");
-  /** A general comment being written, or edited when it has an id. */
-  const [general, setGeneral] = createSignal<{ id?: string }>();
-  const [generalText, setGeneralText] = createSignal("");
   /** Kinds and Git statuses the reviewer filtered out of the tree and the diff. */
   const [hiddenStatuses, setHiddenStatuses] = createSignal<ReadonlySet<Status>>(new Set());
   const [hiddenKinds, setHiddenKinds] = createSignal<ReadonlySet<Kind>>(new Set());
@@ -247,25 +239,15 @@ function createReviewState() {
     (id && store.comments.find((comment) => comment.id === id)?.body) || "";
 
   /** Opens an editor on some lines, keeping whatever was being written elsewhere. */
-  function compose(target: Target) {
+  function compose({ file, side, start, end, id }: Target) {
     keepWriting();
-    setComposer(target);
-    setComposerText(bodyOf(target.id));
-  }
-
-  function composeGeneral(id?: string) {
-    keepWriting();
-    setGeneral({ id });
-    setGeneralText(bodyOf(id));
+    setComposer({ file, side, start, end, id });
+    setComposerText(bodyOf(id));
   }
 
   const cancelComposer = () => {
     setComposer(undefined);
     setComposerText("");
-  };
-  const cancelGeneral = () => {
-    setGeneral(undefined);
-    setGeneralText("");
   };
 
   /** Turns anything half-written into a comment, so moving on never loses it. */
@@ -274,15 +256,10 @@ function createReviewState() {
     const target = composer();
     if (target && composerText().trim()) saveComment(target, composerText().trim());
     else cancelComposer();
-    const open = general();
-    if (open && generalText().trim()) saveGeneral(generalText().trim(), open.id);
-    else cancelGeneral();
     flush();
   }
 
-  const isWriting = () =>
-    (composer() !== undefined && composerText().trim() !== bodyOf(composer()?.id)) ||
-    (general() !== undefined && generalText().trim() !== bodyOf(general()?.id));
+  const isWriting = () => composer() !== undefined && composerText().trim() !== bodyOf(composer()?.id);
   /** Whether closing the tab would lose something. */
   const hasUnsent = () => !store.submitted && (store.comments.length > 0 || isWriting());
 
@@ -307,7 +284,11 @@ function createReviewState() {
       const next = target && parsed.find((file) => file.name === target.file);
       const old = [...expanded];
       expanded.clear();
-      if (target && !(before && isShown(next, { ...target, excerpt: before }))) {
+      const stays =
+        !target ||
+        isGeneral(target) ||
+        (next && (!hasLines(target) || (before && isShown(next, { ...target, excerpt: before }))));
+      if (!stays) {
         for (const [name, text] of old) expanded.set(name, text);
         keepWriting();
         expanded.clear();
@@ -350,37 +331,58 @@ function createReviewState() {
     return file ? excerpt(file, target.side, target.start, target.end) : [];
   };
 
-  function saveComment(target: Target, body: string) {
-    const file = fileByName(target.file);
-    setStore((s) => {
-      const existing = target.id ? s.comments.find((comment) => comment.id === target.id) : undefined;
-      if (existing) existing.body = body;
-      else if (file)
-        s.comments.push({
-          id: newId(),
-          file: target.file,
-          side: target.side,
-          start: target.start,
-          end: target.end,
-          body,
-          excerpt: excerptAt(target),
-          scope: scopeNote(),
-          createdAt: Date.now(),
-        });
-    });
-    cancelComposer();
-    remember();
+  /** Whether a comment's lines are no longer in the diff as they were; it is sent as written. */
+  const isMoved = (comment: Comment) => hasLines(comment) && !isShown(fileByName(comment.file), comment);
+
+  /**
+   * The line the diff shows a comment or its editor under: 0 is above the file's first, for one about
+   * the whole file or lines that changed. Undefined when the diff has no place for it, and the sidebar does.
+   */
+  function lineOf(target: Target): number | undefined {
+    // A file without lines (binary, only renamed) has nothing to draw one on.
+    if (!visibleFiles().some((file) => file.name === target.file && file.hunks.length)) return undefined;
+    const comment = target.id ? store.comments.find((comment) => comment.id === target.id) : undefined;
+    return comment && isMoved(comment) ? 0 : target.end;
   }
 
-  /** Adds a comment about the whole change, or edits one. */
-  function saveGeneral(body: string, id?: string) {
-    setStore((s) => {
-      const existing = id ? s.comments.find((comment) => comment.id === id) : undefined;
-      if (existing) existing.body = body;
-      else s.comments.push(generalComment(body));
-    });
-    cancelGeneral();
+  /** The comments in the order the diff shows them, general ones first. */
+  const ordered = createMemo(() => {
+    const order = new Map(files().map((file, index) => [file.name, index]));
+    const at = (comment: Comment) => (isGeneral(comment) ? -1 : (order.get(comment.file) ?? order.size));
+    return store.comments.toSorted(
+      (a, b) =>
+        at(a) - at(b) ||
+        a.file.localeCompare(b.file) ||
+        (lineOf(a) ?? a.end) - (lineOf(b) ?? b.end) ||
+        (a.createdAt ?? 0) - (b.createdAt ?? 0),
+    );
+  });
+
+  /** Writes a comment, or changes one, and returns its id. */
+  function saveComment(target: Target, body: string): string | undefined {
+    const file = fileByName(target.file);
+    const existing = store.comments.some((comment) => comment.id === target.id);
+    const id = existing ? target.id : isGeneral(target) || file ? newId() : undefined;
+    if (id)
+      setStore((s) => {
+        const comment = s.comments.find((comment) => comment.id === id);
+        if (comment) comment.body = body;
+        else
+          s.comments.push({
+            id,
+            file: target.file,
+            side: target.side,
+            start: target.start,
+            end: target.end,
+            body,
+            excerpt: excerptAt(target),
+            scope: isGeneral(target) ? undefined : scopeNote(),
+            createdAt: Date.now(),
+          });
+      });
+    cancelComposer();
     remember();
+    return id;
   }
 
   function deleteComments(ids: Iterable<string>) {
@@ -390,11 +392,21 @@ function createReviewState() {
         if (gone.has(s.comments[index]!.id)) s.comments.splice(index, 1);
     });
     if (gone.has(composer()?.id ?? "")) cancelComposer();
-    if (gone.has(general()?.id ?? "")) cancelGeneral();
     remember();
   }
 
-  const deleteComment = (id: string) => deleteComments([id]);
+  /** Deletes a comment and returns what puts it back. */
+  function deleteComment(id: string): (() => void) | undefined {
+    const gone = snapshot(store).comments.find((comment) => comment.id === id);
+    if (!gone) return undefined;
+    deleteComments([id]);
+    return () => {
+      setStore((s) => {
+        if (!s.comments.some((comment) => comment.id === id)) s.comments.push(gone);
+      });
+      remember();
+    };
+  }
 
   function isViewed(name: string): boolean {
     const mark = store.viewed[name];
@@ -445,17 +457,14 @@ function createReviewState() {
     cancelComposer,
     composerText,
     setComposerText,
-    general,
-    composeGeneral,
-    cancelGeneral,
-    generalText,
-    setGeneralText,
     keepWriting,
     hasUnsent,
     load,
     fileByName,
+    isMoved,
+    lineOf,
+    ordered,
     saveComment,
-    saveGeneral,
     deleteComment,
     deleteComments,
     isViewed,

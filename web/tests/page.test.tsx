@@ -10,7 +10,7 @@ vi.mock("../diff.ts", () => ({
 vi.mock("../Tree.tsx", () => ({ Tree: () => <div class="tree" /> }));
 
 const { App } = await import("../App.tsx");
-const { state } = await import("../state.ts");
+const { state, wholeChange } = await import("../state.ts");
 const { preferences } = await import("../settings.ts");
 const { setScopeOpen } = await import("../ui.ts");
 const { toast } = await import("@ui-sdk/solid/toast");
@@ -45,7 +45,7 @@ beforeEach(async () => {
 });
 
 const write = async (body: string) => {
-  state.saveGeneral(body);
+  state.saveComment(wholeChange, body);
   flush();
   await settle();
 };

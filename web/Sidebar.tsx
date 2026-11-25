@@ -11,7 +11,7 @@ import { Tabs, TabsList, TabsPanel, TabsTab, TabsTabIcon } from "@ui-sdk/solid/t
 import { CommentsPanel } from "./CommentsPanel.tsx";
 import { Icon } from "./Icon.tsx";
 import { preferences } from "./settings.ts";
-import { kindOf, kinds, state, statuses, statusOf } from "./state.ts";
+import { kindOf, kinds, state, statuses, statusOf, wholeChange } from "./state.ts";
 import { Tree } from "./Tree.tsx";
 import { filterOpen, setFilterOpen, setSidebarView, sidebarView as view, type SidebarView } from "./ui.ts";
 
@@ -20,7 +20,6 @@ export function Sidebar(props: {
   onFind: (text: string) => void;
   onOpenFile: (path: string) => void;
   onOpenComment: (comment: Comment) => void;
-  onEditComment: (comment: Comment) => void;
 }) {
   const [query, setQuery] = createSignal("");
   // Only the kinds and statuses this diff has are offered.
@@ -77,7 +76,9 @@ export function Sidebar(props: {
           class="side-search"
           ref={props.searchRef}
           type="search"
-          placeholder={view() === "files" ? "Search" : "Search comments"}
+          placeholder="Search"
+          // The tree's: the few comments of one review need no search, and the palette has one.
+          hidden={view() !== "files"}
           title={preferences.hint("Filter the list · Enter finds in the diff", "search")}
           value={query()}
           onInput={(event) => setQuery(event.currentTarget.value)}
@@ -91,77 +92,91 @@ export function Sidebar(props: {
             }
           }}
         />
-        <Popover open={filterOpen()} onOpenChange={setFilterOpen}>
-          <PopoverTrigger
-            class={{ "icon-button": true, active: filtered() }}
-            title={filtered() ? "Filtered" : "Filter by kind or Git status"}
-          >
-            <Icon name="filter" />
-          </PopoverTrigger>
-          <PopoverContent class="menu" side="bottom" align="end" sideOffset={6}>
-            <PopoverTitle class="menu-title">Filter</PopoverTitle>
-            <PopoverDescription class="menu-hint">Option-click to show only one</PopoverDescription>
-            <Show when={present().kinds.length > 1}>
+        <Show
+          when={view() === "files"}
+          fallback={
+            <>
+              <span class="side-title">Comments</span>
+              <button
+                class="icon-button"
+                title={preferences.hint("Overall comment", "generalComment")}
+                onClick={() => state.compose(wholeChange)}
+              >
+                <Icon name="plus" />
+              </button>
+            </>
+          }
+        >
+          <Popover open={filterOpen()} onOpenChange={setFilterOpen}>
+            <PopoverTrigger
+              class={{ "icon-button": true, active: filtered() }}
+              title={filtered() ? "Filtered" : "Filter by kind or Git status"}
+            >
+              <Icon name="filter" />
+            </PopoverTrigger>
+            <PopoverContent class="menu" side="bottom" align="end" sideOffset={6}>
+              <PopoverTitle class="menu-title">Filter</PopoverTitle>
+              <PopoverDescription class="menu-hint">Option-click to show only one</PopoverDescription>
+              <Show when={present().kinds.length > 1}>
+                <div class="menu-group">
+                  <For each={present().kinds}>
+                    {(kind) => (
+                      <button
+                        class="menu-item"
+                        aria-pressed={state.hiddenKinds().has(kind) ? "false" : "true"}
+                        onClick={(event) =>
+                          state.setHiddenKinds(
+                            toggle(state.hiddenKinds(), present().kinds, kind, event.altKey),
+                          )
+                        }
+                      >
+                        <span class="status">
+                          <Icon name={kindIcons[kind]} />
+                        </span>
+                        {label(kind)}
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </Show>
               <div class="menu-group">
-                <For each={present().kinds}>
-                  {(kind) => (
+                <For each={present().statuses}>
+                  {(status) => (
                     <button
                       class="menu-item"
-                      aria-pressed={state.hiddenKinds().has(kind) ? "false" : "true"}
+                      aria-pressed={state.hiddenStatuses().has(status) ? "false" : "true"}
                       onClick={(event) =>
-                        state.setHiddenKinds(toggle(state.hiddenKinds(), present().kinds, kind, event.altKey))
+                        state.setHiddenStatuses(
+                          toggle(state.hiddenStatuses(), present().statuses, status, event.altKey),
+                        )
                       }
                     >
-                      <span class="status">
-                        <Icon name={kindIcons[kind]} />
-                      </span>
-                      {label(kind)}
+                      <span class={`status status-${status}`}>{status[0]!.toUpperCase()}</span>
+                      {label(status)}
                     </button>
                   )}
                 </For>
               </div>
-            </Show>
-            <div class="menu-group">
-              <For each={present().statuses}>
-                {(status) => (
-                  <button
-                    class="menu-item"
-                    aria-pressed={state.hiddenStatuses().has(status) ? "false" : "true"}
-                    onClick={(event) =>
-                      state.setHiddenStatuses(
-                        toggle(state.hiddenStatuses(), present().statuses, status, event.altKey),
-                      )
-                    }
-                  >
-                    <span class={`status status-${status}`}>{status[0]!.toUpperCase()}</span>
-                    {label(status)}
-                  </button>
-                )}
-              </For>
-            </div>
-            <div class="menu-group">
-              <button class="menu-item" disabled={!filtered()} onClick={() => state.clearFilter()}>
-                <span class="status status-clear">
-                  <Icon name="x" />
-                </span>
-                Clear filter
-              </button>
-            </div>
-          </PopoverContent>
-        </Popover>
+              <div class="menu-group">
+                <button class="menu-item" disabled={!filtered()} onClick={() => state.clearFilter()}>
+                  <span class="status status-clear">
+                    <Icon name="x" />
+                  </span>
+                  Clear filter
+                </button>
+              </div>
+            </PopoverContent>
+          </Popover>
+        </Show>
       </div>
 
       {/* The tree takes focus inside its shadow root, where the panel can't see it. */}
       <TabsPanel class="side-body" value="files" keepMounted tabindex={-1}>
-        <Tree
-          files={state.visibleFiles()}
-          search={view() === "files" ? query() : ""}
-          onOpen={props.onOpenFile}
-        />
+        <Tree files={state.visibleFiles()} search={query()} onOpen={props.onOpenFile} />
       </TabsPanel>
 
       <TabsPanel class="side-comments" value="comments">
-        <CommentsPanel query={query()} onOpen={props.onOpenComment} onEdit={props.onEditComment} />
+        <CommentsPanel onOpen={props.onOpenComment} />
       </TabsPanel>
     </Tabs>
   );

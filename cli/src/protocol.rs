@@ -64,6 +64,7 @@ pub struct Comment {
     pub file: String,
     /// "additions" or "deletions".
     pub side: String,
+    /// The first line, or 0 for the whole file, or with no file the whole change.
     pub start: u64,
     pub end: u64,
     pub body: String,

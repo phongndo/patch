@@ -33,7 +33,7 @@ export interface Comment {
   id: string;
   file: string;
   side: Side;
-  /** First and last line, inclusive, numbered on `side`. */
+  /** First and last line, inclusive, numbered on `side`; 0 for the whole file, or with no file the whole change. */
   start: number;
   end: number;
   body: string;

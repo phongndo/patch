@@ -5,6 +5,8 @@ use crate::protocol::{Comment, Submission};
 
 const PASSED: &str = "The user reviewed the changes in Patch and has no comments. The review passed.";
 
+const ASK: &str = "The user reviewed the changes and left the numbered comments below. Address every one: make the change it asks for or, if it only asks a question, answer it without changing code for it. Then say what you did for each, by number.";
+
 pub const CLOSED: &str =
     "The review was closed without feedback. This is not an approval: do not continue the work unless the user asks.";
 
@@ -28,7 +30,11 @@ fn language(file: &str) -> String {
 }
 
 fn range(comment: &Comment) -> String {
-    if comment.start == comment.end { comment.start.to_string() } else { format!("{}-{}", comment.start, comment.end) }
+    match (comment.start, comment.end) {
+        (0, _) => " (the whole file)".into(),
+        (start, end) if start == end => format!(":{start}"),
+        (start, end) => format!(":{start}-{end}"),
+    }
 }
 
 pub fn format(submission: &Submission, repository: &str, root: &str) -> String {
@@ -40,15 +46,18 @@ pub fn format(submission: &Submission, repository: &str, root: &str) -> String {
     let mut out: Vec<String> = Vec::new();
     out.push(format!("# Review feedback ({repository})"));
     out.push(String::new());
-    out.push("The user reviewed the changes and left feedback. Address every comment, then summarize what you changed.".into());
+    out.push(ASK.into());
     out.push(format!("Paths are relative to {root}."));
+    let mut number = 0;
     // General comments belong to no file.
     let general: Vec<&str> = comments.iter().filter(|c| c.file.is_empty()).map(|c| c.body.trim()).collect();
     if !general.is_empty() {
         out.extend(["".into(), "## General".into(), String::new()]);
-        for body in general {
-            // One bullet per comment; later lines indent under it.
-            out.push(format!("- {}", body.replace('\n', "\n  ")));
+        for body in &general {
+            number += 1;
+            // Later lines indent under the number.
+            let mark = format!("{number}. ");
+            out.push(format!("{mark}{}", body.replace('\n', &format!("\n{}", " ".repeat(mark.len())))));
         }
     }
     comments.retain(|c| !c.file.is_empty());
@@ -61,8 +70,9 @@ pub fn format(submission: &Submission, repository: &str, root: &str) -> String {
             out.extend(["".into(), format!("## {file}")]);
             current = Some(file);
         }
-        let mut heading = format!("### {file}:{}", range(comment));
-        if comment.side == "deletions" {
+        number += 1;
+        let mut heading = format!("### {number}. {file}{}", range(comment));
+        if comment.side == "deletions" && comment.start > 0 {
             heading.push_str(" (old side, removed lines)");
         }
         if let Some(scope) = &comment.scope {
@@ -112,7 +122,7 @@ mod tests {
     fn comments_carry_location_lines_and_a_safe_fence() {
         let s = Submission { comments: vec![comment("additions", 2, 3, &["const x = 1;", "```"])] };
         let text = format(&s, "demo", "/repo");
-        assert!(text.contains("### src/a.ts:2-3"));
+        assert!(text.contains("### 1. src/a.ts:2-3"));
         assert!(text.contains("````ts\nconst x = 1;\n```\n````"));
     }
 
@@ -125,7 +135,7 @@ mod tests {
     }
 
     #[test]
-    fn general_comments_come_first_as_bullets() {
+    fn general_comments_come_first_and_numbers_go_on() {
         let mut first = comment("additions", 0, 0, &[]);
         first.file = String::new();
         first.body = "Split this PR.".into();
@@ -133,7 +143,18 @@ mod tests {
         second.body = "Add tests.\nFor both paths.".into();
         let s = Submission { comments: vec![comment("additions", 2, 2, &[]), first, second] };
         let text = format(&s, "demo", "/repo");
-        assert!(text.contains("## General\n\n- Split this PR.\n- Add tests.\n  For both paths.\n\n## src/a.ts"));
+        assert!(
+            text.contains(
+                "## General\n\n1. Split this PR.\n2. Add tests.\n   For both paths.\n\n## src/a.ts\n\n### 3. src/a.ts:2"
+            )
+        );
+    }
+
+    #[test]
+    fn a_comment_on_a_whole_file_comes_before_its_lines() {
+        let s = Submission { comments: vec![comment("additions", 2, 2, &[]), comment("deletions", 0, 0, &[])] };
+        let text = format(&s, "demo", "/repo");
+        assert!(text.contains("### 1. src/a.ts (the whole file)\n\nRename this.\n\n### 2. src/a.ts:2\n"));
     }
 
     #[test]

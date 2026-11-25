@@ -19,17 +19,16 @@ import { createDiffView, type DiffView, type Note } from "./diff.ts";
 import { copyText, feedbackText } from "./feedback.ts";
 import { bindActions, type Handler } from "./hotkeys.ts";
 import { Icon } from "./Icon.tsx";
-import { moved } from "./CommentsPanel.tsx";
 import { CommentCard, Composer } from "./Notes.tsx";
 import { openPalette, Palette } from "./Palette.tsx";
 import {
-  isGeneral,
-  isShown,
   kindOf,
   kinds,
   opensCollapsed,
   state,
   stats,
+  wholeChange,
+  wholeFile,
   type Kind,
   type Target,
 } from "./state.ts";
@@ -100,22 +99,23 @@ export function App() {
 
   function annotationsFor(name: string): DiffLineAnnotation<Note>[] {
     const composer = state.composer();
-    const file = state.fileByName(name);
     const annotations: DiffLineAnnotation<Note>[] = [];
-    for (const comment of store.comments) {
-      if (comment.file !== name || comment.id === composer?.id || !isShown(file, comment)) continue;
-      annotations.push({
-        side: comment.side,
-        lineNumber: comment.end,
-        metadata: { kind: "comment", id: comment.id },
-      });
+    const add = (target: Target, metadata: Note) => {
+      const lineNumber = state.lineOf(target);
+      if (lineNumber === undefined) return;
+      // Above a file's lines, the side must be one the file has.
+      const top = state.fileByName(name)?.type === "deleted" ? "deletions" : "additions";
+      const side = lineNumber ? target.side : top;
+      annotations.push({ side, lineNumber, metadata } as DiffLineAnnotation<Note>);
+    };
+    // An editor takes its comment's place; a new one goes below what is there.
+    const editing = composer?.file === name ? composer : undefined;
+    for (const comment of state.ordered()) {
+      if (comment.file !== name) continue;
+      if (editing && comment.id === editing.id) add(editing, { kind: "composer", target: editing });
+      else add(comment, { kind: "comment", id: comment.id });
     }
-    if (composer?.file === name)
-      annotations.push({
-        side: composer.side,
-        lineNumber: composer.end,
-        metadata: { kind: "composer", target: composer },
-      });
+    if (editing && !editing.id) add(editing, { kind: "composer", target: editing });
     return annotations;
   }
 
@@ -134,9 +134,18 @@ export function App() {
       start: sameSide ? Math.min(range.start, range.end) : range.end,
       end: sameSide ? Math.max(range.start, range.end) : range.end,
     };
-    state.compose(target);
+    compose(target);
     // The gutter click selects its line after this handler runs.
     requestAnimationFrame(() => diff?.clearSelection());
+  }
+
+  /** Opens an editor, in the diff or, for what it has no place for, in the sidebar. */
+  function compose(target: Target) {
+    state.compose(target);
+    if (state.lineOf(target) === undefined) return showSidebar("comments");
+    if (collapsed[target.file]) setFileCollapsed(target.file, false);
+    // The header stays on screen while the file's first line, which this goes above, scrolls away.
+    if (state.lineOf(target) === 0 && currentFile() === target.file) diff?.scrollToFile(target.file);
   }
 
   function setFileCollapsed(file: string, value: boolean) {
@@ -167,12 +176,14 @@ export function App() {
     const count = () => store.comments.filter((comment) => comment.file === props.file.name).length;
     return (
       <span class="file-meta">
-        <Show when={count()}>
-          <span class="file-comments" title={count() === 1 ? "1 comment" : `${count()} comments`}>
-            <Icon name="comment" />
-            {count()}
-          </span>
-        </Show>
+        <button
+          class="file-comments"
+          title={preferences.hint("Comment on the file", "fileComment")}
+          onClick={() => compose(wholeFile(props.file.name))}
+        >
+          <Icon name="comment" />
+          {count() || ""}
+        </button>
         <label class="viewed" title={preferences.hint("Viewed", "viewed")}>
           <input type="checkbox" checked={viewed()} onChange={() => toggleViewed(props.file.name)} />
           Viewed
@@ -193,7 +204,11 @@ export function App() {
     diff = createDiffView(scroller, {
       annotationsFor,
       renderNote: (note) =>
-        note.kind === "comment" ? <CommentCard id={note.id} /> : <Composer target={note.target} />,
+        note.kind === "comment" ? (
+          <CommentCard id={note.id} onEdit={compose} />
+        ) : (
+          <Composer target={note.target} />
+        ),
       renderHeader: (file) => <FileHeader file={file} />,
       onComment: openComposer,
       onCollapsedChange: (file, value) =>
@@ -285,41 +300,32 @@ export function App() {
     diff?.scrollToFile(path);
   }
 
-  function jumpTo(comment: Pick<Comment, "id" | "file" | "side" | "end">) {
+  /** Shows a comment in the diff, or opens it where it can be read. */
+  function openComment(comment: Comment) {
+    const line = state.lineOf(comment);
+    if (line === undefined) return compose(comment);
     setLastComment(comment.id);
     if (collapsed[comment.file]) setFileCollapsed(comment.file, false);
-    diff?.scrollToLine(comment.file, comment.end, comment.side);
-  }
-
-  function openComment(comment: Comment) {
-    if (isGeneral(comment) || moved(comment)) showSidebar("comments");
-    else jumpTo(comment);
+    if (line) diff?.scrollToLine(comment.file, line, comment.side);
+    else diff?.scrollToFile(comment.file);
   }
 
   function editComment(comment: Comment) {
-    if (isGeneral(comment)) {
-      showSidebar("comments");
-      state.composeGeneral(comment.id);
-      return;
-    }
-    jumpTo(comment);
-    state.compose({ ...comment });
+    openComment(comment);
+    compose(comment);
   }
 
   // Stepping through comments goes in the order the diff shows them.
   const [lastComment, setLastComment] = createSignal<string>();
   function stepComment(direction: 1 | -1) {
-    const order = new Map(state.visibleFiles().map((file, index) => [file.name, index]));
-    const list = store.comments
-      .filter((comment) => order.has(comment.file) && !moved(comment))
-      .toSorted((a, b) => order.get(a.file)! - order.get(b.file)! || a.end - b.end);
+    const list = state.ordered().filter((comment) => state.lineOf(comment) !== undefined);
     if (!list.length) {
       toast.info("No comments in the diff yet.", { id: "hint" });
       return;
     }
     const at = list.findIndex((comment) => comment.id === lastComment());
     const next = at < 0 ? (direction > 0 ? 0 : list.length - 1) : at + direction;
-    jumpTo(list[(next + list.length) % list.length]!);
+    openComment(list[(next + list.length) % list.length]!);
   }
 
   function nextUnviewed() {
@@ -356,6 +362,7 @@ export function App() {
       if (!store.submitted) return;
       toast.dismiss("disconnected");
       toast.dismiss("unsent");
+      toast.dismiss("deleted");
       // The agent has the feedback; the tab has nothing left to do.
       window.close();
     } catch (error) {
@@ -409,18 +416,13 @@ export function App() {
     refresh: { run: () => void refresh() },
 
     comment: { run: comment },
-    generalComment: {
-      run: () => {
-        showSidebar("comments");
-        state.composeGeneral();
-      },
-    },
+    fileComment: { run: withCurrentFile((file) => compose(wholeFile(file))) },
+    generalComment: { run: () => compose(wholeChange) },
     nextComment: { run: () => stepComment(1) },
     previousComment: { run: () => stepComment(-1) },
     goToComment: page("goToComment"),
     editComment: page("editComment"),
     deleteComment: page("deleteComment"),
-    deleteAllComments: page("deleteAllComments"),
     clearSelection: { run: () => diff?.clearSelection() },
 
     nextChange: { run: () => void diff?.stepChange(1) },
@@ -431,7 +433,7 @@ export function App() {
     goToFile: page("goToFile"),
     search: {
       run: () => {
-        setSidebar(() => true);
+        showSidebar("files");
         flush();
         searchInput?.focus();
       },
@@ -582,8 +584,7 @@ export function App() {
         searchRef={(element) => (searchInput = element)}
         onFind={(text) => diff?.find(text)}
         onOpenFile={(path) => diff?.scrollToFile(path)}
-        onOpenComment={jumpTo}
-        onEditComment={editComment}
+        onOpenComment={openComment}
       />
 
       <Splitter

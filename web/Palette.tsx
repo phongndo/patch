@@ -22,12 +22,11 @@ import { listMotions } from "./hotkeys.ts";
 import { Icon } from "./Icon.tsx";
 import type { IconName } from "./icons.gen.ts";
 import { Marked } from "./Marked.tsx";
-import { lineLabel } from "./Notes.tsx";
+import { aboutLabel, removeComment } from "./Notes.tsx";
 import { search, type Searchable } from "./search.ts";
 import { fontPresets, preferences, type Settings } from "./settings.ts";
 import {
   isGeneral,
-  isShown,
   kindOf,
   kinds,
   state,
@@ -153,18 +152,16 @@ export function Palette(props: {
   const review = (scope: Scope) => () => void state.load(scope);
 
   const commentEntries = (run: (comment: Comment) => void): Entry[] =>
-    state.store.comments.map((comment) => ({
+    state.ordered().map((comment) => ({
       id: `comment:${comment.id}`,
       label: comment.body.trim().split("\n")[0]!,
       icon: "comment",
       detail: isGeneral(comment)
-        ? "General"
-        : `${comment.file.split("/").at(-1)} · ${lineLabel(comment.start, comment.end, comment.side)}`,
+        ? aboutLabel(comment)
+        : `${comment.file.split("/").at(-1)} · ${aboutLabel(comment)}`,
       words: `${comment.file} ${comment.body}`,
       run: () => run(comment),
     }));
-  const onScreen = (comment: Comment) =>
-    isGeneral(comment) || isShown(state.fileByName(comment.file), comment);
   const fileEntries = (): Entry[] =>
     state.visibleFiles().map((file) => {
       const { additions, deletions } = stats(file);
@@ -224,33 +221,16 @@ export function Palette(props: {
     editComment: {
       placeholder: "Edit comment",
       empty: "No comments to edit.",
-      entries: () =>
-        commentEntries(props.onEditComment).filter((_, index) => onScreen(state.store.comments[index]!)),
+      entries: () => commentEntries(props.onEditComment),
     },
     deleteComment: {
       placeholder: "Delete comment",
       empty: "No comments to delete.",
       entries: () =>
-        commentEntries((comment) => state.deleteComment(comment.id)).map((entry) => ({
+        commentEntries((comment) => removeComment(comment.id)).map((entry) => ({
           ...entry,
           icon: "trash",
         })),
-    },
-    deleteAllComments: {
-      placeholder: "Delete every comment?",
-      empty: "No comments to delete.",
-      entries: () =>
-        state.store.comments.length
-          ? [
-              { id: "keep", label: "Keep them", icon: "x", run: () => {} },
-              {
-                id: "delete",
-                label: `Delete ${state.store.comments.length === 1 ? "1 comment" : `all ${state.store.comments.length} comments`}`,
-                icon: "trash",
-                run: () => state.deleteComments(state.store.comments.map((comment) => comment.id)),
-              },
-            ]
-          : [],
     },
     restoreDefaults: {
       placeholder: "Restore every default setting?",

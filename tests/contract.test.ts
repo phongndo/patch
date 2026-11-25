@@ -196,15 +196,26 @@ describe("patchr review", () => {
         },
         general("Close.\nBut not there."),
         { id: "c4", file: "Makefile", side: "additions", start: 1, end: 1, body: " ", excerpt: [] },
+        {
+          id: "c5",
+          file: "a.ts",
+          side: "deletions",
+          start: 0,
+          end: 0,
+          body: "Split this file.",
+          excerpt: [],
+        },
       ];
       expect((await post(`${origin}/api/submit`, { comments })).ok).toBe(true);
       const out = await stdout;
       expect(await child.exited).toBe(0);
       expect(out).toContain("# Review feedback (patch-contract-");
-      expect(out).toContain("### a.ts:2");
+      expect(out).toContain("### 2. a.ts (the whole file)\n\nSplit this file.");
+      expect(out).toContain("### 3. a.ts:2");
+      expect(out).toContain("### 4. b.ts:4-5 (old side, removed lines) (in PR #1)");
       expect(out).toContain("```ts\nTWO\n```");
       expect(out).toContain("Lowercase this.");
-      expect(out).toContain("## General\n\n- Close.");
+      expect(out).toContain("## General\n\n1. Close.\n   But not there.");
       // A page that lost its review copies the same text, but not where the repository is.
       const copied = feedbackText(comments, review.repository);
       expect(copied).toBe(out.trim().replace(/^Paths are relative to .*\n/m, ""));
