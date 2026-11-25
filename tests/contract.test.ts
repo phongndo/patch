@@ -258,56 +258,101 @@ describe("patchr review", () => {
     }
   });
 
+  /** An open page: its stream, held until it drops. Bun closes one that nothing refers to. */
+  const visit = async (origin: string, page: string) => {
+    const gone = new AbortController();
+    const stream = await fetch(`${origin}/api/live?page=${page}`, { signal: gone.signal });
+    expect(stream.headers.get("content-type")).toContain("text/event-stream");
+    const reader = stream.body!.getReader();
+    await reader.read();
+    return async () => {
+      gone.abort();
+      await reader.read().catch(() => {});
+      await Bun.sleep(100); // until the server saw it
+    };
+  };
+  const leave = (origin: string, page: string, unsent = false) =>
+    post(`${origin}/api/leave?page=${page}${unsent ? "&unsent=1" : ""}`, {});
+  const soon = 2000;
+  const alive = async (child: { exited: Promise<number> }, ms = soon) =>
+    (await Promise.race([child.exited.then(() => "ended"), Bun.sleep(ms).then(() => "alive")])) === "alive";
+
   // Waiting, mostly: these run at once.
-  test.concurrent("a page that leaves ends the review as closed, not approved", async () => {
-    const { child, origin, stdout } = await start("--uncommitted");
-    try {
-      const live = new AbortController();
-      const stream = await fetch(`${origin}/api/live`, { signal: live.signal });
-      expect(stream.headers.get("content-type")).toContain("text/event-stream");
-      await post(`${origin}/api/leave`, {});
-      live.abort();
-      const started = performance.now();
-      expect(await stdout).toContain("closed without feedback");
-      expect(performance.now() - started).toBeLessThan(15_000);
-      await child.exited;
-    } finally {
-      child.kill();
-    }
-  }, 20_000);
+  for (const order of ["its stream drops first", "it says so first"])
+    test.concurrent(`a closed tab ends its review at once, not approved: ${order}`, async () => {
+      const { child, origin, stdout } = await start("--uncommitted");
+      try {
+        const drop = await visit(origin, "a");
+        if (order.startsWith("its")) await drop();
+        await leave(origin, "a");
+        const started = performance.now();
+        if (order.startsWith("it ")) await drop();
+        expect(await stdout).toContain("closed without feedback");
+        expect(performance.now() - started).toBeLessThan(soon);
+        await child.exited;
+      } finally {
+        child.kill();
+      }
+    }, 20_000);
 
-  test.concurrent("a page heard leaving only after it is gone ends the review as soon", async () => {
-    const { child, origin, stdout } = await start("--uncommitted");
-    try {
-      const live = new AbortController();
-      await fetch(`${origin}/api/live`, { signal: live.signal });
-      live.abort();
-      await Bun.sleep(300);
-      await post(`${origin}/api/leave`, {});
-      const started = performance.now();
-      expect(await stdout).toContain("closed without feedback");
-      expect(performance.now() - started).toBeLessThan(15_000);
-      await child.exited;
-    } finally {
-      child.kill();
-    }
-  }, 20_000);
-
-  test.concurrent("a page that left earlier does not end the review of one that goes silent", async () => {
+  test.concurrent("a tab closed before it connected ends its review at once", async () => {
     const { child, origin } = await start("--uncommitted");
     try {
-      const live = new AbortController();
-      // Held to the end: Bun closes a stream whose response nothing refers to.
-      const stream = await fetch(`${origin}/api/live`, { signal: live.signal });
-      const reader = stream.body!.getReader();
-      await reader.read();
-      await post(`${origin}/api/leave`, {});
-      await Bun.sleep(hurry ? 1200 : 9000);
-      expect(child.exitCode).toBeNull();
-      live.abort();
-      await reader.read().catch(() => {});
-      const ended = child.exited.then(() => "ended");
-      expect(await Promise.race([ended, Bun.sleep(hurry ? 2000 : 10_000)])).toBeUndefined();
+      await (await fetch(origin)).text();
+      await leave(origin, "a");
+      expect(await alive(child)).toBe(false);
+    } finally {
+      child.kill();
+    }
+  }, 20_000);
+
+  test.concurrent("a reload keeps its review, and closing the page it brought ends it", async () => {
+    const { child, origin } = await start("--uncommitted");
+    try {
+      // As a browser does it: the new page is asked for, then the old one goes.
+      await (await fetch(origin)).text();
+      const first = await visit(origin, "a");
+      await (await fetch(origin)).text();
+      await first();
+      await leave(origin, "a");
+      expect(await alive(child)).toBe(true);
+      const second = await visit(origin, "b");
+      await second();
+      await leave(origin, "b");
+      expect(await alive(child)).toBe(false);
+    } finally {
+      child.kill();
+    }
+  }, 20_000);
+
+  test.concurrent("a tab closed with comments unsent can be opened again", async () => {
+    const { child, origin } = await start("--uncommitted");
+    try {
+      const first = await visit(origin, "a");
+      await first();
+      await leave(origin, "a", true);
+      // Longer than a tab with nothing unsent gets.
+      expect(await alive(child, hurry ? 650 : 5000)).toBe(true);
+      await (await fetch(origin)).text();
+      await visit(origin, "b");
+      expect(await alive(child, hurry ? soon : 9000)).toBe(true);
+    } finally {
+      child.kill();
+    }
+  }, 30_000);
+
+  test.concurrent("a page that goes quiet keeps its review, also after another page was closed", async () => {
+    const { child, origin } = await start("--uncommitted");
+    try {
+      const [first, second] = [await visit(origin, "a"), await visit(origin, "b")];
+      await first();
+      await leave(origin, "a");
+      await second();
+      expect(await alive(child, hurry ? soon : 10_000)).toBe(true);
+      const back = await visit(origin, "b");
+      await back();
+      await leave(origin, "b");
+      expect(await alive(child)).toBe(false);
     } finally {
       child.kill();
     }

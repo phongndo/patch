@@ -224,6 +224,7 @@ export function App() {
       },
       back: () => toast.dismiss("disconnected"),
       changed: () => setStale(true),
+      unsent: state.hasUnsent,
     });
     // Nothing outlives the review, so closing it with comments unsent asks first.
     const onBeforeUnload = (event: BeforeUnloadEvent) => {

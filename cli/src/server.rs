@@ -30,12 +30,18 @@ use crate::protocol::{Mode, ReviewResponse, Scope, ScopesResponse, Submission};
 #[folder = "$PATCH_WEB_DIST"]
 struct Page;
 
-/// How long the page may be gone after it said it was leaving (a closed tab,
-/// a reload) before the review counts as closed.
-const LEAVE_GRACE: Duration = Duration::from_secs(8);
-/// How long a page that vanished without a word (a sleeping laptop, a phone
-/// that suspended the tab) may stay away.
-const SILENT_GRACE: Duration = Duration::from_secs(30 * 60);
+/// How long after its tab closed a review ends: no time for the reader, enough
+/// for messages that pass each other.
+const CLOSE_GRACE: Duration = Duration::from_millis(500);
+/// The same with comments unsent, so a tab reopened at once still has its review.
+const UNSENT_GRACE: Duration = Duration::from_secs(8);
+/// How long a page may take from being asked for to connecting. A page that
+/// leaves while another is coming was reloaded, not closed.
+const LOAD_GRACE: Duration = Duration::from_secs(60);
+/// A page that vanished without a word (a sleeping laptop, a suspended tab, a
+/// crash) is waited for, and its harness ends the review with the session. This
+/// is for a review whose harness died too.
+const SILENT_GRACE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const COOKIE: &str = "patch_session";
 /// How often an open page's repository is checked for changes.
 const WATCH_EVERY: Duration = Duration::from_secs(3);
@@ -68,11 +74,31 @@ pub struct Options {
     pub unopened: Option<Duration>,
 }
 
+#[derive(Default)]
 struct Live {
-    connections: usize,
-    /// When a page last said it was leaving.
-    left: Option<Instant>,
+    /// The streams each page holds. One that dropped without a word stays, with none.
+    pages: HashMap<String, usize>,
+    /// When each page was asked for that has not connected or left yet.
+    coming: Vec<Instant>,
     timer: Option<JoinHandle<()>>,
+}
+
+impl Live {
+    fn connected(&self) -> bool {
+        self.pages.values().any(|streams| *streams > 0)
+    }
+
+    fn expected(&mut self) -> bool {
+        self.coming.retain(|asked| asked.elapsed() < paced(LOAD_GRACE));
+        !self.coming.is_empty()
+    }
+
+    /// Takes one page off those on their way.
+    fn arrived(&mut self) {
+        if !self.coming.is_empty() {
+            self.coming.remove(0);
+        }
+    }
 }
 
 struct App {
@@ -138,7 +164,7 @@ pub async fn start(options: Options, public_url: impl FnOnce(u16) -> String) -> 
         options,
         session: crate::random_token(24),
         reviews: Mutex::new(HashMap::new()),
-        live: Mutex::new(Live { connections: 0, left: None, timer: None }),
+        live: Mutex::default(),
         outcome: Mutex::new(Some(sender)),
         gzip: Mutex::new(HashMap::new()),
         changes: tokio::sync::watch::channel(0).0,
@@ -159,7 +185,7 @@ async fn watch_repository(app: Arc<App>) {
     let mut last: Option<String> = None;
     loop {
         tokio::time::sleep(paced(WATCH_EVERY)).await;
-        if app.live.lock().unwrap().connections == 0 {
+        if !app.live.lock().unwrap().connected() {
             continue;
         }
         let now = git::fingerprint(&app.options.root).await;
@@ -292,24 +318,31 @@ async fn review(app: &App, scope: &Scope) -> Result<Review, String> {
     })
 }
 
-fn on_disconnect(app: &Arc<App>) {
+/// A stream ended: by itself that says only that the page went quiet.
+fn on_disconnect(app: &Arc<App>, page: &str) {
     let mut live = app.live.lock().unwrap();
-    live.connections = live.connections.saturating_sub(1);
-    if live.connections > 0 {
-        return;
-    }
-    // One that left a while ago was another page, and says nothing of this one.
-    let leaving = live.left.is_some_and(|left| left.elapsed() < paced(LEAVE_GRACE));
-    let grace = if leaving { paced(LEAVE_GRACE) } else { SILENT_GRACE };
+    // A page that left is counted no more.
+    let Some(streams) = live.pages.get_mut(page) else { return };
+    *streams = streams.saturating_sub(1);
     drop(live);
+    end_after(app, SILENT_GRACE, Outcome::Closed);
+}
+
+/// A page said it is going: its tab closed, or it was reloaded.
+fn on_leave(app: &Arc<App>, page: &str, unsent: bool) {
+    let mut live = app.live.lock().unwrap();
+    if live.pages.remove(page).is_none() {
+        live.arrived(); // It goes before it ever connected.
+    }
+    drop(live);
+    let grace = if unsent { paced(UNSENT_GRACE) } else { CLOSE_GRACE };
     end_after(app, grace, Outcome::Closed);
 }
 
-/// Ends the review after a while unless a page connects first.
+/// Ends the review after a while unless a page connects or is asked for first.
 fn end_after(app: &Arc<App>, grace: Duration, outcome: Outcome) {
     let mut live = app.live.lock().unwrap();
-    // A page may have connected since the caller looked.
-    if live.connections > 0 {
+    if live.connected() {
         return;
     }
     if let Some(timer) = live.timer.take() {
@@ -318,30 +351,36 @@ fn end_after(app: &Arc<App>, grace: Duration, outcome: Outcome) {
     let app = app.clone();
     live.timer = Some(tokio::spawn(async move {
         tokio::time::sleep(grace).await;
+        // It was reloaded or opened again, and is on its way.
+        if grace < SILENT_GRACE && app.live.lock().unwrap().expected() {
+            return end_after(&app, SILENT_GRACE, outcome);
+        }
         settle(&app, outcome);
     }));
 }
 
 /// Counts an open page while its event stream lives.
-struct Connection(Arc<App>);
+struct Connection(Arc<App>, String);
 
 impl Drop for Connection {
     fn drop(&mut self) {
-        on_disconnect(&self.0);
+        on_disconnect(&self.0, &self.1);
     }
 }
 
-fn live_stream(app: Arc<App>) -> Response {
+fn live_stream(app: Arc<App>, page: String) -> Response {
     {
         let mut live = app.live.lock().unwrap();
-        live.connections += 1;
-        live.left = None;
+        if !live.pages.contains_key(&page) {
+            live.arrived();
+        }
+        *live.pages.entry(page.clone()).or_default() += 1;
         if let Some(timer) = live.timer.take() {
             timer.abort();
         }
     }
     let changes = app.changes.subscribe();
-    let guard = Connection(app);
+    let guard = Connection(app, page);
     let first = futures_util::stream::once(async { Event::default().retry(Duration::from_secs(1)) });
     let changed = futures_util::stream::unfold(changes, |mut changes| async move {
         changes.changed().await.ok()?;
@@ -396,6 +435,9 @@ async fn asset(app: &App, headers: &HeaderMap, path: &str) -> Response {
         None => return (StatusCode::NOT_FOUND, "Not found").into_response(),
     };
     let bytes: std::borrow::Cow<'static, [u8]> = if path == "/index.html" { with_settings(&bytes).into() } else { bytes };
+    if path == "/index.html" {
+        app.live.lock().unwrap().coming.push(Instant::now());
+    }
     let immutable = path.starts_with("/a/");
     let mut response = Response::new(Body::empty());
     let out = response.headers_mut();
@@ -458,6 +500,8 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
         return (StatusCode::FORBIDDEN, "Forbidden").into_response();
     }
     let body = || async { axum::body::to_bytes(body, 32 * 1024 * 1024).await.unwrap_or_else(|_| Bytes::new()) };
+
+    let page = params.get("page").cloned().unwrap_or_default();
 
     match (method.clone(), path.as_str()) {
         (Method::GET, "/api/review") => {
@@ -574,18 +618,10 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
             }
         }
         (Method::POST, "/api/leave") => {
-            let gone = {
-                let mut live = app.live.lock().unwrap();
-                live.left = Some(Instant::now());
-                live.connections == 0
-            };
-            // Word of it can arrive after the page is gone.
-            if gone {
-                end_after(&app, paced(LEAVE_GRACE), Outcome::Closed);
-            }
+            on_leave(&app, &page, params.contains_key("unsent"));
             json(StatusCode::OK, &serde_json::json!({ "ok": true }))
         }
-        (Method::GET, "/api/live") => live_stream(app.clone()),
+        (Method::GET, "/api/live") => live_stream(app.clone(), page),
         (Method::GET | Method::HEAD, _) => asset(&app, &headers, &path).await,
         _ => (StatusCode::METHOD_NOT_ALLOWED, "Method not allowed").into_response(),
     }

@@ -23,7 +23,7 @@ globalThis.EventSource = class extends EventTarget {
   static last: EventTarget & { readyState: number; onerror: (() => void) | null };
   readyState = 0;
   onerror: (() => void) | null = null;
-  constructor() {
+  constructor(readonly url: string) {
     super();
     (globalThis.EventSource as unknown as { last: unknown }).last = this;
   }

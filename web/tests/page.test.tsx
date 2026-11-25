@@ -268,6 +268,22 @@ test("losing the connection shows one toast that Escape can't dismiss", async ()
   expect(document.querySelectorAll('[data-slot="toast"]')).toHaveLength(1);
 });
 
+test("a page that goes for good says which it is, and whether anything is unsent", async () => {
+  const sent: string[] = [];
+  navigator.sendBeacon = (url) => Boolean(sent.push(String(url)));
+  const hide = (persisted: boolean) => dispatchEvent(Object.assign(new Event("pagehide"), { persisted }));
+  await clear();
+  hide(true);
+  expect(sent).toEqual([]);
+  hide(false);
+  await write("hello");
+  hide(false);
+  const page = (globalThis.EventSource as unknown as { last: { url: string } }).last.url.split("page=")[1]!;
+  expect(page).toBeTruthy();
+  expect(sent).toEqual([`/api/leave?page=${page}`, `/api/leave?page=${page}&unsent=1`]);
+  await clear();
+});
+
 test("the resizer is a named separator for the sidebar", () => {
   const resizer = named("separator", "Resize the sidebar");
   expect(document.getElementById(resizer.getAttribute("aria-controls")!)?.tagName).toBe("ASIDE");

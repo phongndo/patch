@@ -31,10 +31,17 @@ export const loadSide = async (key: string, side: "old" | "new", path: string) =
   return response.ok ? response.text() : "";
 };
 
+// Names this load of the page, so Patch knows which one left and which went quiet.
+// Not crypto.randomUUID: a remote review's page is plain HTTP, which lacks it.
+const page = Math.random().toString(36).slice(2);
+let unsent = () => false;
+
 addEventListener("pagehide", (event: PageTransitionEvent) => {
   // Tell Patch the page is really going (closed or reloaded), so it can end
-  // the review soon. A tab that only sleeps sends nothing and is waited for.
-  if (!event.persisted) navigator.sendBeacon("/api/leave", new Blob(["{}"], { type: "application/json" }));
+  // the review at once. A tab that only sleeps sends nothing and is waited for.
+  if (event.persisted) return;
+  const params = new URLSearchParams(unsent() ? { page, unsent: "1" } : { page });
+  navigator.sendBeacon(`/api/leave?${params}`, new Blob(["{}"], { type: "application/json" }));
 });
 
 export async function submit(submission: Submission) {
@@ -50,8 +57,14 @@ export async function submit(submission: Submission) {
 }
 
 /** Holds a stream open so Patch can tell when the tab is gone, and hears when the repository changes. */
-export function stayConnected(hear: { lost: () => void; back: () => void; changed: () => void }) {
-  const source = new EventSource("/api/live");
+export function stayConnected(hear: {
+  lost: () => void;
+  back: () => void;
+  changed: () => void;
+  unsent: () => boolean;
+}) {
+  unsent = hear.unsent;
+  const source = new EventSource(`/api/live?${new URLSearchParams({ page })}`);
   source.addEventListener("changed", hear.changed);
   // Chrome retries a server that is gone forever without closing the stream.
   let silent: ReturnType<typeof setTimeout> | undefined;
