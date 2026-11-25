@@ -1,6 +1,8 @@
 // Makes what a release publishes, all from the same binaries:
 //
+//   bun scripts/release.ts bump <version>             sets the version everywhere
 //   bun scripts/release.ts check [tag]                versions agree
+//   bun scripts/release.ts notes <commit>             release notes, from the commits
 //   bun scripts/release.ts package <target> <binary>  one archive and its checksum
 //   bun scripts/release.ts npm                        npm packages, from the archives
 //   bun scripts/release.ts formula                    Homebrew's formula, from the checksums
@@ -58,6 +60,51 @@ function check(expected?: string) {
   };
   if (new Set(Object.values(versions)).size > 1) fail(`versions differ: ${JSON.stringify(versions)}`);
   console.log(version);
+}
+
+function bump(to: string) {
+  if (!/^\d+\.\d+\.\d+$/.test(to)) fail(`not a version: ${to}`);
+  if (Bun.semver.order(to, version) !== 1) fail(`${to} is not after ${version}`);
+  check();
+  const set = (path: string, from: string) => {
+    const text = read(path);
+    if (text.split(from).length !== 2) fail(`expected one ${JSON.stringify(from)} in ${path}`);
+    writeFileSync(join(root, path), text.replace(from, from.replace(version, to)));
+  };
+  set("package.json", `"version": "${version}"`);
+  set("cli/harness/claude/plugin.json", `"version": "${version}"`);
+  for (const path of ["cli/Cargo.toml", "cli/Cargo.lock"])
+    set(path, `name = "patchr"\nversion = "${version}"`);
+  console.log(
+    `${version} -> ${to}. Next: git commit -am "chore: release ${to}", push, gh workflow run release.yml`,
+  );
+}
+
+/** Commits since the version before, by what they mean to a user. */
+function notes(commit: string) {
+  const tags = run(["git", "tag", "--list", "v*.*.*"]).split("\n");
+  const older = tags.filter(
+    (each) => /^v\d+\.\d+\.\d+$/.test(each) && Bun.semver.order(each.slice(1), version) < 0,
+  );
+  const previous = older.toSorted((a, b) => Bun.semver.order(a.slice(1), b.slice(1))).at(-1);
+  const install = [
+    "```sh\nnpx -y patchr install\n```",
+    `Or see [other ways](https://github.com/phongndo/patch#readme). Update with \`patchr update\`.`,
+  ];
+  if (!previous) return console.log(["The first release.", ...install].join("\n\n"));
+  // A tag is its source plus one commit, so its parent is what was released.
+  const log = run(["git", "log", "--reverse", "--format=%h %s", `${previous}^..${commit}`]);
+  const sections = { Breaking: [], New: [], Fixed: [], Faster: [] } as Record<string, string[]>;
+  for (const line of log.split("\n")) {
+    const [, hash, type, scope, breaking, text] = /^(\w+) (\w+)(?:\(([^)]+)\))?(!?): (.+)$/.exec(line) ?? [];
+    const named = { feat: "New", fix: "Fixed", perf: "Faster" }[type ?? ""];
+    const section = breaking ? "Breaking" : named;
+    if (section) sections[section]!.push(`- ${scope ? `**${scope}:** ` : ""}${text} (${hash})`);
+  }
+  const listed = Object.entries(sections).filter(([, lines]) => lines.length > 0);
+  const parts = listed.map(([name, lines]) => `## ${name}\n\n${lines.join("\n")}`);
+  const compare = `https://github.com/phongndo/patch/compare/${previous}...${tag}`;
+  console.log([...parts, ...install, `[Every change](${compare})`].join("\n\n"));
 }
 
 /** The libraries a binary needs must be on any machine with that system. */
@@ -277,8 +324,10 @@ function nix() {
 
 const [command, ...args] = process.argv.slice(2);
 if (command === "check") check(args[0]);
+else if (command === "bump" && args[0]) bump(args[0]);
+else if (command === "notes" && args[0]) notes(args[0]);
 else if (command === "package" && args.length === 2) pack(args[0]!, args[1]!);
 else if (command === "npm") npm();
 else if (command === "formula") formula();
 else if (command === "nix") nix();
-else fail("expected check, package, npm, formula or nix; see the top of scripts/release.ts");
+else fail("expected bump, check, notes, package, npm, formula or nix; see the top of scripts/release.ts");
