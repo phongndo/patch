@@ -1,7 +1,9 @@
 //! Turns a submitted review into the text the agent reads on stdout.
 //! `web/feedback.ts` writes the same for a page that has lost its review.
 
-use crate::protocol::{Comment, Decision, Submission};
+use crate::protocol::{Comment, Submission};
+
+const PASSED: &str = "The user reviewed the changes in Patch and has no comments. The review passed.";
 
 pub const CLOSED: &str =
     "The review was closed without feedback. This is not an approval: do not continue the work unless the user asks.";
@@ -31,26 +33,14 @@ fn range(comment: &Comment) -> String {
 
 pub fn format(submission: &Submission, repository: &str, root: &str) -> String {
     let mut comments: Vec<&Comment> = submission.comments.iter().filter(|c| !c.body.trim().is_empty()).collect();
-    let approve = submission.decision == Decision::Approve;
-    if approve && comments.is_empty() {
-        return "The user reviewed the changes in Patch and approved them with no comments.".into();
+    if comments.is_empty() {
+        return PASSED.into();
     }
 
     let mut out: Vec<String> = Vec::new();
-    out.push(if approve {
-        format!("# Review: approved with notes ({repository})")
-    } else {
-        format!("# Review feedback ({repository})")
-    });
+    out.push(format!("# Review feedback ({repository})"));
     out.push(String::new());
-    out.push(
-        if approve {
-            "The user approved these changes. Treat the notes below as guidance, not blocking requests."
-        } else {
-            "The user reviewed the changes and left feedback. Address every comment, then summarize what you changed."
-        }
-        .into(),
-    );
+    out.push("The user reviewed the changes and left feedback. Address every comment, then summarize what you changed.".into());
     out.push(format!("Paths are relative to {root}."));
     // General comments belong to no file.
     let general: Vec<&str> = comments.iter().filter(|c| c.file.is_empty()).map(|c| c.body.trim()).collect();
@@ -110,14 +100,17 @@ mod tests {
     }
 
     #[test]
-    fn approval_with_nothing_to_say_is_one_line() {
-        let s = Submission { decision: Decision::Approve, comments: vec![] };
-        assert!(format(&s, "demo", "/repo").contains("approved them with no comments"));
+    fn a_review_with_nothing_to_say_is_one_line() {
+        let mut blank = comment("additions", 2, 2, &[]);
+        blank.body = " ".into();
+        for comments in [vec![], vec![blank]] {
+            assert_eq!(format(&Submission { comments }, "demo", "/repo"), PASSED);
+        }
     }
 
     #[test]
     fn comments_carry_location_lines_and_a_safe_fence() {
-        let s = Submission { decision: Decision::Comment, comments: vec![comment("additions", 2, 3, &["const x = 1;", "```"])] };
+        let s = Submission { comments: vec![comment("additions", 2, 3, &["const x = 1;", "```"])] };
         let text = format(&s, "demo", "/repo");
         assert!(text.contains("### src/a.ts:2-3"));
         assert!(text.contains("````ts\nconst x = 1;\n```\n````"));
@@ -127,7 +120,7 @@ mod tests {
     fn old_side_and_scope_are_named() {
         let mut c = comment("deletions", 4, 4, &[]);
         c.scope = Some("PR #1".into());
-        let s = Submission { decision: Decision::Comment, comments: vec![c] };
+        let s = Submission { comments: vec![c] };
         assert!(format(&s, "demo", "/repo").contains("src/a.ts:4 (old side, removed lines) (in PR #1)"));
     }
 
@@ -138,7 +131,7 @@ mod tests {
         first.body = "Split this PR.".into();
         let mut second = first.clone();
         second.body = "Add tests.\nFor both paths.".into();
-        let s = Submission { decision: Decision::Comment, comments: vec![comment("additions", 2, 2, &[]), first, second] };
+        let s = Submission { comments: vec![comment("additions", 2, 2, &[]), first, second] };
         let text = format(&s, "demo", "/repo");
         assert!(text.contains("## General\n\n- Split this PR.\n- Add tests.\n  For both paths.\n\n## src/a.ts"));
     }

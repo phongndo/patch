@@ -72,15 +72,9 @@ export function App() {
   createEffect(sidebarWidth, (width) =>
     document.documentElement.style.setProperty("--sidebar", `${width}px`),
   );
-  const [finishing, setFinishing] = createSignal(false);
-  // Which button Finish opens on; by default the one that fits what is written.
-  const [finishOn, setFinishOn] = createSignal<"approve" | "comment">();
-  const [sendError, setSendError] = createSignal("");
   let searchInput: HTMLInputElement | undefined;
   const [collapsed, setCollapsed] = createStore<Record<string, boolean>>({});
   let scroller: HTMLElement | undefined;
-  let approveButton: HTMLButtonElement | undefined;
-  let sendButton: HTMLButtonElement | undefined;
   let diff: DiffView | undefined;
 
   // Lines added and removed per kind of file, and in all.
@@ -100,10 +94,9 @@ export function App() {
   const totals = () => breakdown().get("total")!;
   const number = new Intl.NumberFormat();
   const commentCount = () => store.comments.length;
-  /** Comments whose lines left the diff after a refresh or a scope change; they are sent as written. */
-  const movedCount = () => store.comments.filter(moved).length;
-  const summary = () => (commentCount() ? `${commentCount()} comment${commentCount() === 1 ? "" : "s"}` : "");
-  const hasFeedback = () => commentCount() > 0;
+  /** Finishing with no comments passes the changes, so there must be some to pass. */
+  const canFinish = () =>
+    !store.submitted && (state.hasUnsent() || (!store.loading && !store.error && state.files().length > 0));
 
   function annotationsFor(name: string): DiffLineAnnotation<Note>[] {
     const composer = state.composer();
@@ -293,7 +286,6 @@ export function App() {
   }
 
   function jumpTo(comment: Pick<Comment, "id" | "file" | "side" | "end">) {
-    setFinishing(false);
     setLastComment(comment.id);
     if (collapsed[comment.file]) setFileCollapsed(comment.file, false);
     diff?.scrollToLine(comment.file, comment.end, comment.side);
@@ -356,29 +348,22 @@ export function App() {
     else toast.error("The browser did not allow copying.", { id: "hint" });
   }
 
-  /** Opens Finish with everything written counted, on one of its buttons. */
-  function openFinish(on?: "approve" | "comment") {
-    state.keepWriting();
-    if (on === "comment" && !hasFeedback()) {
-      toast.info("There are no comments to send yet.", { id: "hint" });
-      return;
-    }
-    setSendError("");
-    setFinishOn(on);
-    setFinishing(true);
-  }
-
-  async function send(decision: "approve" | "comment") {
-    setSendError("");
+  /** Hands the review back to the agent and closes the tab. */
+  async function finish() {
+    if (!canFinish()) return;
     try {
-      await state.finish(decision);
+      await state.finish();
       if (!store.submitted) return;
       toast.dismiss("disconnected");
-      setFinishing(false);
+      toast.dismiss("unsent");
       // The agent has the feedback; the tab has nothing left to do.
       window.close();
     } catch (error) {
-      setSendError(error instanceof Error ? error.message : String(error));
+      toast.error(error instanceof Error ? error.message : String(error), {
+        id: "unsent",
+        duration: Infinity,
+        action: { label: "Copy feedback", onAction: () => void copyFeedback() },
+      });
     }
   }
 
@@ -401,7 +386,7 @@ export function App() {
   };
 
   const running = () => !store.submitted && palette() === undefined;
-  const idle = () => running() && !finishing() && !settingsOpen() && !scopeOpen() && !filterOpen();
+  const idle = () => running() && !settingsOpen() && !scopeOpen() && !filterOpen();
   const flip = (name: "wrap" | "wordDiff" | "foldGenerated" | "ligatures") => ({
     run: () => preferences.update({ [name]: !settings[name] }),
   });
@@ -414,15 +399,7 @@ export function App() {
 
   const handlers: Record<Action, Handler> = {
     palette: { run: () => openPalette(), enabled: () => running() && !settingsOpen() },
-    finish: {
-      enabled: () => running() && !settingsOpen(),
-      run: () => {
-        if (finishing()) void send(hasFeedback() ? "comment" : "approve");
-        else openFinish();
-      },
-    },
-    approve: { run: () => openFinish("approve") },
-    sendFeedback: { run: () => openFinish("comment") },
+    finish: { run: () => void finish() },
     copyFeedback: { run: () => void copyFeedback() },
     viewed: {
       run: withCurrentFile((file) => {
@@ -586,65 +563,17 @@ export function App() {
             >
               <Icon name="command" />
             </button>
-            <Popover open={finishing()} onOpenChange={(open) => (open ? openFinish() : setFinishing(false))}>
-              <PopoverTrigger class="button primary" disabled={store.submitted}>
-                Finish
-                <span class="count" data-empty={commentCount() ? undefined : ""}>
-                  {commentCount()}
-                </span>
-              </PopoverTrigger>
-              <PopoverContent
-                class="finish"
-                side="bottom"
-                align="end"
-                sideOffset={6}
-                // The Enter that opened this may still be held; it must not press a button too.
-                onKeyDown={(event: KeyboardEvent) => event.repeat && event.preventDefault()}
-                // With comments written, Enter sends them; it never approves past them.
-                initialFocus={() =>
-                  (finishOn() ?? (hasFeedback() ? "comment" : "approve")) === "comment"
-                    ? sendButton
-                    : approveButton
-                }
-              >
-                <PopoverTitle class="finish-title">{summary() || "No comments yet"}</PopoverTitle>
-                <Show when={movedCount()}>
-                  <p class="finish-warning">
-                    {movedCount() === 1 ? "1 comment is" : `${movedCount()} comments are`} on lines no longer
-                    in the diff. {movedCount() === 1 ? "It is" : "They are"} sent as written.
-                  </p>
-                </Show>
-                <Show when={sendError()}>
-                  <p class="error">{sendError()}</p>
-                  <button class="link" onClick={() => void copyFeedback()}>
-                    Copy feedback
-                  </button>
-                </Show>
-                <div class="finish-actions">
-                  <span class="hint">
-                    <Show when={preferences.keyText("finish")}>
-                      {preferences.keyText("finish")} {hasFeedback() ? "sends" : "approves"}
-                    </Show>
-                  </span>
-                  <button
-                    class={{ button: true, primary: !hasFeedback() }}
-                    ref={(element) => (approveButton = element)}
-                    onClick={() => void send("approve")}
-                  >
-                    Approve
-                  </button>
-                  <Show when={hasFeedback()}>
-                    <button
-                      class="button primary"
-                      ref={(element) => (sendButton = element)}
-                      onClick={() => void send("comment")}
-                    >
-                      Send feedback
-                    </button>
-                  </Show>
-                </div>
-              </PopoverContent>
-            </Popover>
+            <button
+              class="button primary"
+              title={preferences.hint("Send your comments to the agent and close", "finish")}
+              disabled={!canFinish()}
+              onClick={() => void finish()}
+            >
+              Finish
+              <span class="count" data-empty={commentCount() ? undefined : ""}>
+                {commentCount()}
+              </span>
+            </button>
           </div>
         </div>
       </header>

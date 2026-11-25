@@ -415,12 +415,12 @@ function createReviewState() {
   }
 
   let sending = false;
-  async function finish(decision: "approve" | "comment") {
+  async function finish() {
     if (!store.review || sending || store.submitted) return;
     sending = true;
     try {
       keepWriting();
-      await submit({ decision, comments: snapshot(store).comments });
+      await submit({ comments: snapshot(store).comments });
       sessionStorage.removeItem(savedKey(store.review.session));
       setStore((s) => {
         s.submitted = true;

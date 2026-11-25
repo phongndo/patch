@@ -594,7 +594,7 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
         }
         (Method::POST, "/api/submit") => {
             let Ok(submission) = serde_json::from_slice::<Submission>(&body().await) else {
-                return error(StatusCode::BAD_REQUEST, "Unknown decision.");
+                return error(StatusCode::BAD_REQUEST, "Not a review.");
             };
             if settle(&app, Outcome::Submitted(submission)) {
                 json(StatusCode::OK, &serde_json::json!({ "ok": true }))

@@ -80,8 +80,8 @@ export function bindActions(handlers: Record<Action, Handler>, idle: () => boole
               event.preventDefault();
               event.stopPropagation();
             }
-            // Not requireReset: it forgets a held key when the bindings change, and what
-            // opens Finish must never go on to send.
+            // Not requireReset: it forgets a held key when the bindings change, and the
+            // Mod+Enter that saves a comment must never go on to finish.
             if (!event.repeat || repeats(action)) handlers[action].run();
           },
           {

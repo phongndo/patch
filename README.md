@@ -1,8 +1,9 @@
 # Patch
 
 `/patch` opens your agent's changes in the browser as a diff. You comment on
-lines, press Send, and the tab closes. The agent gets every comment on stdout as
-`file:line`, with the lines it is about. Patch never writes to your repository.
+lines, press Finish, and the tab closes. The agent gets every comment on stdout as
+`file:line`, with the lines it is about. Type `/patch` again once it is done.
+Patch never writes to your repository.
 
 ```sh
 npx -y @phongndo/patchr install
@@ -56,11 +57,12 @@ Codex's default sandbox blocks the local port it needs; allow it to escalate.
 `patchr review [dir] [--base <ref>] [--uncommitted | --staged] [--remote | --local]`
 is what the command runs. By default it shows what a pull request would: the branch since
 it left its base, plus uncommitted and untracked files. A review is one pass:
-comment, send, and the next `/patch` starts empty. Comments live in the tab: a
-reload keeps them, closing with any unsent asks first, and if Patch is cut off
-(an agent's timeout) the tab can still copy them. Closing the tab ends the
-review; a tab that sleeps, is suspended or loses its connection does not, and
-`/patch` opens it again if it is gone. Feedback the agent's harness
+comment, finish, and the next `/patch` starts empty. Finishing with no comments
+tells the agent the review passed; closing the tab ends it without saying so.
+Comments live in the tab: a reload keeps them, closing with any unsent asks
+first, and if Patch is cut off (an agent's timeout) the tab can still copy them.
+A tab that sleeps, is suspended or loses its connection doesn't end the review,
+and `/patch` opens it again if it is gone. Feedback the agent's harness
 refuses is kept in `~/.local/state/patch/unsent`, and its path is shown.
 
 ⌘K opens the command palette, which has every command, file, comment and

@@ -569,14 +569,7 @@ input {
   overflow-wrap: anywhere;
 }
 
-.finish-warning {
-  margin: 0 12px 8px;
-  color: var(--outdated);
-  font-size: var(--text-meta);
-}
-
-.composer textarea,
-.finish textarea {
+.composer textarea {
   display: block;
   width: 100%;
   min-height: 72px;
@@ -598,8 +591,7 @@ input {
   field-sizing: content;
 }
 
-.composer footer,
-.finish-actions {
+.composer footer {
   display: flex;
   align-items: center;
   justify-content: flex-end;
@@ -612,30 +604,6 @@ input {
   padding-left: 4px;
   color: var(--muted);
   font-size: var(--text-meta);
-}
-
-/* Finish */
-
-.finish {
-  z-index: 20;
-  width: min(440px, calc(100vw - 20px));
-  max-height: min(70vh, var(--available-height, 70vh));
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--line-strong);
-  border-radius: 10px;
-  background: var(--panel);
-  box-shadow: var(--shadow);
-  overflow: hidden;
-  outline: none;
-}
-
-.finish-title {
-  margin: 0;
-  padding: 10px 12px 6px;
-  font-size: var(--text-meta);
-  font-weight: 500;
-  color: var(--muted);
 }
 
 .comment-list {
@@ -719,21 +687,6 @@ input {
 
 .muted {
   color: var(--muted);
-}
-
-.finish-warning {
-  margin: 0 12px 8px;
-  color: var(--outdated);
-  font-size: var(--text-meta);
-}
-
-.finish textarea {
-  border-bottom: 1px solid var(--line);
-}
-
-.error {
-  margin: 8px 10px 0;
-  color: var(--del);
 }
 
 .overlay {

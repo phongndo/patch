@@ -124,17 +124,10 @@ pub struct PullRequest {
     pub draft: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Decision {
-    Approve,
-    Comment,
-}
-
+/// A finished review; with no comments, it passed. They have no default, so a
+/// malformed request never reads as that.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Submission {
-    pub decision: Decision,
-    #[serde(default)]
     pub comments: Vec<Comment>,
 }

@@ -66,7 +66,7 @@ export interface ScopesResponse {
   commits: Commit[];
 }
 
+/** A finished review; with no comments, it passed. */
 export interface Submission {
-  decision: "approve" | "comment";
   comments: Comment[];
 }

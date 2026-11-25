@@ -22,13 +22,12 @@ interface Definition {
 
 export const actions = {
   palette: { label: "Command palette", key: "Mod+K", group: "App", icon: "command", words: "actions" },
-  finish: { label: "Finish, then send", key: "Mod+Enter", group: "Review", icon: "check" },
-  approve: { label: "Approve…", group: "Review", icon: "check", words: "accept lgtm" },
-  sendFeedback: {
-    label: "Send feedback…",
+  finish: {
+    label: "Finish the review",
+    key: "Mod+Enter",
     group: "Review",
-    icon: "comment",
-    words: "submit request changes",
+    icon: "check",
+    words: "send submit feedback approve lgtm",
   },
   copyFeedback: { label: "Copy feedback", group: "Review", icon: "fileText", words: "markdown" },
   viewed: {
@@ -184,7 +183,6 @@ export const whileTyping: ReadonlySet<Action> = new Set<Action>([
   "refresh",
   "sidebar",
   "settings",
-  "finish",
 ]);
 export const actionNames = Object.keys(actions) as Action[];
 export const definitionOf = (action: Action): Definition => actions[action];

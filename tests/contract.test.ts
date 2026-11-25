@@ -146,9 +146,9 @@ describe("patchr review", () => {
 
       // Other origins, plain-text posts and unknown hosts are refused.
       expect((await post(`${origin}/api/submit`, {}, { origin: "http://evil.test" })).status).toBe(403);
-      expect(
-        (await fetch(`${origin}/api/submit`, { method: "POST", body: '{"decision":"approve"}' })).status,
-      ).toBe(403);
+      expect((await fetch(`${origin}/api/submit`, { method: "POST", body: '{"comments":[]}' })).status).toBe(
+        403,
+      );
       // Missing assets are 404, page routes are the page.
       expect((await fetch(`${origin}/a/missing.js`)).status).toBe(404);
       const page = await fetch(`${origin}/some/route`);
@@ -197,7 +197,7 @@ describe("patchr review", () => {
         general("Close.\nBut not there."),
         { id: "c4", file: "Makefile", side: "additions", start: 1, end: 1, body: " ", excerpt: [] },
       ];
-      expect((await post(`${origin}/api/submit`, { decision: "comment", comments })).ok).toBe(true);
+      expect((await post(`${origin}/api/submit`, { comments })).ok).toBe(true);
       const out = await stdout;
       expect(await child.exited).toBe(0);
       expect(out).toContain("# Review feedback (patch-contract-");
@@ -215,12 +215,13 @@ describe("patchr review", () => {
     }
   }, 20_000);
 
-  test("approval with nothing to say is one line", async () => {
+  test("a review with nothing to say passed, in one line, and a malformed one did not", async () => {
     const { child, origin, stdout } = await start("--uncommitted");
     try {
-      await post(`${origin}/api/submit`, { decision: "approve", comments: [] });
+      expect((await post(`${origin}/api/submit`, {})).status).toBe(400);
+      await post(`${origin}/api/submit`, { comments: [] });
       expect((await stdout).trim()).toBe(
-        "The user reviewed the changes in Patch and approved them with no comments.",
+        "The user reviewed the changes in Patch and has no comments. The review passed.",
       );
     } finally {
       child.kill();
@@ -459,7 +460,7 @@ describe("patchr review", () => {
   });
 
   test("submitted feedback is kept until the adapter delivers it, and never comes back as comments", async () => {
-    const submission = { decision: "comment", comments: [general("Keep me.")] };
+    const submission = { comments: [general("Keep me.")] };
     const { child, origin, stdout } = await start("--typed", "--uncommitted");
     await post(`${origin}/api/submit`, submission);
     const { receipt, text, file } = JSON.parse(await stdout);
@@ -488,7 +489,7 @@ describe("patchr review", () => {
   test("a review ends once: a second submission is told so", async () => {
     const { child, origin, stdout } = await start("--uncommitted");
     try {
-      const submission = { decision: "comment", comments: [general("Once.")] };
+      const submission = { comments: [general("Once.")] };
       const [first, second] = await Promise.all([
         post(`${origin}/api/submit`, submission),
         post(`${origin}/api/submit`, submission),
@@ -527,7 +528,7 @@ describe("patchr review", () => {
       return text.match(pattern)![1]!;
     };
     const origin = new URL(await until(/open at (\S+)/)).origin;
-    await post(`${origin}/api/submit`, { decision: "comment", comments: [general("Nobody reads.")] });
+    await post(`${origin}/api/submit`, { comments: [general("Nobody reads.")] });
     const file = await until(/kept in (\S+)/);
     expect(await Bun.file(file).text()).toContain("Nobody reads.");
     await child.exited;
@@ -585,7 +586,7 @@ describe("patchr review", () => {
 
       for (const [index, note] of ["FIRST", "SECOND"].entries()) {
         if (index > 0) reason = await open();
-        await post(`${url(reason)}api/submit`, { decision: "comment", comments: [general(note)] });
+        await post(`${url(reason)}api/submit`, { comments: [general(note)] });
         for (let i = 0; i < 100 && (await kept()) <= index; i++) await Bun.sleep(50);
       }
       const context = (await hook("Continue.")).hookSpecificOutput.additionalContext as string;

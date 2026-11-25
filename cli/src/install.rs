@@ -32,7 +32,7 @@ const LINK: &str = "The command first prints `Patch is open at <url>` on stderr.
 const OUTCOMES: &str = "Then act on its stdout:
 
 - Feedback or comments: address every one now, then summarize what you changed.
-- Approved with no comments: say the review passed and continue.
+- No comments: say the review passed and continue.
 - Closed without feedback: say so in one sentence and stop. Closing is not approval.
 - If the command was cut off by a timeout, say so and run it again. The new review starts empty; the tab of the old one can still copy its comments.";
 
@@ -50,7 +50,7 @@ fn task() -> String {
     format!(
         "{WHERE}
 
-Run `{command}` in the foreground and wait for it to finish. It opens the diff in the browser and blocks until the user submits, which can take a long time: use the longest timeout your shell tool allows, or none.
+Run `{command}` in the foreground and wait for it to finish. It opens the diff in the browser and blocks until the user finishes, which can take a long time: use the longest timeout your shell tool allows, or none.
 
 {LINK}
 
@@ -117,7 +117,7 @@ fn gemini_command() -> String {
 
 ## Your task
 
-If the review above has feedback or comments, address every one now, then summarize what you changed. If it was approved with no comments, say the review passed and continue. If it was closed without feedback, or is empty, say so in one sentence and stop: closing is not approval.
+If the review above has feedback or comments, address every one now, then summarize what you changed. If it has no comments, say the review passed and continue. If it was closed without feedback, or is empty, say so in one sentence and stop: closing is not approval.
 ",
         patchr()
     );

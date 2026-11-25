@@ -180,7 +180,7 @@ test("filters stay open while several are chosen", async () => {
   expect(state.visibleFiles()).toHaveLength(2);
 });
 
-test("keys run commands, but not under the palette, Settings or Finish, or while typing", async () => {
+test("keys run commands, but not under the palette or Settings, or while typing", async () => {
   const viewed = () => state.isViewed("a.ts");
   const mark = (target: Element = document.body) =>
     press(target, "V", { code: "KeyV", ctrlKey: true, shiftKey: true });
@@ -190,11 +190,7 @@ test("keys run commands, but not under the palette, Settings or Finish, or while
   expect(viewed()).toBe(true);
   await mark();
   expect(viewed()).toBe(false);
-  for (const cover of [
-    () => ui.setPalette([]),
-    () => ui.setSettingsOpen(true),
-    () => click([...document.querySelectorAll("button")].find((e) => e.textContent!.startsWith("Finish"))!),
-  ]) {
+  for (const cover of [() => ui.setPalette([]), () => ui.setSettingsOpen(true)]) {
     await cover();
     await settle();
     await mark();
@@ -213,21 +209,32 @@ test("keys run commands, but not under the palette, Settings or Finish, or while
   expect(isOpen()).toBe(true);
 });
 
-test("holding the Finish key opens it and never sends", async () => {
-  state.saveGeneral("hello");
+test("holding the key that saves a comment never finishes, and it only saves while writing", async () => {
+  state.composeGeneral();
+  state.setGeneralText("hello");
+  ui.setSidebarView("comments");
   await settle();
   const down = async (repeat: boolean) => {
     const init = { key: "Enter", code: "Enter", ctrlKey: true, bubbles: true, cancelable: true, repeat };
-    (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", init));
+    (document.querySelector(".general-editor textarea") ?? document.body).dispatchEvent(
+      new KeyboardEvent("keydown", init),
+    );
     await settle();
   };
   await down(false);
+  expect(state.store.comments.map((comment) => comment.body)).toEqual(["hello"]);
   for (let count = 0; count < 3; count++) await down(true);
-  expect(document.querySelector(".finish[data-open]")).not.toBeNull();
   expect(submitted).toEqual([]);
   const up = { key: "Enter", code: "Enter", bubbles: true };
   document.dispatchEvent(new KeyboardEvent("keyup", up));
-  await press(document.activeElement!, "Escape");
+  // Nor from a search, or under the scope picker.
+  await press($(".side-search"), "Enter", mod);
+  ui.setScopeOpen(true);
+  await settle();
+  await key("Enter", mod);
+  expect(submitted).toEqual([]);
+  ui.setScopeOpen(false);
+  await settle();
 });
 
 test("keys do nothing under an open popover", async () => {
@@ -254,16 +261,6 @@ test("a removed or custom key is what works, and what the palette shows", async 
     [...document.querySelectorAll(".palette [role=option]")].find((e) => e.textContent!.includes(label))!;
   expect(row("Split or unified").querySelector("kbd")).toBeNull();
   expect(row("Highlight changed words").querySelector("kbd")!.textContent).toContain("W");
-});
-
-test("Approve only opens Finish on its button", async () => {
-  await open();
-  await choose("approve");
-  await settle();
-  expect(document.querySelector(".finish[data-open]")).not.toBeNull();
-  expect(document.activeElement!.textContent).toContain("Approve");
-  expect(submitted).toEqual([]);
-  await press(document.activeElement!, "Escape");
 });
 
 test("half-written comments survive refreshing, filtering and opening another", async () => {
@@ -316,6 +313,25 @@ test("a viewed mark lasts only as long as the file's changes", async () => {
   expect(state.isViewed("a.ts")).toBe(true);
 });
 
+test("a send that failed says so, offers a copy, and keeps the review", async () => {
+  const close = vi.spyOn(window, "close").mockImplementation(() => {});
+  close.mockClear();
+  state.saveGeneral("hello");
+  await settle();
+  const working = fetch;
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) =>
+    url === "/api/submit" ? new Response("{}", { status: 500 }) : working(url, init),
+  );
+  await key("Enter", mod);
+  await settle();
+  expect(document.querySelector(".toast")!.textContent).toContain("Copy feedback");
+  expect(state.store.submitted).toBe(false);
+  expect(state.store.comments.map((comment) => comment.body)).toContain("hello");
+  expect(close).not.toHaveBeenCalled();
+  state.deleteComments(state.store.comments.map((comment) => comment.id));
+  await settle();
+});
+
 test("the tab keeps a run's comments over a reload, asks before losing them, and forgets them once sent", async () => {
   const asks = () => {
     const event = new Event("beforeunload", { cancelable: true });
@@ -334,11 +350,10 @@ test("the tab keeps a run's comments over a reload, asks before losing them, and
   state.setGeneralText("and one more thing");
   flush();
   await key("Enter", mod);
-  await key("Enter", mod);
   await settle();
+  expect(window.close).toHaveBeenCalledOnce();
   expect(submitted).toHaveLength(1);
   expect(submitted[0]).toMatchObject({
-    decision: "comment",
     comments: [{ body: "hello" }, { body: "and one more thing" }],
   });
   expect(sessionStorage.getItem("patch:run1")).toBeNull();

@@ -56,32 +56,15 @@ const clear = async () => {
 const finish = () =>
   [...document.querySelectorAll("button")].find((e) => e.textContent?.startsWith("Finish"))!;
 
-/** What Finish offers, with a star on its main button. */
-const offered = () =>
-  [...document.querySelectorAll(".finish-actions button")].map(
-    (e) => e.textContent!.trim() + (e.classList.contains("primary") ? "*" : ""),
-  );
-
-test("Finish focuses Approve with nothing written, and only Send feedback with comments", async () => {
+test("Finish needs changes to pass or something to send, and counts comments", async () => {
   await clear();
-  const focused: string[] = [];
-  document.addEventListener("focusin", (event) => {
-    const button = (event.target as HTMLElement).closest(".finish button");
-    if (button) focused.push(button.textContent!.trim());
-  });
-  await click(finish());
-  expect(focused).toEqual(["Approve"]);
-  expect(offered()).toEqual(["Approve*"]);
-  await press(document.activeElement!, "Escape");
-  expect(document.activeElement).toBe(finish());
-
+  // There are no files here: nothing to pass.
+  expect(finish().disabled).toBe(true);
   await write("hello");
-  focused.length = 0;
-  await click(finish());
-  expect(focused).toEqual(["Send feedback"]);
-  expect(offered()).toEqual(["Approve", "Send feedback*"]);
-  await press(document.activeElement!, "Escape");
+  expect(finish().disabled).toBe(false);
+  expect(finish().querySelector(".count")!.textContent).toBe("1");
   await clear();
+  expect(finish().disabled).toBe(true);
 });
 
 test("Refresh is offered only once the repository changed", async () => {
@@ -305,4 +288,28 @@ test("a stream the browser gave up on is opened again as the same page", async (
 test("the resizer is a named separator for the sidebar", () => {
   const resizer = named("separator", "Resize the sidebar");
   expect(document.getElementById(resizer.getAttribute("aria-controls")!)?.tagName).toBe("ASIDE");
+});
+
+// Last: the page is done after it.
+test("one press finishes a review without comments, and closes", async () => {
+  const close = vi.spyOn(window, "close").mockImplementation(() => {});
+  await clear();
+  reviewed = {
+    scope: { kind: "all" },
+    patch: "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-x\n+y\n",
+  };
+  await state.load();
+  await settle();
+  const sent: unknown[] = [];
+  const working = fetch;
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    if (url !== "/api/submit") return working(url, init);
+    sent.push(JSON.parse(String(init?.body)));
+    return new Response("{}");
+  });
+  await click(finish());
+  await settle();
+  expect(sent).toEqual([{ comments: [] }]);
+  expect(close).toHaveBeenCalledOnce();
+  expect(finish().disabled).toBe(true);
 });
