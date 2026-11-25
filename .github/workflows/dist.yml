@@ -1,8 +1,7 @@
 name: Distribution
 
-# Builds the release archives where each one runs, then installs them on fresh
-# machines the ways a release would. The Release workflow publishes exactly
-# these archives.
+# Builds the release archives, then tests and installs them where each one runs. The
+# Release workflow publishes exactly these archives, so none of this uses a build cache.
 
 on:
   pull_request:
@@ -21,38 +20,18 @@ defaults:
     shell: bash
 
 jobs:
-  page:
-    name: Build the page
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        with:
-          bun-version-file: package.json
-      - run: bun install --frozen-lockfile
-      - run: bun run build:web
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: page
-          path: web/dist
-          if-no-files-found: error
-          retention-days: 14
-
   build:
     name: Build ${{ matrix.target }}
-    needs: page
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        # scripts/release.ts has the same targets, and Publish counts them.
+        # scripts/release.ts has the same targets, and Release counts them.
         include:
+          # Intel Macs are slow to build on, and Apple silicon builds for both.
           - { os: macos-15, target: aarch64-apple-darwin }
-          - { os: macos-15-intel, target: x86_64-apple-darwin }
+          - { os: macos-15, target: x86_64-apple-darwin }
           - { os: ubuntu-24.04, target: x86_64-unknown-linux-musl }
           - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
     steps:
@@ -62,38 +41,30 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: package.json
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
-        with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
-      - name: Install the musl linker
-        if: runner.os == 'Linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: page
-          path: web/dist
-      - run: bun install --frozen-lockfile # the notices are read from node_modules
+      - run: rustup target add ${{ matrix.target }}
+      - run: bun install --frozen-lockfile
+      - run: bun run build:web
       - run: cargo build --release --locked --manifest-path cli/Cargo.toml --target ${{ matrix.target }}
         env:
+          # Rust's own linker and libc: no musl tools to install.
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: rust-lld
           # The oldest macOS Rust supports on this processor.
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.target == 'x86_64-apple-darwin' && '10.12' || '11.0' }}
-      - run: bun test ./tests/install.test.ts
-        env:
-          PATCHR: cli/target/${{ matrix.target }}/release/patchr
       - run: bun scripts/release.ts package ${{ matrix.target }} cli/target/${{ matrix.target }}/release/patchr
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: patchr-${{ matrix.target }}
           path: dist/release/*.tar.gz*
           if-no-files-found: error
+          compression-level: 0
           retention-days: 14
 
   install:
     name: Install ${{ matrix.target }}
     needs: build
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -109,17 +80,21 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: package.json
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "24"
-          package-manager-cache: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: patchr-*
           path: dist/release
           merge-multiple: true
       - id: version
-        run: echo "version=$(bun scripts/release.ts check)" >> "$GITHUB_OUTPUT"
+        run: |
+          version=$(bun scripts/release.ts check)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Test the binary in the archive
+        env:
+          ARCHIVE: patchr-v${{ steps.version.outputs.version }}-${{ matrix.target }}
+        run: |
+          tar -xzf "dist/release/$ARCHIVE.tar.gz" -C "$RUNNER_TEMP"
+          PATCHR="$RUNNER_TEMP/$ARCHIVE/patchr" bun test ./tests/
       - name: Install script
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -141,17 +116,39 @@ jobs:
           npm install --ignore-scripts --no-audit "./phongndo-patchr-$PLATFORM-$VERSION.tgz" "./patchr-$VERSION.tgz"
           HOME="$PWD/home" ./node_modules/.bin/patchr install
           [[ "$(home/.local/bin/patchr --version)" == "$VERSION" ]]
+
+  # One of each system: Installs tries the published formula on all four.
+  homebrew:
+    name: Homebrew (${{ matrix.os }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04]
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: package.json
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: patchr-*
+          path: dist/release
+          merge-multiple: true
       - uses: Homebrew/actions/setup-homebrew@dc7099b3e807f1e2ecc61f3ecabc840eedd5586a
-      - name: Homebrew
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: "1"
-          HOMEBREW_NO_INSTALL_CLEANUP: "1"
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
+      - run: |
+          version=$(bun scripts/release.ts check)
           bun scripts/release.ts formula
           tap="$RUNNER_TEMP/tap"
           mkdir -p "$tap/Formula" "$RUNNER_TEMP/brew/.claude"
-          sed "s#https://github.com/phongndo/patch/releases/download/v$VERSION#file://$PWD/dist/release#" \
+          sed "s#https://github.com/phongndo/patch/releases/download/v$version#file://$PWD/dist/release#" \
             dist/release/patchr.rb > "$tap/Formula/patchr.rb"
           git -C "$tap" init --quiet
           git -C "$tap" add Formula

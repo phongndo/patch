@@ -1,7 +1,7 @@
 name: Release
 
 # Publishes the version on main:
-#   bump the version (scripts/release.ts check lists where), push it to main, then
+#   bun run bump 0.2.0, commit, push to main, then
 #   gh workflow run release.yml
 # The archives are staged in a draft first. From then on that draft is the release: running this
 # again, for an older one with -f version=0.1.0, carries on with those bytes, never new ones, and
@@ -115,6 +115,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.source }}
+          fetch-depth: 0 # the notes read the commits since the last tag
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
@@ -159,8 +160,9 @@ jobs:
       - name: Stage a draft
         if: needs.prepare.outputs.release == ''
         run: |
+          bun scripts/release.ts notes "$SOURCE" > "$RUNNER_TEMP/notes.md"
           gh release create "v$VERSION" dist/release/* --draft --target "$SOURCE" \
-            --title "Patch $VERSION" --generate-notes
+            --title "Patch $VERSION" --notes-file "$RUNNER_TEMP/notes.md"
       - name: Tag the source with the hashes of its release
         run: |
           bun scripts/release.ts nix
