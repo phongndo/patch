@@ -293,6 +293,26 @@ describe("patchr review", () => {
     }
   }, 20_000);
 
+  test.concurrent("a page that left earlier does not end the review of one that goes silent", async () => {
+    const { child, origin } = await start("--uncommitted");
+    try {
+      const live = new AbortController();
+      // Held to the end: Bun closes a stream whose response nothing refers to.
+      const stream = await fetch(`${origin}/api/live`, { signal: live.signal });
+      const reader = stream.body!.getReader();
+      await reader.read();
+      await post(`${origin}/api/leave`, {});
+      await Bun.sleep(hurry ? 1200 : 9000);
+      expect(child.exitCode).toBeNull();
+      live.abort();
+      await reader.read().catch(() => {});
+      const ended = child.exited.then(() => "ended");
+      expect(await Promise.race([ended, Bun.sleep(hurry ? 2000 : 10_000)])).toBeUndefined();
+    } finally {
+      child.kill();
+    }
+  }, 30_000);
+
   test.concurrent("an adapter's review finds the repository near a file, and closing it prints nothing", async () => {
     const other = await mkdtemp(join(tmpdir(), "patch-other-"));
     Bun.spawnSync(["git", "init", "-q", other]);

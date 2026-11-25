@@ -7,7 +7,7 @@ use std::io::Write;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::body::{Body, Bytes};
@@ -70,7 +70,8 @@ pub struct Options {
 
 struct Live {
     connections: usize,
-    leaving: bool,
+    /// When a page last said it was leaving.
+    left: Option<Instant>,
     timer: Option<JoinHandle<()>>,
 }
 
@@ -137,7 +138,7 @@ pub async fn start(options: Options, public_url: impl FnOnce(u16) -> String) -> 
         options,
         session: crate::random_token(24),
         reviews: Mutex::new(HashMap::new()),
-        live: Mutex::new(Live { connections: 0, leaving: false, timer: None }),
+        live: Mutex::new(Live { connections: 0, left: None, timer: None }),
         outcome: Mutex::new(Some(sender)),
         gzip: Mutex::new(HashMap::new()),
         changes: tokio::sync::watch::channel(0).0,
@@ -297,7 +298,9 @@ fn on_disconnect(app: &Arc<App>) {
     if live.connections > 0 {
         return;
     }
-    let grace = if live.leaving { paced(LEAVE_GRACE) } else { SILENT_GRACE };
+    // One that left a while ago was another page, and says nothing of this one.
+    let leaving = live.left.is_some_and(|left| left.elapsed() < paced(LEAVE_GRACE));
+    let grace = if leaving { paced(LEAVE_GRACE) } else { SILENT_GRACE };
     drop(live);
     end_after(app, grace, Outcome::Closed);
 }
@@ -332,7 +335,7 @@ fn live_stream(app: Arc<App>) -> Response {
     {
         let mut live = app.live.lock().unwrap();
         live.connections += 1;
-        live.leaving = false;
+        live.left = None;
         if let Some(timer) = live.timer.take() {
             timer.abort();
         }
@@ -573,7 +576,7 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
         (Method::POST, "/api/leave") => {
             let gone = {
                 let mut live = app.live.lock().unwrap();
-                live.leaving = true;
+                live.left = Some(Instant::now());
                 live.connections == 0
             };
             // Word of it can arrive after the page is gone.
