@@ -41,11 +41,11 @@ export const actions = {
 
   comment: { label: "Comment on the selected lines", key: "Mod+/", group: "Comments", icon: "comment" },
   fileComment: { label: "Comment on the file", group: "Comments", icon: "comment", words: "whole" },
-  generalComment: {
-    label: "Comment on the whole change",
+  globalComment: {
+    label: "Global comment",
     group: "Comments",
     icon: "plus",
-    words: "general note add",
+    words: "overall general whole change note add",
   },
   nextComment: { label: "Next comment", key: `${motion}+N`, group: "Comments", icon: "comment" },
   previousComment: { label: "Previous comment", key: `${motion}+P`, group: "Comments", icon: "comment" },
@@ -77,7 +77,13 @@ export const actions = {
     words: "unviewed",
   },
   goToFile: { label: "Go to file…", key: "Mod+P", group: "Navigation", icon: "fileTree", words: "open jump" },
-  search: { label: "Search files", key: "Mod+Shift+F", group: "Navigation", icon: "search" },
+  search: {
+    label: "Search the sidebar",
+    key: "Mod+Shift+F",
+    group: "Navigation",
+    icon: "search",
+    words: "files comments filter",
+  },
   find: { label: "Find in the diff", key: "Mod+F", group: "Navigation", icon: "search", words: "text" },
 
   scope: {

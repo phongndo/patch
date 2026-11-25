@@ -18,7 +18,7 @@ export interface Target {
 }
 
 export const wholeFile = (file: string): Target => ({ file, side: "additions", start: 0, end: 0 });
-export const wholeChange = wholeFile("");
+export const globalTarget = wholeFile("");
 
 /** What the tab remembers of a run. */
 interface Saved {
@@ -180,8 +180,8 @@ export function sortFiles(files: FileDiffMetadata[]): FileDiffMetadata[] {
   });
 }
 
-/** General comments are about the whole change: no file and no lines. */
-export const isGeneral = (comment: Pick<Comment, "file">) => comment.file === "";
+/** Global comments are about the whole change: no file and no lines. */
+export const isGlobal = (comment: Pick<Comment, "file">) => comment.file === "";
 /** A comment about lines, rather than a whole file or change. */
 const hasLines = (comment: Pick<Comment, "start">) => comment.start > 0;
 
@@ -286,7 +286,7 @@ function createReviewState() {
       expanded.clear();
       const stays =
         !target ||
-        isGeneral(target) ||
+        isGlobal(target) ||
         (next && (!hasLines(target) || (before && isShown(next, { ...target, excerpt: before }))));
       if (!stays) {
         for (const [name, text] of old) expanded.set(name, text);
@@ -345,10 +345,10 @@ function createReviewState() {
     return comment && isMoved(comment) ? 0 : target.end;
   }
 
-  /** The comments in the order the diff shows them, general ones first. */
+  /** The comments in the order the diff shows them, global ones first. */
   const ordered = createMemo(() => {
     const order = new Map(files().map((file, index) => [file.name, index]));
-    const at = (comment: Comment) => (isGeneral(comment) ? -1 : (order.get(comment.file) ?? order.size));
+    const at = (comment: Comment) => (isGlobal(comment) ? -1 : (order.get(comment.file) ?? order.size));
     return store.comments.toSorted(
       (a, b) =>
         at(a) - at(b) ||
@@ -362,7 +362,7 @@ function createReviewState() {
   function saveComment(target: Target, body: string): string | undefined {
     const file = fileByName(target.file);
     const existing = store.comments.some((comment) => comment.id === target.id);
-    const id = existing ? target.id : isGeneral(target) || file ? newId() : undefined;
+    const id = existing ? target.id : isGlobal(target) || file ? newId() : undefined;
     if (id)
       setStore((s) => {
         const comment = s.comments.find((comment) => comment.id === id);
@@ -376,7 +376,7 @@ function createReviewState() {
             end: target.end,
             body,
             excerpt: excerptAt(target),
-            scope: isGeneral(target) ? undefined : scopeNote(),
+            scope: isGlobal(target) ? undefined : scopeNote(),
             createdAt: Date.now(),
           });
       });

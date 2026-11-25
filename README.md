@@ -68,7 +68,7 @@ refuses is kept in `~/.local/state/patch/unsent`, and its path is shown.
 ⌘K opens the command palette, which has every command, file, comment and
 setting, and ⌘O chooses what to review: ← → switch its tabs and ⇧↵ starts a run
 of commits. ⌘/ comments on the selected lines or the line under the pointer, a
-file's header on the whole file, and the Comments list on the whole change. ⌃J
+file's header on the whole file, and the Comments list adds a global one. ⌃J
 and ⌃K step through changes, ⌃N and ⌃P through comments and ⌥↓ and ⌥↑ through
 files, ⌘⇧V marks the file viewed and ⌘↵ finishes. Off a Mac the motions are on
 Alt. Settings › Shortcuts lists them all; any command can be given a key.

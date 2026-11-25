@@ -20,10 +20,10 @@ export function feedbackText(all: readonly Comment[], repository: string): strin
     "The user reviewed the changes and left the numbered comments below. Address every one: make the change it asks for or, if it only asks a question, answer it without changing code for it. Then say what you did for each, by number.",
   ];
   let number = 0;
-  const general = comments.filter((comment) => !comment.file);
-  if (general.length) {
-    out.push("", "## General", "");
-    for (const { body } of general) {
+  const global = comments.filter((comment) => !comment.file);
+  if (global.length) {
+    out.push("", "## Global", "");
+    for (const { body } of global) {
       const mark = `${++number}. `;
       out.push(mark + body.trim().replaceAll("\n", `\n${" ".repeat(mark.length)}`));
     }

@@ -1014,12 +1014,6 @@ input {
   --outdated: #c79a2e;
 }
 
-.side-title {
-  flex: 1;
-  margin-left: 6px;
-  color: var(--muted);
-}
-
 .comments-panel {
   flex: 1;
   min-width: 0;

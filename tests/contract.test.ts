@@ -78,7 +78,7 @@ async function start(...args: string[]) {
   return { child, url, origin: url.origin, stdout };
 }
 
-const general = (body: string): Comment => ({
+const globalComment = (body: string): Comment => ({
   id: "g",
   file: "",
   side: "additions",
@@ -194,7 +194,7 @@ describe("patchr review", () => {
           body: "Lowercase this.",
           excerpt: ["TWO"],
         },
-        general("Close.\nBut not there."),
+        globalComment("Close.\nBut not there."),
         { id: "c4", file: "Makefile", side: "additions", start: 1, end: 1, body: " ", excerpt: [] },
         {
           id: "c5",
@@ -215,7 +215,7 @@ describe("patchr review", () => {
       expect(out).toContain("### 4. b.ts:4-5 (old side, removed lines) (in PR #1)");
       expect(out).toContain("```ts\nTWO\n```");
       expect(out).toContain("Lowercase this.");
-      expect(out).toContain("## General\n\n1. Close.\n   But not there.");
+      expect(out).toContain("## Global\n\n1. Close.\n   But not there.");
       // A page that lost its review copies the same text, but not where the repository is.
       const copied = feedbackText(comments, review.repository);
       expect(copied).toBe(out.trim().replace(/^Paths are relative to .*\n/m, ""));
@@ -471,7 +471,7 @@ describe("patchr review", () => {
   });
 
   test("submitted feedback is kept until the adapter delivers it, and never comes back as comments", async () => {
-    const submission = { comments: [general("Keep me.")] };
+    const submission = { comments: [globalComment("Keep me.")] };
     const { child, origin, stdout } = await start("--typed", "--uncommitted");
     await post(`${origin}/api/submit`, submission);
     const { receipt, text, file } = JSON.parse(await stdout);
@@ -500,7 +500,7 @@ describe("patchr review", () => {
   test("a review ends once: a second submission is told so", async () => {
     const { child, origin, stdout } = await start("--uncommitted");
     try {
-      const submission = { comments: [general("Once.")] };
+      const submission = { comments: [globalComment("Once.")] };
       const [first, second] = await Promise.all([
         post(`${origin}/api/submit`, submission),
         post(`${origin}/api/submit`, submission),
@@ -539,7 +539,7 @@ describe("patchr review", () => {
       return text.match(pattern)![1]!;
     };
     const origin = new URL(await until(/open at (\S+)/)).origin;
-    await post(`${origin}/api/submit`, { comments: [general("Nobody reads.")] });
+    await post(`${origin}/api/submit`, { comments: [globalComment("Nobody reads.")] });
     const file = await until(/kept in (\S+)/);
     expect(await Bun.file(file).text()).toContain("Nobody reads.");
     await child.exited;
@@ -597,7 +597,7 @@ describe("patchr review", () => {
 
       for (const [index, note] of ["FIRST", "SECOND"].entries()) {
         if (index > 0) reason = await open();
-        await post(`${url(reason)}api/submit`, { comments: [general(note)] });
+        await post(`${url(reason)}api/submit`, { comments: [globalComment(note)] });
         for (let i = 0; i < 100 && (await kept()) <= index; i++) await Bun.sleep(50);
       }
       const context = (await hook("Continue.")).hookSpecificOutput.additionalContext as string;

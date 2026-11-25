@@ -26,7 +26,7 @@ import { aboutLabel, removeComment } from "./Notes.tsx";
 import { search, type Searchable } from "./search.ts";
 import { fontPresets, preferences, type Settings } from "./settings.ts";
 import {
-  isGeneral,
+  isGlobal,
   kindOf,
   kinds,
   state,
@@ -156,7 +156,7 @@ export function Palette(props: {
       id: `comment:${comment.id}`,
       label: comment.body.trim().split("\n")[0]!,
       icon: "comment",
-      detail: isGeneral(comment)
+      detail: isGlobal(comment)
         ? aboutLabel(comment)
         : `${comment.file.split("/").at(-1)} · ${aboutLabel(comment)}`,
       words: `${comment.file} ${comment.body}`,

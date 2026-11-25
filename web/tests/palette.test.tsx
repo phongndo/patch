@@ -19,7 +19,7 @@ vi.mock("../Tree.tsx", () => ({ Tree: () => <div class="tree" /> }));
 const { App } = await import("../App.tsx");
 const { actionNames, definitionOf } = await import("../commands.ts");
 const { preferences, defaults } = await import("../settings.ts");
-const { state, wholeChange, wholeFile } = await import("../state.ts");
+const { state, globalTarget, wholeFile } = await import("../state.ts");
 const ui = await import("../ui.ts");
 
 const patch = (line: string) => `diff --git a/a.ts b/a.ts
@@ -123,7 +123,7 @@ test("plain letters do nothing, wherever the pointer is", async () => {
 });
 
 test("typing finds commands, files and comments, and Enter runs the best after closing", async () => {
-  state.saveComment(wholeChange, "rename the widget");
+  state.saveComment(globalTarget, "rename the widget");
   await settle();
   await open();
   await type(search(), "b.md");
@@ -209,7 +209,7 @@ test("keys run commands, but not under the palette or Settings, or while typing"
 });
 
 test("holding the key that saves a comment never finishes, and it only saves while writing", async () => {
-  state.compose(wholeChange);
+  state.compose(globalTarget);
   state.setComposerText("hello");
   ui.setSidebarView("comments");
   await settle();
@@ -280,7 +280,7 @@ test("half-written comments survive refreshing, filtering and opening another", 
 
   state.compose({ file: "b.md", side: "additions", start: 1, end: 1 });
   state.setComposerText("second");
-  state.compose(wholeChange);
+  state.compose(globalTarget);
   await settle();
   expect(state.store.comments.map((comment) => comment.body)).toEqual(["first thought", "second"]);
 });
@@ -300,7 +300,7 @@ test("every way out of the editor keeps the text, and an empty one leaves nothin
     () => press(editor()!, "Enter", mod),
     () => click($(".composer [type=submit]")),
   ]) {
-    await click(button("Overall comment"));
+    await click(button("Global comment"));
     state.setComposerText("keep me");
     await settle();
     await leave();
@@ -309,7 +309,7 @@ test("every way out of the editor keeps the text, and an empty one leaves nothin
     state.deleteComments(state.store.comments.map((comment) => comment.id));
     await settle();
   }
-  await click(button("Overall comment"));
+  await click(button("Global comment"));
   await press(editor()!, "Escape");
   expect(editor()).toBeNull();
   expect(listed()).toEqual([]);
@@ -317,7 +317,7 @@ test("every way out of the editor keeps the text, and an empty one leaves nothin
 
 test("an input method's Escape stays in the editor", async () => {
   ui.setSidebarView("comments");
-  state.compose(wholeChange);
+  state.compose(globalTarget);
   state.setComposerText("か");
   await settle();
   await press(editor()!, "Escape", { isComposing: true });
@@ -326,7 +326,7 @@ test("an input method's Escape stays in the editor", async () => {
 
 test("what is deleted, discarded or emptied can be put back", async () => {
   ui.setSidebarView("comments");
-  state.saveComment(wholeChange, "first");
+  state.saveComment(globalTarget, "first");
   await settle();
   const undo = async () => {
     await click(button("Undo"));
@@ -344,7 +344,7 @@ test("what is deleted, discarded or emptied can be put back", async () => {
   expect(listed()).toEqual([]);
   await undo();
 
-  await click(button("Overall comment"));
+  await click(button("Global comment"));
   state.setComposerText("never mind");
   await settle();
   await click(button("Discard"));
@@ -358,9 +358,9 @@ test("comments are listed as the diff has them, and each opens where it can be r
   state.saveComment({ file: "a.ts", side: "additions", start: 2, end: 2 }, "on a line");
   state.saveComment({ file: "b.md", side: "additions", start: 1, end: 1 }, "in the next file");
   state.saveComment(wholeFile("a.ts"), "on the file");
-  state.saveComment(wholeChange, "overall");
+  state.saveComment(globalTarget, "global");
   await settle();
-  expect(listed()).toEqual(["overall", "on the file", "on a line", "in the next file"]);
+  expect(listed()).toEqual(["global", "on the file", "on a line", "in the next file"]);
 
   // Once its lines change, a comment goes above its file's first.
   const line2 = state.store.comments.find((comment) => comment.body === "on a line")!;
@@ -388,8 +388,8 @@ test("comments are listed as the diff has them, and each opens where it can be r
   expect(editor()!.value).toBe("in the next file");
 });
 
-test("a comment on a file or the whole change survives a refresh while it is written", async () => {
-  for (const target of [wholeFile("a.ts"), wholeChange]) {
+test("a comment on a file or a global one survives a refresh while it is written", async () => {
+  for (const target of [wholeFile("a.ts"), globalTarget]) {
     state.compose(target);
     state.setComposerText("still typing");
     line = line === "TWO" ? "OTHER" : "TWO";
@@ -431,7 +431,7 @@ test("a viewed mark lasts only as long as the file's changes", async () => {
 test("a send that failed says so, offers a copy, and keeps the review", async () => {
   const close = vi.spyOn(window, "close").mockImplementation(() => {});
   close.mockClear();
-  state.saveComment(wholeChange, "hello");
+  state.saveComment(globalTarget, "hello");
   await settle();
   const working = fetch;
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) =>
@@ -455,13 +455,13 @@ test("the tab keeps a run's comments over a reload, asks before losing them, and
   };
   expect(asks()).toBe(false);
   sessionStorage.setItem("patch:older", "{}");
-  state.saveComment(wholeChange, "hello");
+  state.saveComment(globalTarget, "hello");
   await settle();
   expect(asks()).toBe(true);
   expect(JSON.parse(sessionStorage.getItem("patch:run1")!).comments[0].body).toBe("hello");
 
   vi.spyOn(window, "close").mockImplementation(() => {});
-  state.compose(wholeChange);
+  state.compose(globalTarget);
   state.setComposerText("and one more thing");
   flush();
   await key("Enter", mod);

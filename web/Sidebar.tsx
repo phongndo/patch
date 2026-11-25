@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import type { Comment } from "../src/protocol.ts";
 import {
   Popover,
@@ -8,10 +8,10 @@ import {
   PopoverTrigger,
 } from "@ui-sdk/solid/popover";
 import { Tabs, TabsList, TabsPanel, TabsTab, TabsTabIcon } from "@ui-sdk/solid/tabs";
-import { CommentsPanel } from "./CommentsPanel.tsx";
+import { CommentsPanel, findComments } from "./CommentsPanel.tsx";
 import { Icon } from "./Icon.tsx";
 import { preferences } from "./settings.ts";
-import { kindOf, kinds, state, statuses, statusOf, wholeChange } from "./state.ts";
+import { kindOf, kinds, state, statuses, statusOf, globalTarget } from "./state.ts";
 import { Tree } from "./Tree.tsx";
 import { filterOpen, setFilterOpen, setSidebarView, sidebarView as view, type SidebarView } from "./ui.ts";
 
@@ -21,7 +21,27 @@ export function Sidebar(props: {
   onOpenFile: (path: string) => void;
   onOpenComment: (comment: Comment) => void;
 }) {
-  const [query, setQuery] = createSignal("");
+  const [fileQuery, setFileQuery] = createSignal("");
+  const [commentQuery, setCommentQuery] = createSignal("");
+  const query = () => (view() === "files" ? fileQuery() : commentQuery());
+  const setQuery = (text: string) => (view() === "files" ? setFileQuery(text) : setCommentQuery(text));
+  // A new comment must not vanish from the list as it is saved.
+  createEffect(
+    () => {
+      const target = state.composer();
+      return target && !target.id && state.lineOf(target) === undefined;
+    },
+    (starting) => {
+      if (starting) setCommentQuery("");
+    },
+  );
+  function enter() {
+    const text = query().trim();
+    if (!text) return;
+    if (view() === "files") return props.onFind(text);
+    const first = findComments(text)[0];
+    if (first) props.onOpenComment(first);
+  }
   // Only the kinds and statuses this diff has are offered.
   const present = createMemo(() => ({
     kinds: kinds.filter((kind) => state.files().some((file) => kindOf(file) === kind)),
@@ -77,15 +97,19 @@ export function Sidebar(props: {
           ref={props.searchRef}
           type="search"
           placeholder="Search"
-          // The tree's: the few comments of one review need no search, and the palette has one.
-          hidden={view() !== "files"}
-          title={preferences.hint("Filter the list · Enter finds in the diff", "search")}
+          aria-label={view() === "files" ? "Search files" : "Search comments"}
+          title={preferences.hint(
+            `Filter the list · Enter ${view() === "files" ? "finds in the diff" : "opens the first"}`,
+            "search",
+          )}
           value={query()}
           onInput={(event) => setQuery(event.currentTarget.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && query().trim()) {
+            // An input method's own Escape or Enter ends its word.
+            if (event.isComposing) return;
+            if (event.key === "Enter") {
               event.preventDefault();
-              props.onFind(query().trim());
+              enter();
             } else if (event.key === "Escape") {
               setQuery("");
               event.currentTarget.blur();
@@ -95,16 +119,13 @@ export function Sidebar(props: {
         <Show
           when={view() === "files"}
           fallback={
-            <>
-              <span class="side-title">Comments</span>
-              <button
-                class="icon-button"
-                title={preferences.hint("Overall comment", "generalComment")}
-                onClick={() => state.compose(wholeChange)}
-              >
-                <Icon name="plus" />
-              </button>
-            </>
+            <button
+              class="icon-button"
+              title={preferences.hint("Global comment", "globalComment")}
+              onClick={() => state.compose(globalTarget)}
+            >
+              <Icon name="plus" />
+            </button>
           }
         >
           <Popover open={filterOpen()} onOpenChange={setFilterOpen}>
@@ -172,11 +193,11 @@ export function Sidebar(props: {
 
       {/* The tree takes focus inside its shadow root, where the panel can't see it. */}
       <TabsPanel class="side-body" value="files" keepMounted tabindex={-1}>
-        <Tree files={state.visibleFiles()} search={query()} onOpen={props.onOpenFile} />
+        <Tree files={state.visibleFiles()} search={fileQuery()} onOpen={props.onOpenFile} />
       </TabsPanel>
 
       <TabsPanel class="side-comments" value="comments">
-        <CommentsPanel onOpen={props.onOpenComment} />
+        <CommentsPanel search={commentQuery()} onOpen={props.onOpenComment} />
       </TabsPanel>
     </Tabs>
   );

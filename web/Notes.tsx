@@ -7,11 +7,11 @@ import type { Comment } from "../src/protocol.ts";
 import { isPageShortcut } from "./hotkeys.ts";
 import { Icon } from "./Icon.tsx";
 import { displayKey } from "./settings.ts";
-import { isGeneral, state, type Target } from "./state.ts";
+import { isGlobal, state, type Target } from "./state.ts";
 
 /** What a comment is about within its file. */
 export const aboutLabel = ({ file, side, start, end }: Target) => {
-  if (isGeneral({ file })) return "Overall";
+  if (isGlobal({ file })) return "Global";
   if (start === 0) return "Whole file";
   return `${start === end ? `Line ${start}` : `Lines ${start}–${end}`}${side === "deletions" ? " (old)" : ""}`;
 };

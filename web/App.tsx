@@ -27,7 +27,7 @@ import {
   opensCollapsed,
   state,
   stats,
-  wholeChange,
+  globalTarget,
   wholeFile,
   type Kind,
   type Target,
@@ -417,7 +417,7 @@ export function App() {
 
     comment: { run: comment },
     fileComment: { run: withCurrentFile((file) => compose(wholeFile(file))) },
-    generalComment: { run: () => compose(wholeChange) },
+    globalComment: { run: () => compose(globalTarget) },
     nextComment: { run: () => stepComment(1) },
     previousComment: { run: () => stepComment(-1) },
     goToComment: page("goToComment"),
@@ -433,7 +433,7 @@ export function App() {
     goToFile: page("goToFile"),
     search: {
       run: () => {
-        showSidebar("files");
+        setSidebar(() => true);
         flush();
         searchInput?.focus();
       },

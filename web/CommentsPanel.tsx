@@ -22,14 +22,27 @@ function FileName(props: { path: string }) {
   );
 }
 
-export function CommentsPanel(props: { onOpen: (comment: Comment) => void }) {
-  const groups = createMemo(() => [...Map.groupBy(state.ordered(), (comment) => comment.file)]);
+/** The comments whose text or path has the query in it, as the tree matches files. */
+export function findComments(query: string): Comment[] {
+  const text = query.trim().toLowerCase();
+  return state
+    .ordered()
+    .filter(({ body, file }) => body.toLowerCase().includes(text) || file.toLowerCase().includes(text));
+}
+
+export function CommentsPanel(props: { search: string; onOpen: (comment: Comment) => void }) {
   /** What is being written here rather than in the diff. */
   const writing = createMemo(() => {
     const target = state.composer();
     return target && state.lineOf(target) === undefined ? target : undefined;
   });
   const starting = () => (writing()?.id ? undefined : writing());
+  const groups = createMemo(() => {
+    const found = new Set(findComments(props.search).map((comment) => comment.id));
+    // The one being edited stays whatever is searched: its editor is nowhere else.
+    const shown = state.ordered().filter(({ id }) => found.has(id) || id === writing()?.id);
+    return [...Map.groupBy(shown, (comment) => comment.file)];
+  });
 
   function Row(row: { comment: Comment }) {
     const editing = () => (writing()?.id === row.comment.id ? writing() : undefined);
@@ -90,6 +103,9 @@ export function CommentsPanel(props: { onOpen: (comment: Comment) => void }) {
           </section>
         )}
       </For>
+      <Show when={state.store.comments.length && !groups().length && !starting()}>
+        <p class="empty">No comments match.</p>
+      </Show>
       <Show when={!state.store.comments.length && !starting()}>
         <p class="empty">
           Click a line number's + in the diff, or select lines and{" "}

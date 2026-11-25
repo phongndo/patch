@@ -10,7 +10,7 @@ vi.mock("../diff.ts", () => ({
 vi.mock("../Tree.tsx", () => ({ Tree: () => <div class="tree" /> }));
 
 const { App } = await import("../App.tsx");
-const { state, wholeChange } = await import("../state.ts");
+const { state, globalTarget } = await import("../state.ts");
 const { preferences } = await import("../settings.ts");
 const { setScopeOpen } = await import("../ui.ts");
 const { toast } = await import("@ui-sdk/solid/toast");
@@ -45,7 +45,7 @@ beforeEach(async () => {
 });
 
 const write = async (body: string) => {
-  state.saveComment(wholeChange, body);
+  state.saveComment(globalTarget, body);
   flush();
   await settle();
 };
@@ -288,6 +288,74 @@ test("a stream the browser gave up on is opened again as the same page", async (
 test("the resizer is a named separator for the sidebar", () => {
   const resizer = named("separator", "Resize the sidebar");
   expect(document.getElementById(resizer.getAttribute("aria-controls")!)?.tagName).toBe("ASIDE");
+});
+
+const listed = () => [...document.querySelectorAll(".comment-body")].map((body) => body.textContent);
+const loaded = async () => {
+  reviewed = {
+    scope: { kind: "all" },
+    patch: "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-x\n+y\n",
+  };
+  await state.load();
+  await settle();
+};
+
+test("comments are searched by their text and file, apart from the files", async () => {
+  await clear();
+  await loaded();
+  await write("Rename this");
+  await write("Add a test");
+  state.saveComment({ file: "src/a.ts", side: "additions", start: 1, end: 1 }, "Why?");
+  await settle();
+  const search = $<HTMLInputElement>(".side-search");
+  await type(search, "nothing");
+  await click(named("tab", "Comments"));
+  expect(nameOf(search)).toBe("Search comments");
+  expect(search.value).toBe("");
+  expect(listed()).toEqual(["Rename this", "Add a test", "Why?"]);
+  await type(search, "rename");
+  expect(listed()).toEqual(["Rename this"]);
+  await type(search, "SRC/A");
+  expect(listed()).toEqual(["Why?"]);
+  await type(search, "zzzz");
+  expect(listed()).toEqual([]);
+  expect($(".comments-panel .empty").textContent).toBe("No comments match.");
+  await click(named("tab", "Files"));
+  expect(search.value).toBe("nothing");
+  await click(named("tab", "Comments"));
+  expect(search.value).toBe("zzzz");
+  search.focus();
+  await press(search, "Escape");
+  expect(listed()).toHaveLength(3);
+  await clear();
+  expect($(".comments-panel .empty").textContent).toContain("line number");
+});
+
+test("a search never hides what is being written, and Enter opens the first found", async () => {
+  await clear();
+  await write("Rename this");
+  await write("Add a test");
+  await click(named("tab", "Comments"));
+  const search = $<HTMLInputElement>(".side-search");
+  const editor = () => document.querySelector<HTMLTextAreaElement>(".comments-panel textarea");
+  await type(search, "test");
+  await press(search, "Enter");
+  expect(editor()!.value).toBe("Add a test");
+  await type(search, "zzzz");
+  expect(editor()!.value).toBe("Add a test");
+  await click($('[title="Global comment"]'));
+  expect(search.value).toBe("");
+  expect(editor()!.value).toBe("");
+  state.cancelComposer();
+  await clear();
+});
+
+test("the search key focuses the search of the view shown", async () => {
+  await click(named("tab", "Comments"));
+  await press(document.body, "f", { code: "KeyF", ctrlKey: true, shiftKey: true });
+  expect(document.activeElement).toBe($(".side-search"));
+  expect(named("tab", "Comments").getAttribute("aria-selected")).toBe("true");
+  await click(named("tab", "Files"));
 });
 
 // Last: the page is done after it.

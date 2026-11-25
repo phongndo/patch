@@ -49,11 +49,11 @@ pub fn format(submission: &Submission, repository: &str, root: &str) -> String {
     out.push(ASK.into());
     out.push(format!("Paths are relative to {root}."));
     let mut number = 0;
-    // General comments belong to no file.
-    let general: Vec<&str> = comments.iter().filter(|c| c.file.is_empty()).map(|c| c.body.trim()).collect();
-    if !general.is_empty() {
-        out.extend(["".into(), "## General".into(), String::new()]);
-        for body in &general {
+    // Global comments belong to no file.
+    let global: Vec<&str> = comments.iter().filter(|c| c.file.is_empty()).map(|c| c.body.trim()).collect();
+    if !global.is_empty() {
+        out.extend(["".into(), "## Global".into(), String::new()]);
+        for body in &global {
             number += 1;
             // Later lines indent under the number.
             let mark = format!("{number}. ");
@@ -135,7 +135,7 @@ mod tests {
     }
 
     #[test]
-    fn general_comments_come_first_and_numbers_go_on() {
+    fn global_comments_come_first_and_numbers_go_on() {
         let mut first = comment("additions", 0, 0, &[]);
         first.file = String::new();
         first.body = "Split this PR.".into();
@@ -145,7 +145,7 @@ mod tests {
         let text = format(&s, "demo", "/repo");
         assert!(
             text.contains(
-                "## General\n\n1. Split this PR.\n2. Add tests.\n   For both paths.\n\n## src/a.ts\n\n### 3. src/a.ts:2"
+                "## Global\n\n1. Split this PR.\n2. Add tests.\n   For both paths.\n\n## src/a.ts\n\n### 3. src/a.ts:2"
             )
         );
     }
