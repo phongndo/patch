@@ -1,5 +1,5 @@
 //! How a `patchr` was installed, read from where it is: what its package manager
-//! calls it, and a path that stays right across upgrades.
+//! calls it, how to update it, and a path that stays right across upgrades.
 
 use std::path::{Path, PathBuf};
 
@@ -66,6 +66,23 @@ impl Channel {
             .filter(|path| path.parent().and_then(|dir| dir.canonicalize().ok()) != our_dir)
             .find(|path| path.canonicalize().is_ok_and(|target| target == real))
     }
+
+    /// The command that brings it up to date, where its manager has one.
+    pub fn upgrade(&self) -> Option<Vec<String>> {
+        match self {
+            Channel::Homebrew { formula, .. } => Some(vec!["brew".into(), "upgrade".into(), formula.clone()]),
+            Channel::Mise { tool, .. } => {
+                // mise names the folder after the tool: github:phongndo/patch is github-phongndo-patch.
+                let name = tool.file_name()?.to_string_lossy();
+                let backend = name.strip_suffix("-phongndo-patch")?;
+                // Never the tools of a project the command runs in.
+                let global = tool.join("global").exists().then(|| "--global".to_string());
+                let words = ["mise".into(), "upgrade".into()].into_iter().chain(global);
+                Some(words.chain([format!("{backend}:phongndo/patch")]).collect())
+            }
+            Channel::Nix | Channel::Unmanaged => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -76,10 +93,12 @@ mod tests {
     fn knows_each_manager_by_its_folders() {
         let homebrew = of(Path::new("/opt/homebrew/Cellar/patchr/0.1.0/bin/patchr"));
         assert_eq!(homebrew, Channel::Homebrew { prefix: "/opt/homebrew".into(), formula: "patchr".into() });
+        assert_eq!(homebrew.upgrade().unwrap(), ["brew", "upgrade", "patchr"]);
 
         let mise = of(Path::new("/h/.local/share/mise/installs/github-phongndo-patch/0.1.0/patchr"));
         let tool = PathBuf::from("/h/.local/share/mise/installs/github-phongndo-patch");
         assert_eq!(mise, Channel::Mise { tool, inside: "patchr".into() });
+        assert_eq!(mise.upgrade().unwrap(), ["mise", "upgrade", "github:phongndo/patch"]);
 
         assert_eq!(of(Path::new("/nix/store/abc-patchr-0.1.0/bin/patchr")), Channel::Nix);
         assert_eq!(of(Path::new("/h/.local/bin/patchr")), Channel::Unmanaged);

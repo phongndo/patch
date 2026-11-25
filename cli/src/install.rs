@@ -489,6 +489,11 @@ fn save_record(record: &Record) -> Result<(), String> {
     replace_file(&file, &record_text(record)).map_err(|error| format!("Could not write {}: {error}", tilde(&file)))
 }
 
+/// Where the installed binary was copied from, if it was.
+pub fn copied_from() -> Option<PathBuf> {
+    load_record().copied_from
+}
+
 fn hash(text: impl AsRef<[u8]>) -> String {
     Sha256::digest(text).iter().map(|byte| format!("{byte:02x}")).collect()
 }

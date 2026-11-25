@@ -13,6 +13,7 @@ mod protocol;
 mod server;
 #[cfg(unix)]
 mod slot;
+mod update;
 
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -34,6 +35,7 @@ fn help() -> String {
 Usage:
   patchr review [directory] [--base <ref>] [--uncommitted | --staged] [--remote | --local] [--no-open]
   patchr install [--all] [--dry-run]   Add /patch to every agent harness found
+  patchr update                        Update Patch, however it was installed
   patchr uninstall                     Remove what install wrote
 
 review opens the change in the browser and waits. By default it shows
@@ -297,6 +299,7 @@ fn main() -> ExitCode {
             Ok(())
         }
         "install" => install::install(rest.iter().any(|a| a == "--all"), rest.iter().any(|a| a == "--dry-run")),
+        "update" => update::update(),
         "hook" if rest.first().is_some_and(|name| name == "codex") => {
             harness::codex_hook();
             Ok(())

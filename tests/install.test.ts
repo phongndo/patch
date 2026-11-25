@@ -1,8 +1,18 @@
-// Black-box checks of `patchr install`, `uninstall` and what a review
+// Black-box checks of `patchr install`, `update`, `uninstall` and what a review
 // does after an upgrade, in a home folder of their own. PATCHR is the binary.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -177,4 +187,54 @@ test("the next review after an upgrade refreshes untouched files only", async ()
   await review(bin);
   expect(await text(pi)).toBe(current);
   expect(await text(gemini)).toBe("# patchr, edited");
+});
+
+test("update runs the install script, or the manager that owns the binary", async () => {
+  run([built, "install"]);
+  const script = join(root, "install.sh");
+  await writeFile(script, "echo from-the-script\n");
+  const url = { PATCH_INSTALL_SCRIPT: `file://${script}` };
+  expect(run([bin, "update"], url).out).toContain("from-the-script");
+  expect(run([bin, "update"], { PATCH_INSTALL_SCRIPT: "file:///nowhere" }).code).toBe(2);
+
+  // mise's folders, with an upgrade that moves its `global` link to a newer file.
+  const tool = join(root, "mise/installs/github-phongndo-patch");
+  for (const version of ["0.1.0", "0.2.0"]) {
+    await mkdir(join(tool, version), { recursive: true });
+    await copyFile(built, join(tool, version, "patchr"));
+  }
+  const point = (link: string, version: string) =>
+    Bun.spawnSync(["ln", "-sfn", `./${version}`, join(tool, link)]);
+  point("latest", "0.2.0");
+  point("global", "0.1.0");
+  const tools = join(root, "tools");
+  await mkdir(tools);
+  const upgrade = `#!/bin/sh
+case "$1" in
+  upgrade) echo "mise ran: $* in $PWD"; echo 0.2.0 > "${root}/selected"; [ ! -e "${tool}/global" ] || ln -sfn ./0.2.0 "${tool}/global" ;;
+  which) echo "${tool}/$(cat "${root}/selected")/patchr" ;;
+esac
+`;
+  await writeFile(join(tools, "mise"), upgrade, { mode: 0o755 });
+  const env = { ...url, PATH: `${tools}:${process.env.PATH}` };
+
+  run([join(tool, "0.1.0/patchr"), "install"]);
+  expect(await readlink(bin)).toBe(join(tool, "global/patchr"));
+  const linked = run([bin, "update"], env, root);
+  expect(linked.out).toContain(`mise ran: upgrade --global github:phongndo/patch in ${home}`);
+  expect(linked.out).toContain("Installed Patch");
+  expect(linked.code).toBe(0);
+  expect(await realpath(bin)).toBe(join(tool, "0.2.0/patchr"));
+
+  // A mise without `global`: a copy of what it selects, which stays mise's to update.
+  await rm(join(tool, "global"));
+  run([join(tool, "0.1.0/patchr"), "install"]);
+  expect((await lstat(bin)).isSymbolicLink()).toBe(false);
+  const copied = run([bin, "update"], env, root);
+  expect(copied.out).toContain(`mise ran: upgrade github:phongndo/patch in ${home}`);
+  expect(copied.out).not.toContain("from-the-script");
+  expect(copied.code).toBe(0);
+  expect(JSON.parse(await text(".local/state/patch/installed.json")).copied_from).toBe(
+    join(tool, "0.2.0/patchr"),
+  );
 });
