@@ -2,6 +2,7 @@
 //! feedback on stdout. Everything meant for a human goes to stderr, so stdout
 //! carries only the result the agent acts on.
 
+mod channel;
 mod feedback;
 mod git;
 mod github;
@@ -10,6 +11,8 @@ mod install;
 mod paths;
 mod protocol;
 mod server;
+#[cfg(unix)]
+mod slot;
 
 use std::io::{Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -21,9 +24,12 @@ use server::Outcome;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// In every build, so `install` can tell a Patch from another program.
+pub const ABOUT: &str = "a browser diff review loop for coding agents";
+
 fn help() -> String {
     format!(
-        "patchr {VERSION}: a browser diff review loop for coding agents
+        "patchr {VERSION}: {ABOUT}
 
 Usage:
   patchr review [directory] [--base <ref>] [--uncommitted | --staged] [--remote | --local] [--no-open]
@@ -188,6 +194,7 @@ async fn review(args: &[String]) -> Result<(), String> {
         Some(root) => root,
         None => git::find_root(&PathBuf::from(args.directory.clone().unwrap_or_else(|| ".".into()))).await?,
     };
+    install::refresh(&root);
     if let Some(base) = &args.base {
         git::find_base(&root, Some(base)).await?;
     }
@@ -289,8 +296,7 @@ fn main() -> ExitCode {
             println!("{}", help());
             Ok(())
         }
-        "install" => install::install(rest.iter().any(|a| a == "--all"), rest.iter().any(|a| a == "--dry-run"))
-            .map_err(|error| error.to_string()),
+        "install" => install::install(rest.iter().any(|a| a == "--all"), rest.iter().any(|a| a == "--dry-run")),
         "hook" if rest.first().is_some_and(|name| name == "codex") => {
             harness::codex_hook();
             Ok(())
@@ -301,7 +307,7 @@ fn main() -> ExitCode {
             }
             Ok(())
         }
-        "uninstall" => install::uninstall().map_err(|error| error.to_string()),
+        "uninstall" => install::uninstall(),
         _ => {
             // `patchr ../repo` and `patchr --base main` read as a review.
             let review_args = if command == "review" { rest } else { args.clone() };
