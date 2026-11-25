@@ -88,7 +88,7 @@ function notes(commit: string) {
   );
   const previous = older.toSorted((a, b) => Bun.semver.order(a.slice(1), b.slice(1))).at(-1);
   const install = [
-    "```sh\nnpx -y patchr install\n```",
+    "```sh\nnpx -y @phongndo/patchr install\n```",
     `Or see [other ways](https://github.com/phongndo/patch#readme). Update with \`patchr update\`.`,
   ];
   if (!previous) return console.log(["The first release.", ...install].join("\n\n"));
@@ -204,7 +204,7 @@ function checksum(asset: string): string {
   return hash!;
 }
 
-/** One package per platform, and `patchr`, which depends on whichever one fits. */
+/** One package per platform, and the one people install, which depends on whichever one fits. */
 function npm() {
   const dir = join(out, "npm");
   rmSync(dir, { recursive: true, force: true });
@@ -233,7 +233,7 @@ function npm() {
     rmSync(join(folder, "patchr"));
     writeFileSync(
       join(folder, "README.md"),
-      `The ${os} ${cpu} binary of [patchr](https://www.npmjs.com/package/patchr).\n`,
+      `The ${os} ${cpu} binary of [@phongndo/patchr](https://www.npmjs.com/package/@phongndo/patchr).\n`,
     );
     write(folder, {
       name,
@@ -249,7 +249,7 @@ function npm() {
   cpSync(join(root, "npm"), main, { recursive: true });
   for (const file of ["README.md", "LICENSE"]) cpSync(join(root, file), join(main, file));
   write(main, {
-    name: "patchr",
+    name: "@phongndo/patchr", // npm refuses the bare name as too similar to others
     description: json("package.json").description,
     keywords: ["code-review", "diff", "claude-code", "codex", "pi", "opencode", "gemini-cli", "cursor"],
     ...common,

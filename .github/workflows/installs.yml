@@ -69,7 +69,7 @@ jobs:
       - if: matrix.channel == 'script'
         run: curl -fsSL https://github.com/phongndo/patch/releases/latest/download/install.sh | sh
       - if: matrix.channel == 'npx'
-        run: npx -y "patchr@$VERSION" install
+        run: npx -y "@phongndo/patchr@$VERSION" install
       - if: matrix.channel == 'mise'
         run: |
           curl -fsSL https://mise.run | sh

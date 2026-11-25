@@ -5,7 +5,7 @@ lines, press Send, and the tab closes. The agent gets every comment on stdout as
 `file:line`, with the lines it is about. Patch never writes to your repository.
 
 ```sh
-npx -y patchr install
+npx -y @phongndo/patchr install
 ```
 
 Or without Node:

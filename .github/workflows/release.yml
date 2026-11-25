@@ -188,7 +188,7 @@ jobs:
     needs: [prepare, stage]
     if: ${{ !cancelled() && needs.stage.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     environment: release
     permissions:
       contents: read
@@ -217,7 +217,7 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           # A late retry of an older version must not become npm's latest.
-          newest=$(npm view patchr version 2>/dev/null || true)
+          newest=$(npm view @phongndo/patchr version 2>/dev/null || true)
           dist_tag=latest
           if [[ -n "$newest" && "$(printf '%s\n' "$newest" "$VERSION" | sort -V | tail -1)" != "$VERSION" ]]; then
             dist_tag=previous
@@ -232,6 +232,20 @@ jobs:
             else
               npm publish "./$folder" --provenance --access public --tag "$dist_tag"
             fi
+          done
+      - name: Wait until npm serves them
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          # npm takes minutes over a first publication.
+          for folder in dist/release/npm/patchr-* dist/release/npm/patchr; do
+            name=$(node -p "require('./$folder/package.json').name")
+            for _ in {1..60}; do
+              npm view "$name@$VERSION" version --prefer-online >/dev/null 2>&1 && continue 2
+              sleep 10
+            done
+            echo "::error::npm does not serve $name@$VERSION yet; run this workflow again once it does"
+            exit 1
           done
 
   publish:

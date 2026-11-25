@@ -113,7 +113,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/npm/home/.claude" && cd "$RUNNER_TEMP/npm"
           npm pack --silent "$packages/patchr" "$packages/patchr-$PLATFORM"
           npm init -y >/dev/null
-          npm install --ignore-scripts --no-audit "./phongndo-patchr-$PLATFORM-$VERSION.tgz" "./patchr-$VERSION.tgz"
+          npm install --ignore-scripts --no-audit "./phongndo-patchr-$PLATFORM-$VERSION.tgz" "./phongndo-patchr-$VERSION.tgz"
           HOME="$PWD/home" ./node_modules/.bin/patchr install
           [[ "$(home/.local/bin/patchr --version)" == "$VERSION" ]]
 
