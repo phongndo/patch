@@ -1,0 +1,105 @@
+name: Installs
+
+# Installs the latest release the ways the README documents and checks what runs.
+# Daily too, so a tap or package that fell behind fails here before a user finds it.
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 10 * * *"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  latest:
+    name: Latest release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.latest.outputs.version }}
+      hours: ${{ steps.latest.outputs.hours }}
+    steps:
+      - id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          releases=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --json tagName,publishedAt,isLatest --jq '.[] | select(.isLatest)')
+          if [[ -z "$releases" ]]; then
+            echo "::notice::Nothing has been released yet"
+            exit 0
+          fi
+          jq -r '"version=\(.tagName[1:])", "hours=\((now - (.publishedAt | fromdateiso8601)) / 3600 | floor)"' <<< "$releases" |
+            tee -a "$GITHUB_OUTPUT"
+
+  install:
+    name: ${{ matrix.channel }} (${{ matrix.os }})
+    needs: latest
+    if: needs.latest.outputs.version != ''
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        channel: [script, npx, mise, homebrew, nix]
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+        exclude:
+          - { channel: nix, os: macos-15-intel }
+    env:
+      VERSION: ${{ needs.latest.outputs.version }}
+      HOURS: ${{ needs.latest.outputs.hours }}
+      GITHUB_TOKEN: ${{ github.token }} # spares the runners' shared GitHub API rate limit
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: matrix.channel == 'npx'
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - uses: Homebrew/actions/setup-homebrew@dc7099b3e807f1e2ecc61f3ecabc840eedd5586a
+        if: matrix.channel == 'homebrew'
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        if: matrix.channel == 'nix'
+      - run: mkdir -p ~/.claude
+      - if: matrix.channel == 'script'
+        run: curl -fsSL https://github.com/phongndo/patch/releases/latest/download/install.sh | sh
+      - if: matrix.channel == 'npx'
+        run: npx -y "patchr@$VERSION" install
+      - if: matrix.channel == 'mise'
+        run: |
+          curl -fsSL https://mise.run | sh
+          # mise takes a release as the latest once it's a day old, or sooner by its version.
+          if (( HOURS >= 24 )); then tool=github:phongndo/patch; else tool="github:phongndo/patch@$VERSION"; fi
+          ~/.local/bin/mise use -g "$tool"
+          ~/.local/bin/mise exec -- patchr install
+      - if: matrix.channel == 'homebrew'
+        run: |
+          brew tap phongndo/tap
+          # Homebrew loads a tap formula only once it is trusted; install trusts the one it names, info does not.
+          brew trust --formula phongndo/tap/patchr || true
+          formula=$(brew info --json=v2 phongndo/tap/patchr | jq -r '.formulae[0].versions.stable') || formula=
+          if [[ "$formula" != "$VERSION" ]]; then
+            # The tap looks for new releases every hour; allow for a missed run.
+            (( HOURS < 3 )) || { echo "::error::The tap has ${formula:-nothing}, not $VERSION"; exit 1; }
+            echo "::notice::The tap has ${formula:-nothing} until it picks up $VERSION"
+            echo "VERSION=$formula" >> "$GITHUB_ENV"
+            [[ -n "$formula" ]] || exit 0
+          fi
+          brew install phongndo/tap/patchr
+          "$(brew --prefix)/bin/patchr" install
+      - if: matrix.channel == 'nix'
+        run: |
+          [[ "$(nix run "github:phongndo/patch/v$VERSION" -- --version)" == "$VERSION" ]]
+          nix profile add github:phongndo/patch
+          ~/.nix-profile/bin/patchr install
+      - name: Check what was installed
+        if: env.VERSION != ''
+        run: |
+          installed=$(~/.local/bin/patchr --version)
+          [[ "$installed" == "$VERSION" ]] || { echo "::error::Installed $installed, not $VERSION"; exit 1; }
+          [[ -f ~/.claude/skills/patch/hooks/register.ts ]]
