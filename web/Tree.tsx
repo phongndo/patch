@@ -24,7 +24,7 @@ export function Tree(props: { files: FileDiffMetadata[]; search: string; onOpen:
         gitStatus: files.flatMap((file) =>
           file.type === "change" ? [] : [{ path: file.name, status: status[file.type] }],
         ),
-        icons: { set: "complete", colored: false },
+        icons: { set: "complete", colored: true },
         // Every folder here holds changes, so a dot on each says nothing.
         // A row is ringed for the keyboard only; a click already fills it.
         unsafeCSS: `[data-item-contains-git-change]>[data-item-section=git]{visibility:hidden}
