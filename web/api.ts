@@ -64,21 +64,39 @@ export function stayConnected(hear: {
   unsent: () => boolean;
 }) {
   unsent = hear.unsent;
-  const source = new EventSource(`/api/live?${new URLSearchParams({ page })}`);
-  source.addEventListener("changed", hear.changed);
+  let source: EventSource;
   // Chrome retries a server that is gone forever without closing the stream.
   let silent: ReturnType<typeof setTimeout> | undefined;
-  source.onopen = () => {
-    clearTimeout(silent);
-    silent = undefined;
-    hear.back();
+  let again: ReturnType<typeof setTimeout> | undefined;
+  function connect() {
+    clearTimeout(again);
+    source = new EventSource(`/api/live?${new URLSearchParams({ page })}`);
+    source.addEventListener("changed", hear.changed);
+    source.onopen = () => {
+      clearTimeout(silent);
+      silent = undefined;
+      hear.back();
+    };
+    source.onerror = () => {
+      if (source.readyState !== EventSource.CLOSED) {
+        silent ??= setTimeout(hear.lost, 4000);
+        return;
+      }
+      // The browser gave up, as over a network that slept; the review may still be there.
+      hear.lost();
+      clearTimeout(again);
+      again = setTimeout(connect, 2000);
+    };
+  }
+  connect();
+  const onShow = (event: PageTransitionEvent) => {
+    if (event.persisted && source.readyState === EventSource.CLOSED) connect();
   };
-  source.onerror = () => {
-    if (source.readyState === EventSource.CLOSED) hear.lost();
-    else silent ??= setTimeout(hear.lost, 4000);
-  };
+  addEventListener("pageshow", onShow);
   return () => {
+    removeEventListener("pageshow", onShow);
     clearTimeout(silent);
+    clearTimeout(again);
     source.close();
   };
 }

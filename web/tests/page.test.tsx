@@ -284,6 +284,24 @@ test("a page that goes for good says which it is, and whether anything is unsent
   await clear();
 });
 
+test("a stream the browser gave up on is opened again as the same page", async () => {
+  const sources = globalThis.EventSource as unknown as {
+    last: { url: string; readyState: number; onerror: () => void; onopen: () => void };
+  };
+  const first = sources.last;
+  vi.useFakeTimers();
+  first.readyState = 2;
+  first.onerror();
+  vi.advanceTimersByTime(2000);
+  vi.useRealTimers();
+  expect(sources.last).not.toBe(first);
+  expect(sources.last.url).toBe(first.url);
+  await settle();
+  sources.last.onopen();
+  await settle();
+  expect(document.querySelector('[data-slot="toast"]:not([data-ending-style])')).toBeNull();
+});
+
 test("the resizer is a named separator for the sidebar", () => {
   const resizer = named("separator", "Resize the sidebar");
   expect(document.getElementById(resizer.getAttribute("aria-controls")!)?.tagName).toBe("ASIDE");
