@@ -149,6 +149,19 @@ test("a failure is never hidden by what worked", async () => {
   expect(run([built, "install"], { XDG_STATE_HOME: file("state") }).code).toBe(2);
 });
 
+test("half an install script runs nothing", async () => {
+  const script = await readFile(resolve(import.meta.dir, "../scripts/install.sh"), "utf8");
+  const end = script.lastIndexOf("main") + "main".length;
+  const env = { PATCH_VERSION: "0.0.0", PATCH_RELEASE_URL: "file:///nowhere" };
+  for (const part of [script.slice(0, end), script.trimEnd().slice(0, -1)]) {
+    const done = Bun.spawnSync(["sh", "-s", "--", "--dry-run"], {
+      env: { HOME: home, PATH: process.env.PATH!, ...env },
+      stdin: new TextEncoder().encode(part),
+    });
+    expect(done.stderr.toString()).not.toContain("could not download");
+  }
+});
+
 test("the next review after an upgrade refreshes untouched files only", async () => {
   const hash = (content: string) => new Bun.CryptoHasher("sha256").update(content).digest("hex");
   run([built, "install"]);
