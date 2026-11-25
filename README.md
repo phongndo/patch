@@ -5,13 +5,36 @@ lines, press Send, and the tab closes. The agent gets every comment on stdout as
 `file:line`, with the lines it is about. Patch never writes to your repository.
 
 ```sh
-nix develop                         # Bun and Rust, pinned in flake.nix
-bun install
-bun run build                       # cli/target/release/patchr: one 5 MB binary with the page inside
-cli/target/release/patchr install   # adds /patch to every harness it finds, and patchr to ~/.local/bin
+npx -y patchr install
 ```
 
-`patchr install --dry-run` lists what it would write; `patchr uninstall` removes it.
+Or without Node:
+
+```sh
+curl -fsSL https://github.com/phongndo/patch/releases/latest/download/install.sh | sh
+```
+
+Either one adds `/patch` to every agent harness you have. Restart open sessions
+and type it. `patchr update` updates Patch, `patchr uninstall` removes it, and
+`patchr install --dry-run` lists what would be written. Run `install` again
+after adding a harness. Patch runs on macOS and Linux, on arm64 and x64.
+
+<details>
+<summary>mise, Homebrew and Nix</summary>
+
+```sh
+mise use -g github:phongndo/patch && mise exec -- patchr install
+brew install phongndo/tap/patchr && "$(brew --prefix)/bin/patchr" install
+nix profile add github:phongndo/patch && ~/.nix-profile/bin/patchr install
+```
+
+Their upgrades reach your harnesses too, with a mise from October 2026 or later:
+after one, the next review updates the files Patch wrote, unless you edited
+them. mise takes a release as the latest once it's a day old; name a newer
+version, as in `github:phongndo/patch@0.1.0`, to get it sooner. For one version
+with Nix, use its tag: `github:phongndo/patch/v0.1.0`.
+
+</details>
 
 | Harness       | Type     | Installed as                                           |
 | ------------- | -------- | ------------------------------------------------------ |
@@ -65,13 +88,20 @@ keeps the page on 127.0.0.1 for `ssh -L` forwarding instead.
 
 ## Development
 
-| Command         | Purpose                                         |
-| --------------- | ----------------------------------------------- |
-| `bun run dev`   | Rebuild the page on change and review this repo |
-| `bun run build` | Compile `dist/patchr`                           |
-| `bun test src`  | Git, feedback, server and installer tests       |
-| `bun run check` | tsrs, oxlint and oxfmt                          |
+`nix develop` has Bun and Rust; run `bun install` once.
 
-The server is `src/` (Bun, no dependencies). The page is `web/`: Solid 2,
+| Command                 | Purpose                                         |
+| ----------------------- | ----------------------------------------------- |
+| `bun run dev`           | Rebuild the page on change and review this repo |
+| `bun run build`         | Compile `cli/target/release/patchr`             |
+| `bun run install:local` | Build, then `patchr install` that               |
+| `bun run test`          | Rust, server and installer tests                |
+| `bun run test:web`      | The page's tests                                |
+| `bun run check`         | tsrs, oxlint and oxfmt                          |
+
+To release, set the version where `bun scripts/release.ts check` looks, push it
+to `main` and run `gh workflow run release.yml`, which also makes the tag.
+
+The CLI is `cli/` (Rust). The page is `web/`: Solid 2,
 [Pierre](https://pierre.computer) Diffs, Trees and Icons, UI SDK for the
 popover and segmented controls, and TanStack Hotkeys.
