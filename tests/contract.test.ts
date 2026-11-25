@@ -92,6 +92,28 @@ const post = (url: string, body: unknown, headers: Record<string, string> = {}) 
   });
 
 describe("patchr review", () => {
+  test("a review writes nothing to the repository", async () => {
+    git("config", "core.splitIndex", "true");
+    git("status"); // settles what Git itself would refresh
+    const files = async () => {
+      const paths = Array.from(new Bun.Glob("**/*").scanSync({ cwd: repo, dot: true, onlyFiles: true }));
+      const bytes = paths
+        .toSorted()
+        .map(async (path) => [path, Bun.hash(await Bun.file(join(repo, path)).bytes())]);
+      return Promise.all(bytes);
+    };
+    const before = await files();
+    const { child, origin } = await start();
+    const review = await (await fetch(`${origin}/api/review`)).json();
+    expect(review.patch).toContain("with space.txt"); // untracked, so it went through the index
+    child.kill();
+    await child.exited;
+    git("config", "--unset", "core.splitIndex");
+    const after = await files();
+    const config = ([path]: unknown[]) => path !== ".git/config";
+    expect(after.filter(config)).toEqual(before.filter(config));
+  });
+
   test("serves the review, guards every route, and returns feedback on stdout", async () => {
     const { child, origin, stdout } = await start();
     try {

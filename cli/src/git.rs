@@ -41,7 +41,7 @@ pub struct Review {
 #[derive(Default)]
 pub struct Run<'a> {
     pub allow_exit_1: bool,
-    pub index_file: Option<&'a Path>,
+    pub scratch: Option<&'a Scratch>,
     pub stdin: Option<&'a [u8]>,
 }
 
@@ -53,8 +53,12 @@ pub async fn run(program: &str, cwd: &Path, args: &[&str], options: Run<'_>) -> 
     } else {
         command.env("GH_PROMPT_DISABLED", "1").env("NO_COLOR", "1");
     }
-    if let Some(index) = options.index_file {
-        command.env("GIT_INDEX_FILE", index);
+    if let Some(scratch) = options.scratch {
+        command
+            .args(["-c", "core.splitIndex=false"])
+            .env("GIT_INDEX_FILE", scratch.dir.0.join("index"))
+            .env("GIT_OBJECT_DIRECTORY", scratch.dir.0.join("objects"))
+            .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &scratch.alternates);
     }
     command
         .args(args)
@@ -150,34 +154,51 @@ impl Drop for TempDir {
     }
 }
 
+/// Where Git writes for a diff of the working tree: an index and objects outside
+/// the repository, which it only reads. Even intent-to-add writes an object.
+pub struct Scratch {
+    dir: TempDir,
+    alternates: String,
+}
+
+impl Scratch {
+    async fn new(root: &Path) -> Result<Scratch> {
+        let path = async |name| git(root, &["rev-parse", "--path-format=absolute", "--git-path", name]).await;
+        let dir = TempDir::new("patch-index-")?;
+        std::fs::create_dir(dir.0.join("objects")).map_err(|error| error.to_string())?;
+        let _ = std::fs::copy(path("index").await?.trim(), dir.0.join("index")); // An unborn repository has no index yet.
+        let objects = path("objects").await?;
+        // Quoted, or a colon in the path would end it.
+        let objects = objects.trim_end_matches(['\r', '\n']).replace('\\', r"\\").replace('"', "\\\"");
+        let mut alternates = format!("\"{objects}\"");
+        if let Ok(outer) = std::env::var("GIT_ALTERNATE_OBJECT_DIRECTORIES") {
+            alternates += &format!("{}{outer}", if cfg!(windows) { ';' } else { ':' });
+        }
+        Ok(Scratch { dir, alternates })
+    }
+}
+
 /// `git diff <from>` against the working tree, with untracked files added as
 /// intent-to-add to a throwaway index so they show as new, and so a file
 /// removed from the index but present on disk shows once, as changed.
 async fn diff_worktree(root: &Path, from: &str) -> Result<String> {
-    let real = git(root, &["rev-parse", "--path-format=absolute", "--git-path", "index"]).await?;
-    let scratch = TempDir::new("patch-index-")?;
-    let index = scratch.0.join("index");
-    let _ = std::fs::copy(real.trim(), &index); // An unborn repository has no index yet.
-    let untracked = run(
-        "git",
-        root,
-        &["ls-files", "--others", "--exclude-standard", "-z"],
-        Run { index_file: Some(&index), ..Run::default() },
-    )
-    .await?;
+    let scratch = Scratch::new(root).await?;
+    let scratch = Some(&scratch);
+    let untracked =
+        run("git", root, &["ls-files", "--others", "--exclude-standard", "-z"], Run { scratch, ..Run::default() }).await?;
     if !untracked.is_empty() {
         run(
             "git",
             root,
             &["add", "--intent-to-add", "--pathspec-from-file=-", "--pathspec-file-nul"],
-            Run { index_file: Some(&index), stdin: Some(untracked.as_bytes()), ..Run::default() },
+            Run { scratch, stdin: Some(untracked.as_bytes()), ..Run::default() },
         )
         .await?;
     }
     let mut args = vec!["diff"];
     args.extend(DIFF_FLAGS);
     args.extend([from, "--"]);
-    run("git", root, &args, Run { index_file: Some(&index), ..Run::default() }).await
+    run("git", root, &args, Run { scratch, ..Run::default() }).await
 }
 
 fn checked(patch: String) -> Result<String> {
