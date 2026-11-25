@@ -23,6 +23,34 @@
       forAll = f: nixpkgs.lib.genAttrs (builtins.attrNames systems) (system: f system nixpkgs.legacyPackages.${system});
     in
     {
+      # The released binary, which the release workflow records after publishing it.
+      packages = forAll (
+        system: pkgs:
+        let
+          release = builtins.fromJSON (builtins.readFile ./nix/release.json);
+        in
+        pkgs.lib.optionalAttrs (builtins.pathExists ./nix/release.json) {
+          default = pkgs.stdenvNoCC.mkDerivation {
+            pname = "patchr";
+            inherit (release) version;
+            src = pkgs.fetchurl release.systems.${system};
+            # It is static on Linux and links only macOS's own libraries there.
+            dontFixup = true;
+            installPhase = ''
+              install -Dm755 patchr $out/bin/patchr
+              install -Dm644 -t $out/share/doc/patchr LICENSE THIRD_PARTY_NOTICES.md
+            '';
+            meta = {
+              description = "A browser diff review loop for coding agents";
+              homepage = "https://github.com/phongndo/patch";
+              license = pkgs.lib.licenses.mit;
+              mainProgram = "patchr";
+              platforms = builtins.attrNames systems;
+            };
+          };
+        }
+      );
+
       devShells = forAll (
         system: pkgs:
         let
