@@ -1,9 +1,13 @@
 # Patch
 
-`/patch` opens your agent's changes in the browser as a diff. You comment on
-lines, press Finish, and the tab closes. The agent gets every comment on stdout as
-`file:line`, with the lines it is about. Type `/patch` again once it is done.
-Patch never writes to your repository.
+Review your coding agent's changes in the browser, the way you'd review a pull
+request. Comment on lines, press **Finish**, and the agent gets your comments.
+
+![A Patch review with a comment on a line](https://raw.githubusercontent.com/phongndo/patch/main/.github/screenshot.png)
+
+Patch only reads your repository. It never writes to it.
+
+## Install
 
 ```sh
 npx -y @phongndo/patchr install
@@ -15,13 +19,11 @@ Or without Node:
 curl -fsSL https://github.com/phongndo/patch/releases/latest/download/install.sh | sh
 ```
 
-Either one adds `/patch` to every agent harness you have. Restart open sessions
-and type it. `patchr update` updates Patch, `patchr uninstall` removes it, and
-`patchr install --dry-run` lists what would be written. Run `install` again
-after adding a harness. Patch runs on macOS and Linux, on arm64 and x64.
+This sets up Patch in every supported agent it finds on your machine. Restart
+any open agent sessions afterwards. Patch runs on macOS and Linux.
 
 <details>
-<summary>mise, Homebrew and Nix</summary>
+<summary>Other ways to install</summary>
 
 ```sh
 mise use -g github:phongndo/patch && mise exec -- patchr install
@@ -29,92 +31,59 @@ brew install phongndo/tap/patchr && "$(brew --prefix)/bin/patchr" install
 nix profile add github:phongndo/patch && ~/.nix-profile/bin/patchr install
 ```
 
-Their upgrades reach your harnesses too, with a mise from October 2026 or later:
-after one, the next review updates the files Patch wrote, unless you edited
-them. mise takes a release as the latest once it's a day old; name a newer
-version, as in `github:phongndo/patch@0.1.0`, to get it sooner. For one version
-with Nix, use its tag: `github:phongndo/patch/v0.1.0`.
-
 </details>
 
-| Harness       | Type     | Installed as                                           |
-| ------------- | -------- | ------------------------------------------------------ |
-| Claude Code   | `/patch` | a mod and its fallback skill, `~/.claude/skills/patch` |
-| Codex         | `$patch` | a hook in `~/.codex/hooks.json`, and Amp's skill       |
-| Pi            | `/patch` | `~/.pi/agent/extensions/patch.ts`                      |
-| OpenCode 2    | `/patch` | `~/.config/opencode/plugins/patch.ts`                  |
-| Gemini CLI    | `/patch` | `~/.gemini/commands/patch.toml`                        |
-| Cursor, Droid | `/patch` | `~/.cursor/commands`, `~/.factory/commands`            |
-| Amp           | `$patch` | `~/.agents/skills/patch/SKILL.md`                      |
+## Use
 
-In the first four the command opens the review itself: no model runs until you
-send feedback, which arrives as your next message, and the session stays free
-meanwhile. In the others the model waits on the command.
+1. Ask your agent to make a change.
+2. Type `/patch` (`$patch` in Codex and Amp). A review opens in your browser.
+3. Comment on lines, files, or the change as a whole.
+4. Press **Finish** (⌘↵). Your comments go to the agent, and the tab closes.
 
-Codex asks you to trust the hook once. Until you do, `$patch` is the skill, and
-Codex's default sandbox blocks the local port it needs; allow it to escalate.
+Type `/patch` again after the agent makes its fixes. If everything looks good,
+press **Finish** without commenting.
 
-`patchr review [dir] [--base <ref>] [--uncommitted | --staged] [--remote | --local]`
-is what the command runs. By default it shows what a pull request would: the branch since
-it left its base, plus uncommitted and untracked files. A review is one pass:
-comment, finish, and the next `/patch` starts empty. Finishing with no comments
-passes the review: in the first four harnesses that ends it quietly, with no
-turn, and in the others the waiting model is told it passed. Closing the tab
-ends it without saying so.
-Comments live in the tab: a reload keeps them, closing with any unsent asks
-first, and if Patch is cut off (an agent's timeout) the tab can still copy them.
-A tab that sleeps, is suspended or loses its connection doesn't end the review,
-and `/patch` opens it again if it is gone. Feedback the agent's harness
-refuses is kept in `~/.local/state/patch/unsent`, and its path is shown.
+The review shows what a pull request would: your branch's commits plus any
+uncommitted and untracked files. Press ⌘O to review something else: only
+uncommitted or staged changes, a range of commits, or an open pull request.
 
-⌘K opens the command palette, which has every command, file, comment and
-setting; in it `/` searches the code, `#` filters files by name, `:` goes to a
-line and `?` lists the rest, and ⌘↵ opens a file on its own. ⌘O chooses what to review: ← → switch its tabs and ⇧↵ starts a run
-of commits. ⌘/ comments on the selected lines or the line under the pointer, a
-file's header on the whole file, and the Comments list adds a global one. ⌃J
-and ⌃K step through changes, ⌃N and ⌃P through comments and ⌥↓ and ⌥↑ through
-files, ⌘⇧V marks the file viewed and ⌘↵ finishes. Off a Mac the motions are on
-Alt. Settings › Shortcuts lists them all; any command can be given a key.
+## Supported agents
 
-Settings (⌘, or the palette) cover themes, fonts and sizes, layout, the diff,
-and every keyboard shortcut. They are kept in `~/.config/patch/settings.json`
-and apply to every review.
+| Agent                                                          | Command  |
+| -------------------------------------------------------------- | -------- |
+| Claude Code, Pi, OpenCode 2, Gemini CLI, Cursor, Factory Droid | `/patch` |
+| Codex, Amp                                                     | `$patch` |
 
-There are 416 themes for light and dark: Pierre's own and its other built-ins,
-the most-downloaded MIT and Apache-licensed theme extensions from Zed's
-registry (Catppuccin, Tokyo Night, GitHub, Dracula, Nord, Rosé Pine, Kanagawa,
-Everforest, Gruvbox Material and more), and 251 Base16 schemes behind a switch.
-Community themes load only when chosen. `bun scripts/fetch-themes.ts` refreshes
-them into `web/themes/community`, with their sources and licenses in
-`NOTICE.md` there, and `bun scripts/themes.ts` rebuilds the list.
+Installed an agent later? Run `patchr install` again.
 
-## Remote review
+Codex asks you to trust Patch's hook the first time. Until you do, its sandbox
+may block Patch; allow it when asked.
 
-On a machine signed in to Tailscale, Patch also serves the page on its tailnet
-address (the first port free from 8766), and the link it prints is that one.
-Open it on your laptop or phone, however you reach the agent (SSH, tmux, a
-terminal app on your phone); the agent gets the feedback. The link holds a
-secret for that review alone, and only devices signed in to the machine's own
-Tailscale account can use it, as `tailscale whois` tells; on a tagged server,
-which has no such account, any device with the link can. A browser on the
-machine itself opens the page on 127.0.0.1, at the same port, which also serves
-`ssh -L`. `--local` or `PATCH_REMOTE=0` keeps the page on loopback only.
+## Settings and shortcuts
 
-## Development
+Press ⌘K (Ctrl+K off a Mac) for the command palette: every file, comment,
+command, and setting, including themes and keyboard shortcuts.
 
-`nix develop` has Bun and Rust; run `bun install` once.
+## Review from another device
 
-| Command                 | Purpose                                            |
-| ----------------------- | -------------------------------------------------- |
-| `bun run dev`           | Review this repo with the working copy, live       |
-| `bun run build`         | Compile `cli/target/release/patchr`                |
-| `bun run install:local` | Build, then `patchr install` that                  |
-| `bun run test`          | Rust, server and installer tests                   |
-| `bun run test:web`      | The page's tests                                   |
-| `bun run check`         | tsrs, oxlint, oxfmt, rustfmt and Clippy            |
-| `hk install`            | Check commits and pushes; `hk fix` formats         |
-| `bun run bump 0.2.0`    | Set the version, for `gh workflow run release.yml` |
+If the machine running your agent is signed in to
+[Tailscale](https://tailscale.com), the link Patch prints also opens on your
+other devices on the same tailnet, such as your laptop or phone. This is handy
+when your agent runs on a remote server.
 
-The CLI is `cli/` (Rust). The page is `web/`: Solid 2,
-[Pierre](https://pierre.computer) Diffs, Trees and Icons, UI SDK for the
-popover and segmented controls, and TanStack Hotkeys.
+Treat the link like a password. Pass `--local` (or set `PATCH_REMOTE=0`) to
+keep the review on the machine itself.
+
+## Update and uninstall
+
+Run `patchr update` to update Patch, and `patchr uninstall` to remove it. Run
+`patchr --help` for all commands and options.
+
+## Contributing
+
+See [CONTRIBUTING.md](https://github.com/phongndo/patch/blob/main/CONTRIBUTING.md).
+
+## License
+
+Patch is [MIT-licensed](LICENSE). Bundled dependencies and themes keep their own
+licenses; release archives include them in `THIRD_PARTY_NOTICES.md`.
