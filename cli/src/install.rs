@@ -27,7 +27,7 @@ const DESCRIPTION: &str = "Review the current changes in Patch, a browser diff v
 
 const WHERE: &str = "Pick the repository first. Use the directory the user names in the arguments; otherwise the Git repository you have been working in during this conversation; otherwise the current directory. Pass it as the first argument whenever it is not the current directory. If none of these is a Git repository, ask the user which one to review instead of running the command.";
 
-const LINK: &str = "The command first prints `Patch is open at <url>` on stderr. When no browser opens on the user's screen, as over SSH or on a remote machine, read that line and give the user the URL.";
+const LINK: &str = "The command first prints `Patch is open at <url>` on stderr. When no browser opens on the user's screen, as over SSH or on a remote machine, read that line and give the user the URL; it opens on any of their devices on Tailscale.";
 
 const OUTCOMES: &str = "Then act on its stdout:
 
@@ -36,7 +36,7 @@ const OUTCOMES: &str = "Then act on its stdout:
 - Closed without feedback: say so in one sentence and stop. Closing is not approval.
 - If the command was cut off by a timeout, say so and run it again. The new review starts empty; the tab of the old one can still copy its comments.";
 
-const OPTIONS: &str = "Arguments: a directory to review, `--base <ref>` to compare against another branch, `--uncommitted` or `--staged` to narrow the change, `--remote` to serve the page to another device over Tailscale. Run the command yourself; never ask the user to.";
+const OPTIONS: &str = "Arguments: a directory to review, `--base <ref>` to compare against another branch, `--uncommitted` or `--staged` to narrow the change, `--local` to keep the page off the tailnet. Run the command yourself; never ask the user to.";
 
 /// The installed binary as a shell word.
 fn patchr() -> String {
