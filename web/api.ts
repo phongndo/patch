@@ -1,4 +1,12 @@
-import type { PullRequest, ReviewResponse, Scope, ScopesResponse, Submission } from "../src/protocol.ts";
+import type {
+  PullRequest,
+  ReviewResponse,
+  Scope,
+  ScopesResponse,
+  Submission,
+  UnchangedFiles,
+  GrepMatch,
+} from "../src/protocol.ts";
 
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(path);
@@ -30,6 +38,20 @@ export const loadSide = async (key: string, side: "old" | "new", path: string) =
   const response = await fetch(`/api/file?${new URLSearchParams({ key, side, path })}`);
   return response.ok ? response.text() : "";
 };
+
+export const loadUnchanged = (key: string) =>
+  getJson<UnchangedFiles>(`/api/unchanged?${new URLSearchParams({ key })}`);
+
+export const loadGrep = (key: string, text: string) =>
+  getJson<GrepMatch[]>(`/api/grep?${new URLSearchParams({ key, q: text })}`);
+
+/** A file the review leaves alone, whole. */
+export async function loadUnchangedFile(key: string, path: string): Promise<string> {
+  const response = await fetch(`/api/unchanged/file?${new URLSearchParams({ key, path })}`);
+  if (response.ok) return response.text();
+  const body = await response.json().catch(() => ({}));
+  throw new Error(body.error ?? "Patch could not read that.");
+}
 
 // Names this load of the page, so Patch knows which one left and which went quiet.
 // Not crypto.randomUUID: a remote review's page is plain HTTP, which lacks it.
