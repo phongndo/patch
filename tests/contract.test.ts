@@ -329,6 +329,29 @@ describe("patchr review", () => {
     }
   });
 
+  test("a repository whose path holds a newline shows its untracked files", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "patch-new\nline-"));
+    try {
+      const odd = join(parent, "repo");
+      const run = (...args: string[]) =>
+        Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: odd });
+      await Bun.write(join(odd, "kept.txt"), "kept\n");
+      run("init", "-q", "-b", "main");
+      run("add", ".");
+      run("commit", "-qm", "init");
+      await writeFile(join(odd, "fresh.txt"), "fresh\n");
+      const review = await start(odd, "--uncommitted");
+      try {
+        const body = (await (await fetch(`${review.origin}/api/review`)).json()) as { patch: string };
+        expect(body.patch).toContain("+++ b/fresh.txt");
+      } finally {
+        review.child.kill();
+      }
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
   /** An open page: its stream, held until it drops. Bun closes one that nothing refers to. */
   const visit = async (origin: string, page: string) => {
     const gone = new AbortController();

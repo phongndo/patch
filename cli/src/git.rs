@@ -159,11 +159,13 @@ pub struct Scratch {
 
 impl Scratch {
     async fn new(root: &Path) -> Result<Scratch> {
+        // One at a time: a path may hold a newline, so two in one answer can't be told apart.
         let path = async |name| git(root, &["rev-parse", "--path-format=absolute", "--git-path", name]).await;
+        let (index, objects) = tokio::join!(path("index"), path("objects"));
+        let (index, objects) = (index?, objects?);
         let dir = TempDir::new("patch-index-")?;
         std::fs::create_dir(dir.0.join("objects")).map_err(|error| error.to_string())?;
-        let _ = std::fs::copy(path("index").await?.trim(), dir.0.join("index")); // An unborn repository has no index yet.
-        let objects = path("objects").await?;
+        let _ = std::fs::copy(index.trim(), dir.0.join("index")); // An unborn repository has no index yet.
         // Quoted, or a colon in the path would end it.
         let objects = objects.trim_end_matches(['\r', '\n']).replace('\\', r"\\").replace('"', "\\\"");
         let mut alternates = format!("\"{objects}\"");
@@ -174,12 +176,12 @@ impl Scratch {
     }
 }
 
-/// `git diff <from>` against the working tree, with untracked files added as
-/// intent-to-add to a throwaway index so they show as new, and so a file
-/// removed from the index but present on disk shows once, as changed.
-async fn diff_worktree(root: &Path, from: &str) -> Result<String> {
-    let scratch = Scratch::new(root).await?;
-    let scratch = Some(&scratch);
+/// A throwaway index with untracked files added as intent-to-add, so a diff of
+/// the working tree shows them as new, and a file removed from the index but
+/// present on disk shows once, as changed.
+async fn worktree_index(root: &Path) -> Result<Scratch> {
+    let prepared = Scratch::new(root).await?;
+    let scratch = Some(&prepared);
     let untracked =
         run("git", root, &["ls-files", "--others", "--exclude-standard", "-z"], Run { scratch, ..Run::default() }).await?;
     if !untracked.is_empty() {
@@ -191,10 +193,15 @@ async fn diff_worktree(root: &Path, from: &str) -> Result<String> {
         )
         .await?;
     }
+    Ok(prepared)
+}
+
+/// `git diff <from>` against the working tree, through `worktree_index`.
+async fn diff_worktree(root: &Path, scratch: &Scratch, from: &str) -> Result<String> {
     let mut args = vec!["diff"];
     args.extend(DIFF_FLAGS);
     args.extend([from, "--"]);
-    run("git", root, &args, Run { scratch, ..Run::default() }).await
+    run("git", root, &args, Run { scratch: Some(scratch), ..Run::default() }).await
 }
 
 fn checked(patch: String) -> Result<String> {
@@ -222,8 +229,9 @@ pub fn repository_name(root: &Path) -> String {
 }
 
 pub async fn current_branch(root: &Path) -> (Option<String>, String) {
-    let head = try_git(root, &["rev-parse", "--verify", "--quiet", "HEAD"]).await;
-    let branch = match try_git(root, &["branch", "--show-current"]).await {
+    let (head, branch) =
+        tokio::join!(try_git(root, &["rev-parse", "--verify", "--quiet", "HEAD"]), try_git(root, &["branch", "--show-current"]));
+    let branch = match branch {
         Some(branch) => branch,
         None => head.as_deref().map(|sha| sha[..7.min(sha.len())].to_string()).unwrap_or_else(|| "unborn".into()),
     };
@@ -231,10 +239,10 @@ pub async fn current_branch(root: &Path) -> (Option<String>, String) {
 }
 
 pub async fn read_review(root: &Path, scope: &Scope) -> Result<Review> {
-    let (head, branch) = current_branch(root).await;
     let repository = repository_name(root);
 
     if let Scope::Commits { from, to } = scope {
+        let (_, branch) = current_branch(root).await;
         let to = resolve_commit(root, to).await?;
         let first = resolve_commit(root, from).await?;
         // The range starts at the first chosen commit, so diff from its parent.
@@ -264,23 +272,38 @@ pub async fn read_review(root: &Path, scope: &Scope) -> Result<Review> {
         Scope::Uncommitted { .. } => (None, false, false),
         Scope::Commits { .. } | Scope::Pr { .. } => return Err("Pull requests are read through GitHub.".into()),
     };
-    let mut base = None;
-    let mut from = head.clone().unwrap_or_else(|| EMPTY_TREE.to_string());
-    if all && let Some(head) = &head {
-        base = find_base(root, requested).await?;
-        if let Some(base) = &base
-            && let Some(merge_base) = try_git(root, &["merge-base", base, head]).await
-        {
-            from = merge_base;
+    // Where the diff starts, and the throwaway index for the working tree, side by side.
+    let start = async {
+        let (head_and_branch, base) =
+            tokio::join!(current_branch(root), async { if all { find_base(root, requested).await } else { Ok(None) } });
+        let (head, branch) = head_and_branch;
+        let mut from = head.clone().unwrap_or_else(|| EMPTY_TREE.to_string());
+        // An unborn branch has no base.
+        let base = match &head {
+            Some(head) if all => {
+                let base = base?;
+                if let Some(base) = &base
+                    && let Some(merge_base) = try_git(root, &["merge-base", base, head]).await
+                {
+                    from = merge_base;
+                }
+                base
+            }
+            _ => None,
+        };
+        Ok::<_, String>((branch, base, from))
+    };
+    let index = async { if staged { Ok(None) } else { worktree_index(root).await.map(Some) } };
+    let (start, index) = tokio::join!(start, index);
+    let (branch, base, from) = start?;
+    let patch = match index? {
+        Some(scratch) => diff_worktree(root, &scratch, &from).await?,
+        None => {
+            let mut args = vec!["diff"];
+            args.extend(DIFF_FLAGS);
+            args.extend(["--cached", from.as_str(), "--"]);
+            git(root, &args).await?
         }
-    }
-    let patch = if staged {
-        let mut args = vec!["diff"];
-        args.extend(DIFF_FLAGS);
-        args.extend(["--cached", from.as_str(), "--"]);
-        git(root, &args).await?
-    } else {
-        diff_worktree(root, &from).await?
     };
     let label = if all {
         match &base {
