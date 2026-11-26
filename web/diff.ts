@@ -52,7 +52,7 @@ let workers = { ...themesOf(startup), wordDiff: startup.wordDiff };
 const pool = getOrCreateWorkerPoolSingleton({
   poolOptions: {
     workerFactory: () => new DiffsWorker(),
-    poolSize: Math.max(2, Math.min(6, (navigator.hardwareConcurrency || 4) - 1)),
+    poolSize: Math.max(2, Math.min(3, (navigator.hardwareConcurrency || 4) - 1)),
   },
   highlighterOptions: {
     theme: themesOf(startup),
