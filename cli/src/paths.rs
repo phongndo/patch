@@ -63,23 +63,28 @@ fn header_lines(patch: &str) -> impl Iterator<Item = &str> {
 
 /// Every path a unified diff names on either side. Git ends a path that
 /// contains a space with a tab, and quotes unusual ones.
+#[cfg(test)]
 pub fn patch_paths(patch: &str) -> HashSet<String> {
+    review_paths(patch).0
+}
+
+/// Every path the diff touches.
+#[cfg(test)]
+pub fn changed_paths(patch: &str) -> HashSet<String> {
+    review_paths(patch).1
+}
+
+/// In one pass: the paths the diff has text for (`patch_paths`), and every
+/// path it touches, also those with no `---` and `+++` lines: a file renamed
+/// unchanged, or a binary one. These have no text to read, so they only say
+/// what is not unchanged.
+pub fn review_paths(patch: &str) -> (HashSet<String>, HashSet<String>) {
+    let mut texts = HashSet::new();
     let mut paths = HashSet::new();
     for line in header_lines(patch) {
         if let Some(rest) = line.strip_prefix("+++ ").or_else(|| line.strip_prefix("--- ")) {
-            paths.extend(header_path(rest.strip_suffix('\t').unwrap_or(rest), true));
-        }
-    }
-    paths
-}
-
-/// Every path the diff touches, also those with no `---` and `+++` lines: a
-/// file renamed unchanged, or a binary one. These have no text to read, so
-/// they only say what is not unchanged.
-pub fn changed_paths(patch: &str) -> HashSet<String> {
-    let mut paths = patch_paths(patch);
-    for line in header_lines(patch) {
-        if let Some(rest) =
+            texts.extend(header_path(rest.strip_suffix('\t').unwrap_or(rest), true));
+        } else if let Some(rest) =
             ["rename from ", "rename to ", "copy from ", "copy to "].iter().find_map(|prefix| line.strip_prefix(prefix))
         {
             paths.extend(header_path(rest, false));
@@ -92,7 +97,8 @@ pub fn changed_paths(patch: &str) -> HashSet<String> {
             }
         }
     }
-    paths
+    paths.extend(texts.iter().cloned());
+    (texts, paths)
 }
 
 #[cfg(test)]

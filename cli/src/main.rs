@@ -244,6 +244,7 @@ async fn review(args: &[String]) -> Result<(), String> {
                 dev,
                 unopened,
                 opens: false,
+                compress: true,
             },
             Box::new(move |port| format!("http://{link}:{port}/?t={token}")),
         )
@@ -258,6 +259,7 @@ async fn review(args: &[String]) -> Result<(), String> {
                 dev,
                 unopened,
                 opens: args.open && !over_ssh,
+                compress: over_ssh,
             },
             Box::new(|port| format!("http://127.0.0.1:{port}/")),
         )

@@ -22,7 +22,7 @@ use tokio::task::JoinHandle;
 
 use crate::git::{self, Ref, Review};
 use crate::github;
-use crate::paths::patch_paths;
+use crate::paths::review_paths;
 use crate::protocol::{GrepMatch, Mode, ReviewResponse, Scope, ScopesResponse, Submission};
 
 /// One file of the page as a release build embeds it: compressed where Vite left
@@ -87,6 +87,10 @@ pub struct Options {
     pub unopened: Option<Duration>,
     /// Whether this review opens the browser itself, and so may again.
     pub opens: bool,
+    /// Whether large answers are compressed: the browser may be on another
+    /// machine, also behind a forwarded port. Over loopback alone, compressing
+    /// takes longer than sending.
+    pub compress: bool,
 }
 
 #[derive(Default)]
@@ -121,7 +125,7 @@ struct App {
     /// Names this run to its page, which keeps the comments until they are sent.
     session: String,
     /// Each review read, by scope.
-    reviews: Mutex<HashMap<String, Loaded>>,
+    reviews: Mutex<HashMap<String, Arc<Loaded>>>,
     /// Counts reviews read, so what was made for an older read of a scope is never taken for a newer one.
     reads: std::sync::atomic::AtomicU64,
     /// The files each review leaves alone, by path, with their blobs; read once it is asked for.
@@ -254,9 +258,10 @@ fn gzip(bytes: &[u8], level: u32) -> Vec<u8> {
     encoder.finish().unwrap_or_default()
 }
 
-/// Compresses a large JSON or text answer when the browser accepts gzip.
-fn compressed(headers: &HeaderMap, mut response: Response, bytes: Vec<u8>) -> Response {
-    if bytes.len() > 8 * 1024 && accepts(headers, "gzip") {
+/// Compresses a large JSON or text answer when it may cross a network and the
+/// browser accepts gzip.
+fn compressed(app: &App, headers: &HeaderMap, mut response: Response, bytes: Vec<u8>) -> Response {
+    if app.options.compress && bytes.len() > 8 * 1024 && accepts(headers, "gzip") {
         *response.body_mut() = Body::from(gzip(&bytes, 1));
         response.headers_mut().insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
         response.headers_mut().insert(header::VARY, HeaderValue::from_static("accept-encoding"));
@@ -346,8 +351,17 @@ async fn review(app: &App, scope: &Scope) -> Result<Review, String> {
     })
 }
 
-/// A review as read: the paths its diff names, and which read it was.
-type Loaded = (Review, HashSet<String>, u64);
+/// What a read of a review keeps for the files the page opens after it, without the diff
+/// itself: its sides, the paths its diff has text for, every path it touches, and which read
+/// it was.
+struct Loaded {
+    scope: Scope,
+    old: Ref,
+    new: Ref,
+    files: HashSet<String>,
+    changed: HashSet<String>,
+    read: u64,
+}
 
 /// What one read of a review lets the page open beyond its diff: the files it leaves alone,
 /// by path with their blobs and the tree they are read from, and its changed files as they
@@ -362,18 +376,15 @@ struct Catalog {
 
 /// The files a review leaves alone, which the page may open for context.
 async fn unchanged(app: &App, key: &str) -> Result<Arc<Catalog>, String> {
-    let current = app.reviews.lock().unwrap().get(key).map(|(review, _, read)| {
-        // Commits are read as reviewed. A working tree or index is not a tree to read, but
-        // what it leaves alone is as its base has it.
-        let tree = match (&review.new, &review.old) {
-            (Ref::Commit(sha), _) | (_, Ref::Commit(sha)) => Some(sha.clone()),
-            _ => None,
-        };
-        (tree, review.new.clone(), crate::paths::changed_paths(&review.patch), *read)
-    });
-    let Some((Some(tree), new, changed, read)) = current else {
+    let Some(review) = app.reviews.lock().unwrap().get(key).cloned() else {
         return Err("Unknown review.".into());
     };
+    // Commits are read as reviewed. A working tree or index is not a tree to read, but
+    // what it leaves alone is as its base has it.
+    let ((Ref::Commit(tree), _) | (_, Ref::Commit(tree))) = (&review.new, &review.old) else {
+        return Err("Unknown review.".into());
+    };
+    let (tree, read) = (tree.clone(), review.read);
     if let Some(catalog) = app.unchanged.lock().unwrap().get(key).filter(|catalog| catalog.read == read) {
         return Ok(catalog.clone());
     }
@@ -381,23 +392,23 @@ async fn unchanged(app: &App, key: &str) -> Result<Arc<Catalog>, String> {
     if tree != git::EMPTY_TREE && !git::has_commit(root, &tree).await {
         return Err("Fetch this pull request to open the files it leaves alone.".into());
     }
-    let files = git::unchanged_files(root, &tree, &changed).await?;
-    let mut changed: Vec<String> = changed.into_iter().collect();
+    let files = git::unchanged_files(root, &tree, &review.changed).await?;
+    let mut changed: Vec<String> = review.changed.iter().cloned().collect();
     changed.sort();
-    let catalog = Arc::new(Catalog { read, tree, files, new, changed });
+    let catalog = Arc::new(Catalog { read, tree, files, new: review.new.clone(), changed });
     // Kept only while it is still the scope's latest read; a newer one makes its own.
-    let latest = app.reviews.lock().unwrap().get(key).is_some_and(|(_, _, now)| *now == read);
+    let latest = app.reviews.lock().unwrap().get(key).is_some_and(|now| now.read == read);
     if latest {
         app.unchanged.lock().unwrap().insert(key.to_string(), catalog.clone());
     }
     Ok(catalog)
 }
 
-fn text(headers: &HeaderMap, text: String) -> Response {
+fn text(app: &App, headers: &HeaderMap, text: String) -> Response {
     let mut response = Response::new(Body::empty());
     response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"));
     response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    compressed(headers, response, text.into_bytes())
+    compressed(app, headers, response, text.into_bytes())
 }
 
 /// A stream ended: by itself that says only that the page went quiet.
@@ -641,22 +652,24 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
             match review(&app, &scope).await {
                 Ok(current) => {
                     let scope_key = serde_json::to_string(&current.scope).unwrap_or_default();
-                    let files = patch_paths(&current.patch);
+                    let (files, changed) = review_paths(&current.patch);
+                    let read = app.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let loaded =
+                        Loaded { scope: current.scope.clone(), old: current.old, new: current.new, files, changed, read };
                     let response = ReviewResponse {
-                        repository: current.repository.clone(),
-                        branch: current.branch.clone(),
-                        scope: current.scope.clone(),
+                        repository: current.repository,
+                        branch: current.branch,
+                        scope: current.scope,
                         scope_key: scope_key.clone(),
-                        label: current.label.clone(),
-                        base: current.base.clone(),
-                        patch: current.patch.clone(),
+                        label: current.label,
+                        base: current.base,
+                        patch: current.patch,
                         session: app.session.clone(),
                     };
-                    let read = app.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     app.unchanged.lock().unwrap().remove(&scope_key);
-                    app.reviews.lock().unwrap().insert(scope_key, (current, files, read));
+                    app.reviews.lock().unwrap().insert(scope_key, Arc::new(loaded));
                     let bytes = serde_json::to_vec(&response).unwrap_or_default();
-                    compressed(&headers, json(StatusCode::OK, &()), bytes)
+                    compressed(&app, &headers, json(StatusCode::OK, &()), bytes)
                 }
                 Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
             }
@@ -688,7 +701,7 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
             let side = params.get("side").map(String::as_str);
             let file = params.get("path").cloned().unwrap_or_default();
             let current = app.reviews.lock().unwrap().get(&key).cloned();
-            let Some((current, files, _)) = current else {
+            let Some(current) = current else {
                 return error(StatusCode::NOT_FOUND, "Unknown file.");
             };
             let reference = match side {
@@ -696,7 +709,7 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                 Some("new") => current.new.clone(),
                 _ => return error(StatusCode::NOT_FOUND, "Unknown file."),
             };
-            if !files.contains(&file) {
+            if !current.files.contains(&file) {
                 return error(StatusCode::NOT_FOUND, "Unknown file.");
             }
             let root = &app.options.root;
@@ -708,7 +721,7 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                 _ => git::read_side(root, &reference, &file).await,
             };
             match read {
-                Ok(contents) => text(&headers, contents),
+                Ok(contents) => text(&app, &headers, contents),
                 Err(_) => (StatusCode::NOT_FOUND, "").into_response(),
             }
         }
@@ -718,7 +731,7 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                 Ok(catalog) => {
                     let mut paths: Vec<&String> = catalog.files.keys().collect();
                     paths.sort();
-                    compressed(&headers, json(StatusCode::OK, &()), serde_json::to_vec(&paths).unwrap_or_default())
+                    compressed(&app, &headers, json(StatusCode::OK, &()), serde_json::to_vec(&paths).unwrap_or_default())
                 }
                 Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
             }
@@ -749,7 +762,7 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                 Ok(()) => {
                     let matches: Vec<GrepMatch> =
                         found.into_iter().map(|(file, line, text)| GrepMatch { file, line, text }).collect();
-                    compressed(&headers, json(StatusCode::OK, &()), serde_json::to_vec(&matches).unwrap_or_default())
+                    compressed(&app, &headers, json(StatusCode::OK, &()), serde_json::to_vec(&matches).unwrap_or_default())
                 }
                 Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
             }
@@ -762,7 +775,7 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                 return error(StatusCode::NOT_FOUND, "Unknown file.");
             };
             match git::read_text(&app.options.root, &blob).await {
-                Ok(contents) => text(&headers, contents),
+                Ok(contents) => text(&app, &headers, contents),
                 Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
             }
         }
@@ -827,6 +840,7 @@ mod tests {
             dev: None,
             unopened: Some(Duration::from_millis(20)),
             opens: false,
+            compress: false,
         };
         let mut session = start(options, |port| port.to_string()).await.unwrap();
         let outcome = tokio::time::timeout(Duration::from_secs(5), &mut session.outcome).await.unwrap();
