@@ -12,13 +12,15 @@ import {
   Show,
   lazy,
 } from "solid-js";
-import type { Comment } from "../src/protocol.ts";
+import type { Comment, Side } from "../src/protocol.ts";
 import { stayConnected } from "./api.ts";
 import type { Action } from "./commands.ts";
 import { createDiffView, type DiffView, type Note } from "./diff.ts";
 import { copyText, feedbackText } from "./feedback.ts";
 import { bindActions, type Handler } from "./hotkeys.ts";
-import { Icon } from "./Icon.tsx";
+import { FileIcon } from "./FileIcon.tsx";
+import { Icon, statusIcons } from "./Icon.tsx";
+import { CommentsSide } from "./CommentsPanel.tsx";
 import { CommentCard, Composer } from "./Notes.tsx";
 import { openPalette, Palette } from "./Palette.tsx";
 import {
@@ -27,9 +29,12 @@ import {
   opensCollapsed,
   state,
   stats,
+  statusOf,
   globalTarget,
+  isGlobal,
   wholeFile,
   type Kind,
+  type OpenedFile,
   type Target,
 } from "./state.ts";
 import { ScopePicker } from "./ScopePicker.tsx";
@@ -43,10 +48,8 @@ import {
   setScopeOpen,
   setSettingsOpen,
   setSettingsPage,
-  setSidebarView,
   settingsOpen,
   type SettingsPage,
-  type SidebarView,
 } from "./ui.ts";
 
 const SettingsDialog = lazy(() =>
@@ -54,6 +57,7 @@ const SettingsDialog = lazy(() =>
 );
 
 type Layout = "split" | "unified";
+const title = (word: string) => word[0]!.toUpperCase() + word.slice(1);
 const { settings } = preferences;
 const initialLayout: Layout =
   settings.layout === "auto" ? (innerWidth >= 1200 ? "split" : "unified") : settings.layout;
@@ -71,7 +75,19 @@ export function App() {
   createEffect(sidebarWidth, (width) =>
     document.documentElement.style.setProperty("--sidebar", `${width}px`),
   );
-  let searchInput: HTMLInputElement | undefined;
+  const [commentsWidth, setCommentsWidth] = createSignal(() => settings.commentsWidth);
+  createEffect(commentsWidth, (width) =>
+    document.documentElement.style.setProperty("--comments", `${width}px`),
+  );
+  // On a narrow window the comments are a drawer over the diff, closed until asked for; the
+  // setting is for wide ones, where they sit beside it.
+  const narrowQuery = matchMedia("(max-width: 860px)");
+  const [narrow, setNarrow] = createSignal(narrowQuery.matches);
+  narrowQuery.addEventListener("change", (event) => setNarrow(event.matches));
+  const [drawer, setDrawer] = createSignal(false);
+  const commentsShown = () => (narrow() ? drawer() : settings.commentsOpen);
+  const setComments = (shown: boolean) =>
+    narrow() ? setDrawer(shown) : preferences.update({ commentsOpen: shown });
   const [collapsed, setCollapsed] = createStore<Record<string, boolean>>({});
   let scroller: HTMLElement | undefined;
   let diff: DiffView | undefined;
@@ -142,7 +158,7 @@ export function App() {
   /** Opens an editor, in the diff or, for what it has no place for, in the sidebar. */
   function compose(target: Target) {
     state.compose(target);
-    if (state.lineOf(target) === undefined) return showSidebar("comments");
+    if (state.lineOf(target) === undefined) return setComments(true);
     if (collapsed[target.file]) setFileCollapsed(target.file, false);
     // The header stays on screen while the file's first line, which this goes above, scrolls away.
     if (state.lineOf(target) === 0 && currentFile() === target.file) diff?.scrollToFile(target.file);
@@ -156,46 +172,117 @@ export function App() {
   }
 
   // Collapses every listed file, or expands them all when they already are.
+  // Of the files on screen: the review's, or those browsed.
   const allCollapsed = () => {
-    const files = state.visibleFiles();
+    const files = shown().items;
     return files.length > 0 && files.every((file) => collapsed[file.name]);
   };
   function toggleAll() {
     const value = !allCollapsed();
-    for (const file of state.visibleFiles()) setFileCollapsed(file.name, value);
+    for (const file of shown().items) setFileCollapsed(file.name, value);
   }
 
   function toggleViewed(file: string) {
+    if (!state.fileByName(file)) return false; // An unchanged file has nothing to view.
     const viewed = state.toggleViewed(file);
     setFileCollapsed(file, viewed);
     return viewed;
   }
 
-  function FileHeader(props: { file: FileDiffMetadata }) {
-    const viewed = () => state.isViewed(props.file.name);
-    const count = () => store.comments.filter((comment) => comment.file === props.file.name).length;
+  /**
+   * A file's header, the same for a diff and a whole file: fold, its icon and path, what
+   * happened to it, then its counts and what can be done to it.
+   */
+  function FileHeader(props: { name: string }) {
+    const diffFile = () => state.fileByName(props.name);
+    const status = () => {
+      const file = diffFile();
+      return file ? statusOf(file) : undefined;
+    };
+    const viewed = () => state.isViewed(props.name);
+    const folded = () => collapsed[props.name] ?? false;
+    const count = () => store.comments.filter((comment) => comment.file === props.name).length;
+    const counts = () => {
+      const file = diffFile();
+      return file ? stats(file) : undefined;
+    };
+    const at = () => props.name.lastIndexOf("/") + 1;
+    const statusLabel = () => {
+      const file = diffFile();
+      if (!file) return "Unchanged: not part of the change";
+      const was = statusOf(file);
+      return was === "renamed" ? `Renamed from ${file.prevName}` : title(was);
+    };
     return (
-      <span class="file-meta">
+      <div class={{ "file-head": true, viewed: viewed() }}>
         <button
-          class="file-comments"
-          title={preferences.hint("Comment on the file", "fileComment")}
-          onClick={() => compose(wholeFile(props.file.name))}
-        >
-          <Icon name="comment" />
-          {count() || ""}
-        </button>
-        <label class="viewed" title={preferences.hint("Viewed", "viewed")}>
-          <input type="checkbox" checked={viewed()} onChange={() => toggleViewed(props.file.name)} />
-          Viewed
-        </label>
-        <button
-          class={{ "icon-button": true, chevron: true, closed: collapsed[props.file.name] ?? false }}
-          title={collapsed[props.file.name] ? "Show" : "Hide"}
-          onClick={() => setFileCollapsed(props.file.name, !collapsed[props.file.name])}
+          class={{ "icon-button": true, chevron: true, closed: folded() }}
+          title={folded() ? "Show the file" : "Hide the file"}
+          aria-expanded={folded() ? "false" : "true"}
+          onClick={() => setFileCollapsed(props.name, !folded())}
         >
           <Icon name="chevronSm" />
         </button>
-      </span>
+        <FileIcon path={props.name} />
+        <span class="file-path" title={props.name}>
+          <span class="file-dir">
+            <bdi>{props.name.slice(0, at())}</bdi>
+          </span>
+          <span class="file-name">{props.name.slice(at())}</span>
+        </span>
+        <span
+          class={["file-status", status() ? `status-${status()}` : "status-unchanged"]}
+          title={statusLabel()}
+        >
+          <Icon name={status() ? statusIcons[status()!] : "eye"} />
+          <span class="sr-only">{statusLabel()}</span>
+        </span>
+        <span class="file-spacer" />
+        <Show when={counts()}>
+          {(lines) => (
+            <span class="file-counts">
+              <Show when={lines().additions}>
+                <span class="add">+{lines().additions}</span>
+              </Show>
+              <Show when={lines().deletions}>
+                <span class="del">−{lines().deletions}</span>
+              </Show>
+            </span>
+          )}
+        </Show>
+        <button
+          class={{ "icon-button": true, "file-action": true, counted: count() > 0 }}
+          title={preferences.hint("Comment on the file", "fileComment")}
+          aria-label="Comment on the file"
+          onClick={() => compose(wholeFile(props.name))}
+        >
+          <Icon name="comment" />
+          <Show when={count()}>
+            <span class="file-count">{count()}</span>
+          </Show>
+        </button>
+        <Show when={diffFile()}>
+          <button
+            class={{ "icon-button": true, "file-action": true, done: viewed() }}
+            title={preferences.hint(viewed() ? "Viewed · click to unmark" : "Mark viewed", "viewed")}
+            aria-label="Viewed"
+            aria-pressed={viewed() ? "true" : "false"}
+            onClick={() => toggleViewed(props.name)}
+          >
+            <Icon name="checkCircle" />
+          </button>
+        </Show>
+        <Show when={state.isBrowsing()}>
+          <button
+            class="icon-button file-action"
+            title={preferences.hint("Back to the review", "backToReview")}
+            aria-label="Back to the review"
+            onClick={() => state.stopBrowsing()}
+          >
+            <Icon name="x" />
+          </button>
+        </Show>
+      </div>
     );
   }
 
@@ -209,13 +296,14 @@ export function App() {
         ) : (
           <Composer target={note.target} />
         ),
-      renderHeader: (file) => <FileHeader file={file} />,
+      renderHeader: (name) => <FileHeader name={name} />,
       onComment: openComposer,
       onCollapsedChange: (file, value) =>
         setCollapsed((s) => {
           s[file] = value;
         }),
       scopeKey: () => store.review?.scopeKey ?? "",
+      onEdge: (edge) => state.extendBrowsing(edge),
     });
     diff.setLayout(layout());
     const disconnect = stayConnected({
@@ -250,21 +338,45 @@ export function App() {
     };
   });
 
-  createEffect(
-    () => state.visibleFiles(),
-    (files) => {
-      const initial: Record<string, boolean> = {};
-      // Keep what the reviewer folded when a filter changes; new files start from the defaults.
-      for (const file of files)
-        initial[file.name] =
-          collapsed[file.name] ?? (state.isViewed(file.name) || opensCollapsed(file, settings.foldGenerated));
-      setCollapsed(() => initial);
-      diff?.setFiles(files, (file) => initial[file.name] ?? false);
-      const anchor = keepPlace;
-      keepPlace = undefined;
-      if (anchor) requestAnimationFrame(() => diff?.restore(anchor));
-    },
+  /** What the page shows: the review, or while browsing a window of the tree's files. */
+  const shown = createMemo(() =>
+    state.isBrowsing()
+      ? { browsing: true, items: state.windowItems() }
+      : { browsing: false, items: state.visibleFiles() as ReadonlyArray<FileDiffMetadata | OpenedFile> },
   );
+  // Exploring ends with the files it was showing: the review comes back.
+  createEffect(state.showUnchanged, (exploring, before) => {
+    if (before && !exploring && state.isBrowsing()) state.stopBrowsing();
+  });
+  // Where the reader was in the review, to come back to after browsing.
+  let reviewPlace: ReturnType<DiffView["anchor"]> | undefined;
+  createEffect(shown, ({ browsing, items }, before) => {
+    if (browsing && !before?.browsing) reviewPlace = diff?.anchor();
+    // Back in the review, the reader is where they left it; browsing, files come and go
+    // above and below them while they stay put.
+    const place =
+      !browsing && before?.browsing ? reviewPlace : browsing && before?.browsing ? diff?.anchor() : keepPlace;
+    keepPlace = undefined;
+    // What was being written on a file no longer shown has nowhere to show now.
+    const target = state.composer();
+    if (target && !isGlobal(target) && !items.some((item) => item.name === target.file)) state.keepWriting();
+    // Keep what the reviewer folded when a filter changes; new files start from the defaults.
+    // Browsing, a file opens as it comes into the window, and stays as the reader leaves it.
+    const had = new Set(before?.browsing ? before.items.map((item) => item.name) : []);
+    const next: Record<string, boolean> = {};
+    for (const item of items)
+      next[item.name] = browsing
+        ? had.has(item.name) && (collapsed[item.name] ?? false)
+        : (collapsed[item.name] ??
+          (state.isViewed(item.name) || ("hunks" in item && opensCollapsed(item, settings.foldGenerated))));
+    setCollapsed((s) => void Object.assign(s, next));
+    diff?.setExpanded(browsing);
+    diff?.setFiles(items, (name) => next[name] ?? false);
+    requestAnimationFrame(() => {
+      if (place) diff?.restore(place);
+      if (browsing) diff?.checkEdges();
+    });
+  });
 
   // Comments are drawn by id, side and line; re-annotate only when one of those changes.
   createEffect(
@@ -289,19 +401,82 @@ export function App() {
 
   const currentFile = () => diff?.topFile() ?? state.visibleFiles()[0]?.name;
   const step = (direction: 1 | -1) => {
-    const names = state.visibleFiles().map((file) => file.name);
+    const names = shown().items.map((file) => file.name);
     const index = names.indexOf(currentFile() ?? "");
     const next = names[Math.max(0, Math.min(names.length - 1, index + direction))];
     if (next) diff?.scrollToFile(next);
   };
 
+  /** Goes to a file: a changed one in the review, any other by browsing it. */
   function openFile(path: string) {
+    if (!state.fileByName(path)) return void browse(path);
+    const hidden = !state.visibleFiles().some((file) => file.name === path);
+    const browsing = state.isBrowsing();
+    // The review comes back from browsing, and a file still being read is no longer wanted.
+    state.stopBrowsing();
+    // A file the filter hides is shown by clearing it.
+    if (hidden || browsing) {
+      if (hidden) state.clearFilter();
+      flush();
+      // After the review's place is restored.
+      return void requestAnimationFrame(() => openFile(path));
+    }
     if (collapsed[path] && !state.isViewed(path)) setFileCollapsed(path, false);
     diff?.scrollToFile(path);
   }
 
+  /** Shows one file of the repository in place of the review; false when it can't. */
+  async function browse(path: string, quiet = false): Promise<boolean> {
+    // An unchanged file is browsed among every file.
+    if (!state.fileByName(path)) state.setShowUnchanged(true);
+    try {
+      if (!(await state.browse(path))) return false;
+    } catch (error) {
+      if (!quiet)
+        toast.error(`${path}: ${error instanceof Error ? error.message : String(error)}`, { id: "hint" });
+      return false;
+    }
+    flush();
+    // CodeView takes the file on the next frame.
+    await new Promise(requestAnimationFrame);
+    diff?.scrollToFile(path);
+    return true;
+  }
+
+  /** Goes to a line a search found: in the review, or exploring among every file. */
+  async function goToLine(file: string, line: number, side: Side) {
+    if (state.showUnchanged() || !state.fileByName(file)) {
+      if (!(await browse(file))) return;
+    } else openFile(file);
+    // After whatever the file needed: the review back, a filter cleared, the file drawn.
+    for (let frame = 0; frame < 3; frame++) await new Promise(requestAnimationFrame);
+    if (collapsed[file]) setFileCollapsed(file, false);
+    // A line beyond the diff's hunks shows once the file's whole text has come, which takes
+    // a moment: go again until it has, unless the reader moves on first.
+    const moved = new AbortController();
+    for (const name of ["wheel", "touchmove", "keydown"])
+      addEventListener(name, () => moved.abort(), { once: true, capture: true, signal: moved.signal });
+    for (let tries = 0; tries < 6 && !moved.signal.aborted; tries++) {
+      diff?.scrollToLine(file, line, side);
+      await new Promise((done) => setTimeout(done, 250));
+    }
+    moved.abort();
+  }
+
   /** Shows a comment in the diff, or opens it where it can be read. */
   function openComment(comment: Comment) {
+    const unchanged = comment.file !== "" && !state.fileByName(comment.file);
+    // One on a file the change leaves alone is read by browsing it.
+    if (unchanged && !state.openedByName(comment.file))
+      return void browse(comment.file, true).then((shown) =>
+        shown ? openComment(comment) : compose(comment),
+      );
+    // One on the review's files is read in the review.
+    if (!unchanged && comment.file && state.isBrowsing() && state.browsing() !== comment.file) {
+      state.stopBrowsing();
+      flush();
+      return void requestAnimationFrame(() => openComment(comment));
+    }
     const line = state.lineOf(comment);
     if (line === undefined) return compose(comment);
     setLastComment(comment.id);
@@ -336,11 +511,6 @@ export function App() {
     );
     if (next) openFile(next);
     else toast.info("Every file is viewed.", { id: "hint" });
-  }
-
-  function showSidebar(view: SidebarView) {
-    setSidebar(() => true);
-    setSidebarView(view);
   }
 
   async function copyFeedback() {
@@ -394,7 +564,7 @@ export function App() {
 
   const running = () => !store.submitted && palette() === undefined;
   const idle = () => running() && !settingsOpen() && !scopeOpen() && !filterOpen();
-  const flip = (name: "wrap" | "wordDiff" | "foldGenerated" | "ligatures") => ({
+  const flip = (name: "wrap" | "wordDiff" | "foldGenerated" | "groupByKind" | "ligatures") => ({
     run: () => preferences.update({ [name]: !settings[name] }),
   });
   const page = (action: Action) => ({ run: () => openPalette(action) });
@@ -431,13 +601,9 @@ export function App() {
     previousFile: { run: () => step(-1) },
     nextUnviewed: { run: nextUnviewed },
     goToFile: page("goToFile"),
-    search: {
-      run: () => {
-        setSidebar(() => true);
-        flush();
-        searchInput?.focus();
-      },
-    },
+    search: { run: () => openPalette(undefined, "#"), enabled: () => running() && !settingsOpen() },
+    grep: { run: () => openPalette(undefined, "/"), enabled: () => running() && !settingsOpen() },
+    clearSearch: { run: () => state.setNameQuery("") },
     find: { run: () => diff?.find() },
 
     scope: { run: () => setScopeOpen((shown) => !shown), enabled: () => idle() || scopeOpen() },
@@ -464,13 +630,24 @@ export function App() {
     },
     contrast: page("contrast"),
     foldGenerated: flip("foldGenerated"),
+    groupByKind: flip("groupByKind"),
     sidebar: { run: () => setSidebar((shown) => !shown) },
     sidebarSide: {
       run: () => preferences.update({ sidebarSide: settings.sidebarSide === "left" ? "right" : "left" }),
     },
-    sidebarWidth: { run: () => preferences.update({ sidebarWidth: defaults.sidebarWidth }) },
-    showFiles: { run: () => showSidebar("files") },
-    showComments: { run: () => showSidebar("comments") },
+    sidebarWidth: {
+      run: () =>
+        preferences.update({ sidebarWidth: defaults.sidebarWidth, commentsWidth: defaults.commentsWidth }),
+    },
+    showFiles: { run: () => setSidebar(() => true) },
+    showComments: { run: () => setComments(!commentsShown()) },
+    showUnchanged: {
+      run: () => {
+        setSidebar(() => true);
+        state.setShowUnchanged((shown) => !shown);
+      },
+    },
+    backToReview: { run: () => state.stopBrowsing() },
     filterFiles: page("filterFiles"),
     clearFilter: { run: () => state.clearFilter() },
 
@@ -500,7 +677,14 @@ export function App() {
   bindActions(handlers, idle);
 
   return (
-    <div class={{ app: true, "no-sidebar": !sidebar(), "sidebar-right": settings.sidebarSide === "right" }}>
+    <div
+      class={{
+        app: true,
+        "no-sidebar": !sidebar(),
+        "no-comments": !commentsShown(),
+        "sidebar-right": settings.sidebarSide === "right",
+      }}
+    >
       <header class="bar">
         <div class="where">
           <button
@@ -560,6 +744,29 @@ export function App() {
           <div class="actions">
             <button
               class="icon-button"
+              title={preferences.hint(
+                allCollapsed() ? "Expand every file" : "Collapse every file",
+                "foldAll",
+              )}
+              aria-label={allCollapsed() ? "Expand every file" : "Collapse every file"}
+              disabled={!shown().items.length}
+              onClick={toggleAll}
+            >
+              <Icon name={allCollapsed() ? "chevrons" : "chevronsClose"} />
+            </button>
+            <button
+              class={{ "icon-button": true, active: commentsShown() }}
+              title={preferences.hint(
+                commentsShown() ? "Hide the comments" : "Show the comments",
+                "showComments",
+              )}
+              aria-pressed={commentsShown() ? "true" : "false"}
+              onClick={() => setComments(!commentsShown())}
+            >
+              <Icon name="comment" />
+            </button>
+            <button
+              class="icon-button"
               title={preferences.hint("Command palette", "palette")}
               onClick={() => openPalette()}
             >
@@ -580,12 +787,7 @@ export function App() {
         </div>
       </header>
 
-      <Sidebar
-        searchRef={(element) => (searchInput = element)}
-        onFind={(text) => diff?.find(text)}
-        onOpenFile={(path) => diff?.scrollToFile(path)}
-        onOpenComment={openComment}
-      />
+      <Sidebar onOpen={(path) => (state.showUnchanged() ? void browse(path) : openFile(path))} />
 
       <Splitter
         class="resizer"
@@ -601,6 +803,22 @@ export function App() {
         onDblClick={() => preferences.update({ sidebarWidth: defaults.sidebarWidth })}
       />
 
+      <CommentsSide onOpen={openComment} onClose={() => setComments(false)} />
+
+      <Splitter
+        class="resizer comments-resizer"
+        aria-label="Resize the comments"
+        aria-controls="comments"
+        title="Drag to resize · double-click to reset"
+        side={settings.sidebarSide === "left" ? "right" : "left"}
+        min={minWidth}
+        max={maxWidth()}
+        value={commentsWidth()}
+        onValueChange={setCommentsWidth}
+        onValueCommit={(width) => preferences.update({ commentsWidth: width })}
+        onDblClick={() => preferences.update({ commentsWidth: defaults.commentsWidth })}
+      />
+
       {/* The dialog and its theme catalog load the first time Settings opens. */}
       <Show when={settingsOpened()}>
         <SettingsDialog open={settingsOpen()} onOpenChange={setSettingsOpen} />
@@ -609,6 +827,13 @@ export function App() {
       <Palette
         run={(action) => handlers[action].run()}
         onOpenFile={openFile}
+        onGoToLine={(file, line, side) => void goToLine(file, line, side)}
+        onBrowse={(path) => void browse(path)}
+        currentFile={currentFile}
+        onFilterNames={(text) => {
+          state.setNameQuery(text);
+          if (text) setSidebar(() => true);
+        }}
         onOpenComment={openComment}
         onEditComment={editComment}
         onFind={(text) => diff?.find(text)}
@@ -628,7 +853,7 @@ export function App() {
           </button>
         </div>
       </Show>
-      <Show when={!store.loading && !store.error && state.files().length === 0}>
+      <Show when={!store.loading && !store.error && !state.files().length && !state.openedFiles().length}>
         <div class="overlay quiet">
           <p>No changes in {store.review?.label ?? "this view"}.</p>
         </div>

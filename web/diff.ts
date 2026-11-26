@@ -1,13 +1,16 @@
 //! Drives Pierre's CodeView: one virtualized scroller for every file, with
-//! comments rendered as line annotations.
+//! comments rendered as line annotations. Unchanged files the reviewer opened
+//! follow the diff as plain files.
 
 import {
   CodeView,
   type CodeViewDiffItem,
+  type CodeViewFileItem,
   type CodeViewItem,
   type DiffLineAnnotation,
   type FileDiffMetadata,
   i18n,
+  type LineAnnotation,
   type SelectedLineRange,
 } from "@pierre/diffs";
 import { getOrCreateWorkerPoolSingleton } from "@pierre/diffs/worker";
@@ -16,18 +19,20 @@ import { render, type JSX } from "@solidjs/web";
 import { loadSide } from "./api.ts";
 import { preferences, type Settings } from "./settings.ts";
 import { useTheme } from "./themes.ts";
-import { changesOf, rememberFile, type Change, type Target } from "./state.ts";
+import { changesOf, rememberFile, type Change, type OpenedFile, type Target } from "./state.ts";
 
 export type Note = { kind: "comment"; id: string } | { kind: "composer"; target: Target };
 
 export interface DiffViewHooks {
   annotationsFor(file: string): DiffLineAnnotation<Note>[];
   renderNote(note: Note): JSX.Element;
-  renderHeader(file: FileDiffMetadata): JSX.Element;
+  renderHeader(file: string): JSX.Element;
   onComment(file: string, range: SelectedLineRange): void;
   onCollapsedChange(file: string, collapsed: boolean): void;
   /** Names the review whose files context expansion reads. */
   scopeKey(): string;
+  /** The reader is near the first or the last file shown. */
+  onEdge?(edge: "start" | "end"): void;
 }
 
 const startup = preferences.settings;
@@ -139,19 +144,45 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
   let pointed = true;
   let flash: ReturnType<typeof setTimeout> | undefined;
   let files = new Map<string, FileDiffMetadata>();
+  let opened = new Map<string, OpenedFile>();
+  const has = (name: string) => files.has(name) || opened.has(name);
 
-  const item = (file: FileDiffMetadata, collapsed: boolean): CodeViewDiffItem<Note> => {
-    const annotations = hooks.annotationsFor(file.name);
-    signatures.set(file.name, annotations.map((annotation) => noteKey(annotation.metadata)).join("|"));
-    const version = (versions.get(file.name) ?? 0) + 1;
-    versions.set(file.name, version);
+  const annotate = (name: string) => {
+    const annotations = hooks.annotationsFor(name);
+    signatures.set(name, annotations.map((annotation) => noteKey(annotation.metadata)).join("|"));
+    const version = (versions.get(name) ?? 0) + 1;
+    versions.set(name, version);
+    return { annotations, version };
+  };
+  const diffItem = (file: FileDiffMetadata, collapsed: boolean): CodeViewDiffItem<Note> => {
+    const { annotations, version } = annotate(file.name);
     return { id: file.name, type: "diff", fileDiff: file, annotations, collapsed, version };
+  };
+  // A whole file has one side, so its notes have none.
+  const fileItem = (file: OpenedFile, collapsed: boolean): CodeViewFileItem<Note> => {
+    const { annotations, version } = annotate(file.name);
+    return {
+      id: file.name,
+      type: "file",
+      file: { name: file.name, contents: file.contents },
+      annotations: annotations.map(
+        ({ lineNumber, metadata }) => ({ lineNumber, metadata }) as LineAnnotation<Note>,
+      ),
+      collapsed,
+      version,
+    };
+  };
+  const item = (name: string, collapsed: boolean): CodeViewItem<Note> | undefined => {
+    const diff = files.get(name);
+    if (diff) return diffItem(diff, collapsed);
+    const whole = opened.get(name);
+    return whole && fileItem(whole, collapsed);
   };
 
   const options = {
     theme: themesOf(startup),
     themeType: startup.colorScheme,
-    itemMetrics: { lineHeight: startup.lineHeight },
+    itemMetrics: { lineHeight: startup.lineHeight, diffHeaderHeight: 44 },
     preferredHighlighter: "highlights",
     diffStyle: "split",
     diffIndicators: startup.indicators,
@@ -178,13 +209,12 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     // tinted comes from the page (settings.ts, tint) through these variables.
     unsafeCSS: [
       findBar,
+      // Nothing pulls past its end and springs back, as on the page.
+      "[data-code]{overscroll-behavior:none}",
       "[data-line-annotation],[data-gutter-buffer=annotation]{--diffs-annotation-bg:var(--diffs-bg)}",
-      // Files run edge to edge, so each one's header is a band, lifted from the chrome in case a theme's chrome and editor match.
-      "[data-diffs-header]{background:color-mix(in srgb,var(--fg) 4%,var(--panel))!important;box-shadow:inset 0 -1px var(--line)}",
-      // Counts read added, then removed, as the bar's do; most files are modified, so that has no icon.
-      "[data-diffs-header] [data-additions-count]{order:-1}",
-      "[data-additions-count],[data-deletions-count]{font-family:var(--font)!important;font-variant-numeric:tabular-nums}",
-      "[data-change-icon=change]{display:none}",
+      // Files run edge to edge, so each one's header is a band, lifted from the chrome in case a
+      // theme's chrome and editor match, with a rule between it and the file above.
+      "[data-diffs-header]{display:block;height:44px;background:color-mix(in srgb,var(--fg) 4%,var(--panel))!important;box-shadow:inset 0 -1px var(--line),inset 0 1px var(--line)}",
       // What is folded away is a quiet line of text, not a bar.
       "[data-separator],[data-separator] *{background:transparent!important;border-color:transparent!important}",
       // A change is an edge and a tint that runs through its line number; nothing is hatched.
@@ -209,18 +239,22 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
       const note = annotation.metadata;
       return notes.get(noteKey(note), () => hooks.renderNote(note), "note-slot");
     },
-    renderHeaderMetadata(file: { name: string }) {
-      const fileDiff = files.get(file.name);
-      return fileDiff ? headers.get(file.name, () => hooks.renderHeader(fileDiff), "header-slot") : undefined;
+    // The whole header is the page's, the same for a diff and a whole file.
+    renderCustomHeader(file: { name: string }) {
+      return has(file.name)
+        ? headers.get(file.name, () => hooks.renderHeader(file.name), "header-slot")
+        : undefined;
     },
     onGutterUtilityClick(range: SelectedLineRange, context?: { item: CodeViewItem<Note> }) {
       if (context) hooks.onComment(context.item.id, range);
     },
     onLineEnter(line: { lineNumber: number }, context?: { item: CodeViewItem<Note> }) {
-      if (context && "annotationSide" in line)
+      if (!context) return;
+      const side = "annotationSide" in line ? (line.annotationSide as Change["side"]) : undefined;
+      if (side || context.item.type === "file")
         hovered = {
           file: context.item.id,
-          side: line.annotationSide as Change["side"],
+          side: side ?? "additions",
           start: line.lineNumber,
           end: line.lineNumber,
         };
@@ -253,6 +287,30 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
       },
       { passive: true, signal: listening.signal },
     );
+  // Near either end, more files may be wanted; checked once a frame at most.
+  let edgeFrame = 0;
+  function checkEdges() {
+    const { scrollTop, scrollHeight, clientHeight } = root;
+    if (scrollTop + clientHeight >= scrollHeight - clientHeight) hooks.onEdge?.("end");
+    if (scrollTop < clientHeight / 2) hooks.onEdge?.("start");
+  }
+  const soon = () => {
+    edgeFrame ||= requestAnimationFrame(() => {
+      edgeFrame = 0;
+      checkEdges();
+    });
+  };
+  root.addEventListener("scroll", soon, { passive: true, signal: listening.signal });
+  // At the very top or bottom a wheel moves nothing, so no scroll says the reader wants more.
+  root.addEventListener(
+    "wheel",
+    (event) => {
+      const { scrollTop, scrollHeight, clientHeight } = root;
+      if (event.deltaY < 0 && scrollTop <= 0) hooks.onEdge?.("start");
+      else if (event.deltaY > 0 && scrollTop + clientHeight >= scrollHeight - 1) hooks.onEdge?.("end");
+    },
+    { passive: true, signal: listening.signal },
+  );
   root.addEventListener(
     "pointermove",
     (event) => {
@@ -319,36 +377,53 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
       const selection = flash === undefined ? view.getSelectedLines() : null;
       if (selection) return { file: selection.id, range: selection.range };
       const lines = (pointed ? hovered : undefined) ?? stepped ?? hovered;
-      if (!lines || !files.has(lines.file)) return undefined;
+      if (!lines || !has(lines.file)) return undefined;
       return { file: lines.file, range: { start: lines.start, end: lines.end, side: lines.side } };
     },
-    setFiles(next: FileDiffMetadata[], collapsed: (file: FileDiffMetadata) => boolean) {
+    /** Shows files in this order: a changed one as its diff, an unchanged one whole. */
+    setFiles(next: ReadonlyArray<FileDiffMetadata | OpenedFile>, collapsed: (name: string) => boolean) {
       notes.clear();
       headers.clear();
       hovered = undefined;
       stepped = undefined;
       // Versions keep counting across reloads: CodeView redraws a file only when its version moves.
-      files = new Map(next.map((file) => [file.name, file]));
-      view.setItems(next.map((file) => item(file, collapsed(file))));
+      files = new Map();
+      opened = new Map();
+      for (const item of next)
+        if ("hunks" in item) files.set(item.name, item);
+        else opened.set(item.name, item);
+      view.setItems(
+        next.map((item) =>
+          "hunks" in item ? diffItem(item, collapsed(item.name)) : fileItem(item, collapsed(item.name)),
+        ),
+      );
     },
+    /** Says whether the reader is near either end, as after scrolling there. */
+    checkEdges,
     /** Re-sends a file whose comments changed; unchanged files are left alone. */
     refreshAnnotations() {
       const keep = new Set<string>();
-      for (const [name, file] of files) {
+      for (const name of [...files.keys(), ...opened.keys()]) {
         const annotations = hooks.annotationsFor(name);
         for (const annotation of annotations) keep.add(noteKey(annotation.metadata));
         const signature = annotations.map((annotation) => noteKey(annotation.metadata)).join("|");
         if (signature === signatures.get(name)) continue;
-        const current = view.getItem(name);
-        view.updateItem(item(file, current?.collapsed ?? false));
+        const next = item(name, view.getItem(name)?.collapsed ?? false);
+        if (next) view.updateItem(next);
       }
       notes.retain(keep);
     },
     setCollapsed(name: string, collapsed: boolean) {
-      const file = files.get(name);
       const current = view.getItem(name);
-      if (!file || !current || (current.collapsed ?? false) === collapsed) return;
-      view.updateItem(item(file, collapsed));
+      if (!current || (current.collapsed ?? false) === collapsed) return;
+      const next = item(name, collapsed);
+      if (next) view.updateItem(next);
+    },
+    /** Shows changed files whole, every unchanged line unfolded, as browsing reads them. */
+    setExpanded(whole: boolean) {
+      if ((options.expandUnchanged ?? false) === whole) return;
+      options.expandUnchanged = whole;
+      view.setOptions({ ...options });
     },
     setLayout(diffStyle: "split" | "unified") {
       options.diffStyle = diffStyle;
@@ -370,7 +445,7 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
         diffIndicators: settings.indicators,
         lineDiffType,
         overflow: settings.wrap ? "wrap" : "scroll",
-        itemMetrics: { lineHeight: settings.lineHeight },
+        itemMetrics: { lineHeight: settings.lineHeight, diffHeaderHeight: 44 },
       });
       if (workersChanged) void pool.setRenderOptions({ theme, lineDiffType });
       view.setOptions({ ...options });
@@ -381,7 +456,14 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     },
     scrollToLine(name: string, lineNumber: number, side: "additions" | "deletions") {
       stepped = undefined;
-      view.scrollTo({ type: "line", id: name, lineNumber, side, align: "center", behavior: "smooth-auto" });
+      view.scrollTo({
+        type: "line",
+        id: name,
+        lineNumber,
+        side: opened.has(name) ? undefined : side,
+        align: "center",
+        behavior: "smooth-auto",
+      });
     },
     /** Where the reader is, to come back to after the files are replaced. */
     anchor,
@@ -394,6 +476,7 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     find: (query?: string) => view.openSearch({ scope: "all", query, mode: "find" }),
     clearSelection: () => view.clearSelectedLines(),
     destroy() {
+      cancelAnimationFrame(edgeFrame);
       clearTimeout(flash);
       listening.abort();
       notes.clear();

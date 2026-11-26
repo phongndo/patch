@@ -42,9 +42,12 @@ export interface Settings {
   /** Code line height in pixels. */
   lineHeight: number;
   ligatures: boolean;
+  /** Where the file tree sits; the comments take the other side. */
   sidebarSide: "left" | "right";
   sidebarOpen: boolean;
   sidebarWidth: number;
+  commentsOpen: boolean;
+  commentsWidth: number;
   /** "auto" picks split on wide windows and unified on narrow ones. */
   layout: "auto" | "split" | "unified";
   wrap: boolean;
@@ -53,6 +56,8 @@ export interface Settings {
   contrast: "low" | "medium" | "high";
   wordDiff: boolean;
   foldGenerated: boolean;
+  /** Changed files in sections by kind: code, tests, docs, then generated. */
+  groupByKind: boolean;
   /** Bindings that differ from the defaults; an empty one has no key. */
   keys: Partial<Record<Action, string>>;
 }
@@ -74,12 +79,15 @@ export const defaults: Settings = {
   sidebarSide: "left",
   sidebarOpen: true,
   sidebarWidth: 280,
+  commentsOpen: true,
+  commentsWidth: 300,
   layout: "auto",
   wrap: true,
   indicators: "bars",
   contrast: "medium",
   wordDiff: true,
   foldGenerated: true,
+  groupByKind: true,
   keys: {},
 };
 
@@ -210,6 +218,7 @@ function createSettings() {
       set("--code-weight", String(current.codeWeight));
       set("--diffs-font-features", current.ligatures ? "normal" : '"liga" 0, "calt" 0');
       set("--sidebar", `${current.sidebarWidth}px`);
+      set("--comments", `${current.commentsWidth}px`);
     },
   );
 

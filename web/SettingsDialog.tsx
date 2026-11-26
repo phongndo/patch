@@ -627,7 +627,11 @@ function GeneralPage() {
     <>
       <Group title="Workspace">
         <div class="settings-card">
-          <Row label="Sidebar" description="Which side the files and comments sit on." keys={["sidebarSide"]}>
+          <Row
+            label="Sidebar"
+            description="Which side the files sit on; the comments take the other."
+            keys={["sidebarSide"]}
+          >
             <Choose
               name="sidebarSide"
               label="Sidebar"
@@ -705,6 +709,13 @@ function GeneralPage() {
             keys={["foldGenerated"]}
           >
             <Toggle name="foldGenerated" />
+          </Row>
+          <Row
+            label="Group files by kind"
+            description="List and show the changes as code, tests, docs, then generated files."
+            keys={["groupByKind"]}
+          >
+            <Toggle name="groupByKind" />
           </Row>
         </div>
       </Group>

@@ -28,6 +28,8 @@
   --accent-fg: #ffffff;
   --add: #16a34a;
   --del: #dc2626;
+  --mod: #0284c7;
+  --ren: #b45309;
   --note: #ffffff;
   --shadow: 0 8px 28px rgb(0 0 0 / 0.12), 0 1px 3px rgb(0 0 0 / 0.08);
   --radius: 8px;
@@ -74,6 +76,8 @@
   --accent-fg: #0e0e10;
   --add: #4ade80;
   --del: #f87171;
+  --mod: #38bdf8;
+  --ren: #fbbf24;
   --note: #1a1a1d;
   --shadow: 0 8px 28px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
 }
@@ -91,6 +95,8 @@
     --accent-fg: #0e0e10;
     --add: #4ade80;
     --del: #f87171;
+    --mod: #38bdf8;
+    --ren: #fbbf24;
     --note: #1a1a1d;
     --shadow: 0 8px 28px rgb(0 0 0 / 0.5), 0 1px 3px rgb(0 0 0 / 0.4);
   }
@@ -98,6 +104,13 @@
 
 * {
   box-sizing: border-box;
+}
+
+/* Nothing pulls past its end and springs back: Patch has no pull to refresh. */
+*,
+*::before,
+*::after {
+  overscroll-behavior: none;
 }
 
 html,
@@ -139,32 +152,50 @@ input {
 .app {
   position: relative;
   display: grid;
-  grid-template-columns: var(--sidebar) minmax(0, 1fr);
+  --left: var(--sidebar);
+  --right: var(--comments);
+  grid-template-columns: var(--left) minmax(0, 1fr) var(--right);
   grid-template-rows: var(--bar) minmax(0, 1fr);
   grid-template-areas:
-    "bar bar"
-    "side diff";
+    "bar bar bar"
+    "side diff notes";
   height: 100vh;
 }
 
 .app.no-sidebar {
-  grid-template-columns: 0 minmax(0, 1fr);
+  --left: 0px;
 }
 
+.app.no-comments {
+  --right: 0px;
+}
+
+/* The files on the right put the comments on the left. */
 .app.sidebar-right {
-  grid-template-columns: minmax(0, 1fr) var(--sidebar);
+  --left: var(--comments);
+  --right: var(--sidebar);
   grid-template-areas:
-    "bar bar"
-    "diff side";
+    "bar bar bar"
+    "notes diff side";
 }
 
 .app.sidebar-right.no-sidebar {
-  grid-template-columns: minmax(0, 1fr) 0;
+  --right: 0px;
 }
 
-.app.sidebar-right .sidebar {
+.app.sidebar-right.no-comments {
+  --left: 0px;
+}
+
+.app.sidebar-right .sidebar,
+.comments-side {
   border-right: 0;
   border-left: 1px solid var(--line);
+}
+
+.app.sidebar-right .comments-side {
+  border-left: 0;
+  border-right: 1px solid var(--line);
 }
 
 .app.sidebar-right .resizer {
@@ -172,7 +203,18 @@ input {
   right: calc(var(--sidebar) - 3px);
 }
 
-.app.no-sidebar .sidebar {
+.app .comments-resizer {
+  left: auto;
+  right: calc(var(--comments) - 3px);
+}
+
+.app.sidebar-right .comments-resizer {
+  right: auto;
+  left: calc(var(--comments) - 3px);
+}
+
+.app.no-sidebar .sidebar,
+.app.no-comments .comments-side {
   visibility: hidden;
 }
 
@@ -423,21 +465,54 @@ input {
   display: none;
 }
 
+/* A search box and the × that clears it, inside its end. */
+.search-field {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.search-field .side-search {
+  padding-right: 28px;
+}
+
+.search-clear {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  width: 20px !important;
+  height: 20px !important;
+  transform: translateY(-50%);
+  color: var(--muted);
+}
+
+.search-clear .icon {
+  width: 12px;
+  height: 12px;
+}
+
 .side-body {
   flex: 1;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: auto;
 }
 
-.side-views {
+.comments-side {
+  grid-area: notes;
   display: flex;
-  gap: 2px;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--panel);
+  overflow: hidden;
 }
 
-.side-comments {
+.comments-side .comments-panel {
   flex: 1;
   min-height: 0;
-  display: flex;
 }
 
 .empty {
@@ -445,8 +520,68 @@ input {
   color: var(--muted);
 }
 
+/* Sections of the grouped tree: a rule with the kind's name, folding its own tree. */
+.kind-section {
+  flex: none;
+}
+
+.kind-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 28px;
+  padding: 0 10px 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: 500 var(--text-meta) var(--font);
+  cursor: pointer;
+}
+
+.kind-head:hover {
+  color: var(--fg);
+}
+
+.kind-head .icon {
+  flex: none;
+  width: var(--icon-meta);
+  height: var(--icon-meta);
+}
+
+.kind-head .icon:first-child {
+  transition: transform 120ms ease;
+}
+
+.kind-head.closed .icon:first-child {
+  transform: rotate(-90deg);
+}
+
+/* The rule runs from the name to the count. */
+.kind-name {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+}
+
+.kind-name::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--line);
+}
+
+.kind-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.kind-section .tree {
+  flex: none;
+}
+
 .tree {
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   --trees-bg-override: var(--panel);
   --trees-bg-muted-override: var(--hover);
   --trees-fg-override: var(--fg);
@@ -455,6 +590,8 @@ input {
   --trees-focus-ring-color-override: var(--muted);
   --trees-selected-focused-border-color-override: var(--muted);
   --trees-git-added-color-override: var(--add);
+  --trees-git-modified-color-override: var(--mod);
+  --trees-git-renamed-color-override: var(--ren);
   --trees-git-deleted-color-override: var(--del);
 }
 
@@ -470,46 +607,156 @@ input {
   background: var(--bg);
 }
 
-.file-meta {
-  display: inline-flex;
+/* A file's header: the same row for a diff and a whole file, as tall as Pierre reserves. */
+.header-slot {
+  display: block;
+  height: 44px;
+}
+
+.file-head {
+  display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  height: 100%;
+  padding: 0 10px 0 6px;
+  color: var(--fg);
+  font: var(--text) var(--font);
+}
+
+.file-head .icon-button {
+  width: 26px;
+  height: 26px;
   color: var(--muted);
-  font: var(--text-meta) var(--font);
 }
 
-.file-comments {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-
-.file-comments:hover {
+.file-head .icon-button:hover {
   color: var(--fg);
 }
 
-.file-comments .icon {
+.file-head .icon-button .icon {
   width: var(--icon-meta);
   height: var(--icon-meta);
 }
 
-.viewed {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  cursor: pointer;
-  user-select: none;
+.file-path {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
-.viewed input {
-  margin: 0;
-  accent-color: var(--accent);
+/* A long folder gives way first, from its start, so the name stays whole. */
+.file-dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  color: var(--muted);
+}
+
+.file-name {
+  flex: none;
+  font-weight: 600;
+}
+
+.file-status {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+}
+
+.file-status .icon {
+  width: var(--icon-meta);
+  height: var(--icon-meta);
+}
+
+.file-spacer {
+  flex: 1;
+}
+
+.file-counts {
+  display: inline-flex;
+  gap: 6px;
+  margin-right: 4px;
+  font: 500 var(--text-meta) var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.file-counts .add {
+  color: var(--add);
+}
+
+.file-counts .del {
+  color: var(--del);
+}
+
+.file-action {
+  gap: 3px;
+  width: auto !important;
+  min-width: 26px;
+  padding: 0 5px;
+}
+
+.file-action.counted {
+  color: var(--fg);
+}
+
+.file-count {
+  font: 500 var(--text-meta) var(--font);
+  font-variant-numeric: tabular-nums;
+}
+
+.file-action.done {
+  color: var(--add);
+}
+
+/* A viewed file steps back; what it says is still there. */
+.file-head.viewed :is(.file-icon, .file-path, .file-status, .file-counts) {
+  opacity: 0.5;
+}
+
+/* A file's icon, colored as the tree colors it. */
+.file-icon {
+  flex: none;
+  fill: currentColor;
+  color: var(--muted);
+}
+
+.file-icon[data-tone="red"] {
+  color: light-dark(#d52c36, #ff6762);
+}
+.file-icon[data-tone="vermilion"] {
+  color: light-dark(#ff8c5b, #d5512f);
+}
+.file-icon[data-tone="orange"] {
+  color: light-dark(#d47628, #ffa359);
+}
+.file-icon[data-tone="yellow"] {
+  color: light-dark(#d5a910, #ffd452);
+}
+.file-icon[data-tone="green"] {
+  color: light-dark(#199f43, #5ecc71);
+}
+.file-icon[data-tone="teal"] {
+  color: light-dark(#17a5af, #64d1db);
+}
+.file-icon[data-tone="cyan"] {
+  color: light-dark(#1ca1c7, #68cdf2);
+}
+.file-icon[data-tone="blue"] {
+  color: light-dark(#1a85d4, #69b1ff);
+}
+.file-icon[data-tone="indigo"] {
+  color: light-dark(#693acf, #9d6afb);
+}
+.file-icon[data-tone="purple"] {
+  color: light-dark(#a631be, #d568ea);
+}
+.file-icon[data-tone="pink"] {
+  color: light-dark(#d32a61, #ff678d);
+}
+.file-icon[data-tone="mauve"] {
+  color: light-dark(#594c5b, #79697b);
 }
 
 .chevron .icon {
@@ -531,6 +778,7 @@ input {
 .note {
   max-width: 720px;
   border: 1px solid var(--line-strong);
+  border-left: 2px solid var(--muted);
   border-radius: var(--radius);
   background: var(--note);
   color: var(--fg);
@@ -614,9 +862,10 @@ input {
   user-select: text;
 }
 
-/* The editor is the card, so opening one moves nothing. */
+/* The editor is the card, so opening one moves nothing; its edge says it is open. */
 .composer {
   border-color: var(--muted);
+  border-left-color: var(--info);
 }
 
 .composer textarea {
@@ -684,11 +933,28 @@ input {
 }
 
 @media (max-width: 860px) {
-  .app {
-    grid-template-columns: 0 minmax(0, 1fr);
+  .app,
+  .app.sidebar-right {
+    --left: 0px;
+    --right: 0px;
   }
   .sidebar,
+  .resizer,
   .summary {
+    display: none;
+  }
+  /* The comments are a drawer over the diff, from the edge they sit at. */
+  .comments-side {
+    position: fixed;
+    top: var(--bar);
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    width: min(360px, 92vw);
+    border-left: 1px solid var(--line);
+    box-shadow: var(--shadow);
+  }
+  .app.no-comments .comments-side {
     display: none;
   }
 }
@@ -715,7 +981,8 @@ input {
   background: linear-gradient(var(--line-strong), var(--line-strong)) center / 1px 100% no-repeat;
 }
 
-.app.no-sidebar .resizer {
+.app.no-sidebar .resizer:not(.comments-resizer),
+.app.no-comments .comments-resizer {
   display: none;
 }
 
@@ -725,7 +992,7 @@ input {
   min-width: 240px;
   max-height: var(--available-height);
   overflow: auto;
-  overscroll-behavior: contain;
+  overscroll-behavior: none;
   padding: 6px;
   border: 1px solid var(--line-strong);
   border-radius: 10px;
@@ -752,6 +1019,35 @@ input {
   display: grid;
   padding: 4px 0;
   border-top: 1px solid var(--line);
+}
+
+/* The filter is a short list: its title and Clear share a row, and its rows sit close. */
+.filter-menu {
+  min-width: 180px;
+  padding: 4px;
+}
+
+.filter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 4px 8px 6px;
+}
+
+.filter-head .menu-title {
+  padding: 0;
+}
+
+.filter-menu .menu-group {
+  padding: 2px 0;
+}
+
+.filter-menu .menu-group:last-child {
+  padding-bottom: 0;
+}
+
+.filter-menu .menu-item {
+  height: 28px;
 }
 
 .menu-item {
@@ -806,7 +1102,7 @@ input {
 }
 
 .status-modified {
-  color: var(--muted);
+  color: var(--mod);
 }
 
 .status-deleted {
@@ -814,7 +1110,11 @@ input {
 }
 
 .status-renamed {
-  color: #c08a2e;
+  color: var(--ren);
+}
+
+.status-unchanged {
+  color: var(--muted);
 }
 
 .status-clear {
@@ -950,7 +1250,7 @@ input {
   padding: 4px;
   overflow: auto;
   scroll-padding: 4px;
-  overscroll-behavior: contain;
+  overscroll-behavior: none;
   outline: none;
 }
 
@@ -1497,7 +1797,7 @@ kbd {
   gap: 18px;
   padding: 12px 16px 14px;
   overflow: auto hidden;
-  overscroll-behavior: contain;
+  overscroll-behavior: none;
 }
 
 .theme-section {
@@ -1845,6 +2145,18 @@ kbd {
   color: var(--muted);
 }
 
+/* The field's icon, which turns into a mode's when a query's prefix chooses one. */
+.palette-mode {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  color: var(--muted);
+}
+
+.palette-mode.active {
+  color: var(--fg);
+}
+
 .palette-input {
   flex: 1;
   min-width: 0;
@@ -1882,6 +2194,17 @@ kbd {
   flex: none;
   width: 16px;
   color: var(--muted);
+}
+
+.palette-status {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+}
+
+.palette-status .icon {
+  width: var(--icon-meta);
+  height: var(--icon-meta);
 }
 
 .palette-label {

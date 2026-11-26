@@ -14,7 +14,10 @@ vi.mock("../diff.ts", () => ({
       },
     ) as unknown as import("../diff.ts").DiffView,
 }));
-vi.mock("../Tree.tsx", () => ({ Tree: () => <div class="tree" /> }));
+vi.mock("../Tree.tsx", () => ({
+  Tree: (props: { paths: readonly string[] }) => <div class="tree">{props.paths.join(" ")}</div>,
+  treeStatus: () => [],
+}));
 
 const { App } = await import("../App.tsx");
 const { actionNames, definitionOf } = await import("../commands.ts");
@@ -39,6 +42,8 @@ diff --git a/b.md b/b.md
 `;
 
 let line = "TWO";
+// Holds the next reads of whole files until it is called.
+let held: Promise<void> | undefined;
 const submitted: unknown[] = [];
 
 beforeEach(async () => {
@@ -46,13 +51,22 @@ beforeEach(async () => {
   submitted.length = 0;
   line = "TWO";
   sessionStorage.clear();
+  localStorage.removeItem("patch:recent");
   ui.setPalette(undefined);
   ui.setSettingsOpen(false);
   ui.setScopeOpen(false);
   ui.setFilterOpen(false);
-  ui.setSidebarView("files");
+  if (state.isBrowsing()) state.stopBrowsing();
+  state.setShowUnchanged(false);
   vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
     if (url === "/api/submit") submitted.push(JSON.parse(String(init?.body)));
+    if (url.startsWith("/api/unchanged/file")) await held;
+    if (url.startsWith("/api/unchanged/file"))
+      return url.includes("util")
+        ? new Response("export const x = 1;\nexport const y = 2;\n")
+        : url.includes("README")
+          ? new Response("# demo\n")
+          : new Response('{"error":"Unknown file."}', { status: 404 });
     const body = url.startsWith("/api/review")
       ? {
           repository: "demo",
@@ -67,7 +81,11 @@ beforeEach(async () => {
         ? { branches: ["main", "dev"], base: "main", since: "main", commits: [] }
         : url.startsWith("/api/prs")
           ? []
-          : {};
+          : url.startsWith("/api/unchanged")
+            ? ["a.ts", "lib/util.ts", "README.md"]
+            : url.startsWith("/api/grep")
+              ? [{ file: "lib/util.ts", line: 2, text: "export const y = 2;" }]
+              : {};
     return new Response(JSON.stringify(body));
   });
   preferences.reset();
@@ -102,6 +120,7 @@ const choose = async (text: string) => {
 
 test("every command is in the palette, once, and can be bound in Settings", async () => {
   await open();
+  await type(search(), ">");
   const labels = actionNames.filter((name) => name !== "palette").map((name) => definitionOf(name).label);
   expect(options().toSorted()).toEqual(labels.toSorted());
   expect(new Set(labels).size).toBe(labels.length);
@@ -133,6 +152,306 @@ test("typing finds commands, files and comments, and Enter runs the best after c
   await choose("wrap long");
   expect(isOpen()).toBe(false);
   expect(preferences.settings.wrap).toBe(!defaults.wrap);
+});
+
+test("an unchanged file is browsed on its own, takes comments, and the review comes back", async () => {
+  await open();
+  await type(search(), "util");
+  expect(options()[0]).toBe("lib/util.ts");
+  await press(search(), "Enter");
+  await settle();
+  expect(state.isBrowsing()).toBe(true);
+  expect(state.browsing()).toBe("lib/util.ts");
+  // From it on, the files of the tree follow in its order, the changed ones as diffs.
+  expect(state.windowItems().map((file) => file.name)).toEqual(["lib/util.ts", "a.ts", "b.md", "README.md"]);
+  expect(state.openedFiles().map((file) => file.name)).toEqual(["lib/util.ts", "README.md"]);
+  expect(calls).toContain("setFiles");
+  // A changed file is not offered twice.
+  await open();
+  await type(search(), "a.ts");
+  expect(options().filter((option) => option === "a.ts")).toHaveLength(1);
+  await press(search(), "Escape");
+
+  const id = state.saveComment({ file: "lib/util.ts", side: "additions", start: 2, end: 2 }, "why two?");
+  await settle();
+  const comment = state.store.comments.find((comment) => comment.id === id)!;
+  expect(comment.excerpt).toEqual(["export const y = 2;"]);
+  expect(state.lineOf(comment)).toBe(2);
+  state.compose(wholeFile("lib/util.ts"));
+  state.setComposerText("half written");
+  await settle();
+  // Back to the review: the file is not on screen, and nothing written on it is lost.
+  state.stopBrowsing();
+  await settle();
+  expect(state.isBrowsing()).toBe(false);
+  expect(state.openedFiles()).toEqual([]);
+  expect(state.store.comments.map((comment) => comment.body)).toEqual(["why two?", "half written"]);
+  expect(state.lineOf(comment)).toBeUndefined();
+});
+
+test("the file tree shows unchanged files on request, and the kind filter applies to them", async () => {
+  const tree = () => $(".tree").textContent!.split(" ");
+  // Grouped by kind, each kind a section of its own that folds, until that is turned off.
+  const sections = () =>
+    [...document.querySelectorAll(".kind-section")].map((section) => [
+      section.querySelector(".kind-name")!.textContent,
+      section.querySelector(".tree")?.textContent ?? "",
+    ]);
+  expect(sections()).toEqual([
+    ["Code", "a.ts"],
+    ["Docs", "b.md"],
+  ]);
+  await click($(".kind-head"));
+  expect(sections()[0]).toEqual(["Code", ""]);
+  await click($(".kind-head"));
+  preferences.update({ groupByKind: false });
+  await settle();
+  expect(tree()).toEqual(["a.ts", "b.md"]);
+  // The whole repository is never grouped.
+  preferences.update({ groupByKind: true });
+  state.setShowUnchanged(true);
+  await settle();
+  expect(tree()).toEqual(["lib/util.ts", "a.ts", "b.md", "README.md"]);
+  state.setHiddenKinds(new Set(["docs"] as const));
+  await settle();
+  expect(tree()).toEqual(["lib/util.ts", "a.ts"]);
+});
+
+test("a changed file chosen while an unchanged one is read is what shows", async () => {
+  let release = () => {};
+  held = new Promise((done) => (release = done));
+  await open();
+  await choose("util");
+  await settle();
+  await open();
+  await choose("a.ts");
+  await settle();
+  release();
+  held = undefined;
+  await settle();
+  expect(state.isBrowsing()).toBe(false);
+  expect(calls).toContain("scrollToFile");
+});
+
+test("the files can be narrowed to those not viewed, or with comments", async () => {
+  const shown = () => state.visibleFiles().map((file) => file.name);
+  state.toggleViewed("a.ts");
+  state.setOnlyUnviewed(true);
+  await settle();
+  expect(shown()).toEqual(["b.md"]);
+  state.setOnlyUnviewed(false);
+  state.toggleViewed("a.ts");
+  state.setOnlyCommented(true);
+  await settle();
+  expect(shown()).toEqual([]);
+  state.saveComment({ file: "a.ts", side: "additions", start: 2, end: 2 }, "why?");
+  await settle();
+  expect(shown()).toEqual(["a.ts"]);
+  expect(state.isFiltered()).toBe(true);
+  state.clearFilter();
+  await settle();
+  expect(shown()).toEqual(["a.ts", "b.md"]);
+});
+
+test("exploring shows a changed file on its own too, and ends with the review back", async () => {
+  state.setShowUnchanged(true);
+  await state.browse("a.ts");
+  await settle();
+  expect(state.isBrowsing()).toBe(true);
+  state.setShowUnchanged(false);
+  await settle();
+  expect(state.isBrowsing()).toBe(false);
+});
+
+test("Enter in the file search opens the best match, and exploring shows it on its own", async () => {
+  const files = $<HTMLInputElement>(".sidebar .side-search");
+  await type(files, "b.md");
+  calls.length = 0;
+  await press(files, "Enter");
+  expect(calls).toContain("scrollToFile");
+  expect(calls).not.toContain("find");
+  state.setShowUnchanged(true);
+  await settle();
+  await type(files, "util");
+  await press(files, "Enter");
+  await settle();
+  expect(state.browsing()).toBe("lib/util.ts");
+  await type(files, "");
+});
+
+test("a name filter narrows the review, and what browsing scrolls through", async () => {
+  const names = () => state.visibleFiles().map((file) => file.name);
+  state.setNameQuery("B.MD");
+  await settle();
+  expect(names()).toEqual(["b.md"]);
+  state.setNameQuery("");
+  state.setShowUnchanged(true);
+  await state.browse("lib/util.ts");
+  await settle();
+  state.setNameQuery("util readme");
+  await settle();
+  expect(state.windowItems().map((file) => file.name)).toEqual([]);
+  state.setNameQuery("u");
+  await settle();
+  expect(state.windowItems().map((file) => file.name)).toEqual(["lib/util.ts"]);
+  state.clearFilter();
+  await settle();
+  expect(state.nameQuery()).toBe("");
+});
+
+test("/ searches the code: the diff's lines, and exploring every file's", async () => {
+  await open();
+  await type(search(), "/TWO");
+  expect(options()).toEqual(["TWO"]);
+  await type(search(), "/two");
+  expect(options()).toEqual(["TWO", "two"]);
+  expect(document.querySelector(".palette [role=option] .palette-detail")!.textContent).toBe("a.ts:2");
+  calls.length = 0;
+  await press(search(), "Enter");
+  await new Promise((done) => setTimeout(done, 100));
+  expect(calls).toContain("scrollToLine");
+
+  state.setShowUnchanged(true);
+  await settle();
+  await open();
+  await type(search(), "/const y");
+  await new Promise((done) => setTimeout(done, 250));
+  await settle();
+  expect(options()).toEqual(["export const y = 2;"]);
+  await press(search(), "Escape");
+});
+
+test("# filters the files by name, from the palette", async () => {
+  await open();
+  await type(search(), "#b.m");
+  expect(options()).toEqual(["Show only files named “b.m”", "b.md"]);
+  await press(search(), "Enter");
+  await settle();
+  expect(state.nameQuery()).toBe("b.m");
+  expect(state.visibleFiles().map((file) => file.name)).toEqual(["b.md"]);
+  await open();
+  await type(search(), "#");
+  expect(options()).toEqual(["Show every file again, not only “b.m”"]);
+  await press(search(), "Enter");
+  await settle();
+  expect(state.nameQuery()).toBe("");
+});
+
+test("a filter widened while browsing brings back the files between those it kept", async () => {
+  state.setShowUnchanged(true);
+  await state.browse("lib/util.ts");
+  await settle();
+  state.setNameQuery(".m");
+  await settle();
+  expect(state.windowItems().map((file) => file.name)).toEqual(["b.md", "README.md"]);
+  state.setNameQuery("");
+  await settle();
+  expect(state.windowItems().map((file) => file.name)).toEqual(["b.md", "README.md"]);
+  state.setNameQuery("a");
+  await settle();
+  state.setNameQuery("");
+  await settle();
+  // From the first file it kept, every file of the list follows, none skipped.
+  const shown = state.windowItems().map((file) => file.name);
+  const list = state.treePaths();
+  expect(shown).toEqual(list.slice(list.indexOf(shown[0]!), list.indexOf(shown[0]!) + shown.length));
+});
+
+test("a refresh keeps a draft on a browsed file, and a file browsed meanwhile stays", async () => {
+  await state.browse("lib/util.ts");
+  await settle();
+  state.compose({ file: "lib/util.ts", side: "additions", start: 1, end: 1 });
+  state.setComposerText("draft");
+  let release = () => {};
+  held = new Promise((done) => (release = done));
+  const loading = state.load();
+  await settle();
+  await state.browse("a.ts");
+  release();
+  held = undefined;
+  await loading;
+  await settle();
+  expect(state.browsing()).toBe("a.ts");
+  expect(state.openedFiles()).toEqual([]);
+  const [draft] = state.store.comments;
+  expect([draft?.body, draft?.excerpt]).toEqual(["draft", ["export const x = 1;"]]);
+});
+
+test("browsing another file keeps what was written on the last, and the last file chosen wins", async () => {
+  // A slow read of one file does not replace a file chosen after it.
+  let release = () => {};
+  held = new Promise((done) => (release = done));
+  const slow = state.browse("lib/util.ts");
+  await state.browse("a.ts");
+  release();
+  held = undefined;
+  expect(await slow).toBe(false);
+  await settle();
+  expect(state.browsing()).toBe("a.ts");
+
+  await state.browse("lib/util.ts");
+  await settle();
+  state.compose({ file: "lib/util.ts", side: "additions", start: 2, end: 2 });
+  state.setComposerText("unsaved");
+  await settle();
+  await state.browse("README.md");
+  await settle();
+  expect(state.browsing()).toBe("README.md");
+  const [kept] = state.store.comments;
+  expect([kept?.body, kept?.excerpt]).toEqual(["unsaved", ["export const y = 2;"]]);
+});
+
+test("empty, the palette offers the file being read, what was chosen lately, and its modes", async () => {
+  const labels = () =>
+    [...document.querySelectorAll(".palette .menu-label")].map((label) => label.textContent).slice(0, 3);
+  await open();
+  expect(labels()).toEqual(["This file · a.ts", "Search", "Navigation"]);
+  expect(options().slice(0, 3)).toEqual(["Comment on a.ts", "Mark a.ts viewed", "Show a.ts on its own"]);
+  await choose("b.md");
+  await open();
+  expect(labels()).toEqual(["This file · a.ts", "Recent", "Search"]);
+  expect(options()[3]).toBe("b.md");
+  // ? lists the modes, and choosing one types its prefix.
+  await type(search(), "?");
+  expect(options()).toEqual(modesListed);
+  expect(document.querySelector(".palette-mode")!.getAttribute("title")).toBe("Help");
+  await press(search(), "Enter");
+  expect(search().value).toBe(">");
+  expect(document.querySelector(".palette-mode")!.getAttribute("title")).toBe("Commands");
+  await press(search(), "Escape");
+});
+const modesListed = [
+  "Run a command",
+  "Search file contents",
+  "Filter files by name",
+  "Go to a line in this file",
+  "What the palette can do",
+];
+
+test(": goes to a line of the file being read, and a file's name with :line to its line", async () => {
+  await open();
+  await type(search(), ":2");
+  expect(options()).toEqual(["Go to line 2"]);
+  calls.length = 0;
+  await press(search(), "Enter");
+  await new Promise((done) => setTimeout(done, 100));
+  expect(calls).toContain("scrollToLine");
+  await open();
+  await type(search(), "b.md:1");
+  expect(options()[0]).toBe("b.md");
+  calls.length = 0;
+  await press(search(), "Enter");
+  await new Promise((done) => setTimeout(done, 100));
+  expect(calls).toContain("scrollToLine");
+});
+
+test("⌘↵ runs a row's second action: a changed file opens on its own", async () => {
+  await open();
+  await type(search(), "b.md");
+  expect(document.querySelector(".palette-foot")!.textContent).toContain("⌘↵ open alone");
+  await press(search(), "Enter", mod);
+  await settle();
+  expect(state.browsing()).toBe("b.md");
 });
 
 test("a command with a choice opens its page, and Backspace and Escape go back", async () => {
@@ -211,7 +530,6 @@ test("keys run commands, but not under the palette or Settings, or while typing"
 test("holding the key that saves a comment never finishes, and it only saves while writing", async () => {
   state.compose(globalTarget);
   state.setComposerText("hello");
-  ui.setSidebarView("comments");
   await settle();
   const down = async (repeat: boolean) => {
     const init = { key: "Enter", code: "Enter", ctrlKey: true, bubbles: true, cancelable: true, repeat };
@@ -293,7 +611,6 @@ const button = (text: string) =>
   )!;
 
 test("every way out of the editor keeps the text, and an empty one leaves nothing", async () => {
-  ui.setSidebarView("comments");
   await settle();
   for (const leave of [
     () => press(editor()!, "Escape"),
@@ -316,7 +633,6 @@ test("every way out of the editor keeps the text, and an empty one leaves nothin
 });
 
 test("an input method's Escape stays in the editor", async () => {
-  ui.setSidebarView("comments");
   state.compose(globalTarget);
   state.setComposerText("か");
   await settle();
@@ -325,7 +641,6 @@ test("an input method's Escape stays in the editor", async () => {
 });
 
 test("what is deleted, discarded or emptied can be put back", async () => {
-  ui.setSidebarView("comments");
   state.saveComment(globalTarget, "first");
   await settle();
   const undo = async () => {
@@ -354,7 +669,6 @@ test("what is deleted, discarded or emptied can be put back", async () => {
 });
 
 test("comments are listed as the diff has them, and each opens where it can be read", async () => {
-  ui.setSidebarView("comments");
   state.saveComment({ file: "a.ts", side: "additions", start: 2, end: 2 }, "on a line");
   state.saveComment({ file: "b.md", side: "additions", start: 1, end: 1 }, "in the next file");
   state.saveComment(wholeFile("a.ts"), "on the file");

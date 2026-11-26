@@ -4,9 +4,6 @@
 import { createSignal } from "solid-js";
 import type { Action } from "./commands.ts";
 
-export type SidebarView = "files" | "comments";
-export const [sidebarView, setSidebarView] = createSignal<SidebarView>("files");
-
 export const [scopeOpen, setScopeOpen] = createSignal(false);
 export const [filterOpen, setFilterOpen] = createSignal(false);
 

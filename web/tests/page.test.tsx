@@ -7,7 +7,7 @@ vi.mock("../diff.ts", () => ({
   createDiffView: () =>
     new Proxy({}, { get: () => () => undefined }) as unknown as import("../diff.ts").DiffView,
 }));
-vi.mock("../Tree.tsx", () => ({ Tree: () => <div class="tree" /> }));
+vi.mock("../Tree.tsx", () => ({ Tree: () => <div class="tree" />, treeStatus: () => [] }));
 
 const { App } = await import("../App.tsx");
 const { state, globalTarget } = await import("../state.ts");
@@ -86,19 +86,14 @@ test("the totals open from a press and are named", async () => {
   expect(document.querySelector(".breakdown[data-open]")).toBeNull();
 });
 
-test("the sidebar's views are tabs, and the file list stays mounted", async () => {
-  const files = named("tab", "Files");
-  const comments = named("tab", "Comments");
-  const tree = $(".tree");
-  expect(files.getAttribute("aria-selected")).toBe("true");
+test("the files and the comments sit side by side, and the comments can be hidden", async () => {
+  expect($(".sidebar .side-body")).toBeTruthy();
+  expect($(".comments-side .comments-panel")).toBeTruthy();
   expect($(".side-body").tabIndex).toBe(-1);
-  files.focus();
-  await press(files, "ArrowRight");
-  expect(comments.getAttribute("aria-selected")).toBe("true");
-  expect($(".comments-panel")).toBeTruthy();
-  await press(comments, "ArrowLeft");
-  expect($(".tree")).toBe(tree);
-  expect(document.querySelector(".comments-panel")).toBeNull();
+  await click($('.bar [aria-pressed="true"]'));
+  expect($(".app").classList.contains("no-comments")).toBe(true);
+  await click($('.bar [aria-pressed="false"]'));
+  expect($(".app").classList.contains("no-comments")).toBe(false);
 });
 
 const picker = async () => {
@@ -307,9 +302,9 @@ test("comments are searched by their text and file, apart from the files", async
   await write("Add a test");
   state.saveComment({ file: "src/a.ts", side: "additions", start: 1, end: 1 }, "Why?");
   await settle();
-  const search = $<HTMLInputElement>(".side-search");
-  await type(search, "nothing");
-  await click(named("tab", "Comments"));
+  const files = $<HTMLInputElement>(".sidebar .side-search");
+  const search = $<HTMLInputElement>(".comments-search");
+  await type(files, "nothing");
   expect(nameOf(search)).toBe("Search comments");
   expect(search.value).toBe("");
   expect(listed()).toEqual(["Rename this", "Add a test", "Why?"]);
@@ -320,10 +315,8 @@ test("comments are searched by their text and file, apart from the files", async
   await type(search, "zzzz");
   expect(listed()).toEqual([]);
   expect($(".comments-panel .empty").textContent).toBe("No comments match.");
-  await click(named("tab", "Files"));
-  expect(search.value).toBe("nothing");
-  await click(named("tab", "Comments"));
-  expect(search.value).toBe("zzzz");
+  expect(files.value).toBe("nothing");
+  await type(files, "");
   search.focus();
   await press(search, "Escape");
   expect(listed()).toHaveLength(3);
@@ -335,8 +328,7 @@ test("a search never hides what is being written, and Enter opens the first foun
   await clear();
   await write("Rename this");
   await write("Add a test");
-  await click(named("tab", "Comments"));
-  const search = $<HTMLInputElement>(".side-search");
+  const search = $<HTMLInputElement>(".comments-search");
   const editor = () => document.querySelector<HTMLTextAreaElement>(".comments-panel textarea");
   await type(search, "test");
   await press(search, "Enter");
@@ -350,12 +342,10 @@ test("a search never hides what is being written, and Enter opens the first foun
   await clear();
 });
 
-test("the search key focuses the search of the view shown", async () => {
-  await click(named("tab", "Comments"));
+test("the search key opens the palette searching the code", async () => {
   await press(document.body, "f", { code: "KeyF", ctrlKey: true, shiftKey: true });
-  expect(document.activeElement).toBe($(".side-search"));
-  expect(named("tab", "Comments").getAttribute("aria-selected")).toBe("true");
-  await click(named("tab", "Files"));
+  expect(named("combobox", "Search commands")).toHaveProperty("value", "/");
+  await press(named("combobox", "Search commands"), "Escape");
 });
 
 // Last: the page is done after it.

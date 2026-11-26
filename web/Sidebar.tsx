@@ -1,5 +1,8 @@
-import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
-import type { Comment } from "../src/protocol.ts";
+//! The file tree: what changed, or exploring, the whole repository with changes
+//! marked. Exploring, a file opens on its own in place of the review; otherwise a
+//! changed file opens in the review.
+
+import { createEffect, createMemo, createStore, For, Show } from "solid-js";
 import {
   Popover,
   PopoverContent,
@@ -7,47 +10,59 @@ import {
   PopoverTitle,
   PopoverTrigger,
 } from "@ui-sdk/solid/popover";
-import { Tabs, TabsList, TabsPanel, TabsTab, TabsTabIcon } from "@ui-sdk/solid/tabs";
-import { CommentsPanel, findComments } from "./CommentsPanel.tsx";
 import { Icon } from "./Icon.tsx";
+import { SearchField } from "./SearchField.tsx";
+import { search } from "./search.ts";
 import { preferences } from "./settings.ts";
-import { kindOf, kinds, state, statuses, statusOf, globalTarget } from "./state.ts";
-import { Tree } from "./Tree.tsx";
-import { filterOpen, setFilterOpen, setSidebarView, sidebarView as view, type SidebarView } from "./ui.ts";
+import { kindOf, kindOfPath, kinds, state, statuses, statusOf, type Kind } from "./state.ts";
+import { Tree, treeStatus } from "./Tree.tsx";
+import { filterOpen, setFilterOpen } from "./ui.ts";
 
 export function Sidebar(props: {
-  searchRef: (element: HTMLInputElement) => void;
-  onFind: (text: string) => void;
-  onOpenFile: (path: string) => void;
-  onOpenComment: (comment: Comment) => void;
+  /** Opens a file: exploring, on its own; otherwise a changed one in the review, an unchanged one on its own. */
+  onOpen: (path: string) => void;
 }) {
-  const [fileQuery, setFileQuery] = createSignal("");
-  const [commentQuery, setCommentQuery] = createSignal("");
-  const query = () => (view() === "files" ? fileQuery() : commentQuery());
-  const setQuery = (text: string) => (view() === "files" ? setFileQuery(text) : setCommentQuery(text));
-  // A new comment must not vanish from the list as it is saved.
+  const query = state.nameQuery;
+  const setQuery = state.setNameQuery;
+  // The whole repository is read the first time it is shown.
   createEffect(
-    () => {
-      const target = state.composer();
-      return target && !target.id && state.lineOf(target) === undefined;
-    },
-    (starting) => {
-      if (starting) setCommentQuery("");
+    () => state.showUnchanged() && state.store.review !== undefined && state.catalog() === undefined,
+    (wanted) => {
+      if (wanted) state.readCatalog();
     },
   );
-  function enter() {
-    const text = query().trim();
-    if (!text) return;
-    if (view() === "files") return props.onFind(text);
-    const first = findComments(text)[0];
-    if (first) props.onOpenComment(first);
-  }
-  // Only the kinds and statuses this diff has are offered.
+  const unchanged = createMemo(() => {
+    const paths = state.catalog();
+    return Array.isArray(paths) ? paths : [];
+  });
+  // Grouped, the change's files sit in a section per kind, in the order the diff shows them.
+  const grouped = () => preferences.settings.groupByKind && !state.showUnchanged();
+  const sections = createMemo(() =>
+    kinds.flatMap((kind) => {
+      const files = state.visibleFiles().filter((file) => kindOf(file) === kind);
+      return files.length
+        ? [{ kind, paths: files.map((file) => file.name), status: treeStatus(files, false) }]
+        : [];
+    }),
+  );
+  // Sections folded away.
+  const [folded, setFolded] = createStore<Partial<Record<Kind, boolean>>>({});
+  /** The tree's files, filtered by name too: what changed, or exploring every file. */
+  const paths = state.treePaths;
+  // A name searched for opens the folders it is in.
+  const expansion = () => (query().trim() || !state.showUnchanged() ? "open" : "closed");
+  // Among changes alone most files are modified, so only the others are marked; among every file, all are.
+  const status = createMemo(() => treeStatus(state.visibleFiles(), state.showUnchanged()));
+  // Only the kinds and statuses there are to show are offered.
   const present = createMemo(() => ({
-    kinds: kinds.filter((kind) => state.files().some((file) => kindOf(file) === kind)),
+    kinds: kinds.filter(
+      (kind) =>
+        state.files().some((file) => kindOf(file) === kind) ||
+        (state.showUnchanged() && unchanged().some((path) => kindOfPath(path) === kind)),
+    ),
     statuses: statuses.filter((status) => state.files().some((file) => statusOf(file) === status)),
   }));
-  const filtered = () => state.hiddenStatuses().size > 0 || state.hiddenKinds().size > 0;
+  const filtered = state.isFiltered;
   /** Click hides or shows one value; Option-click shows only that value. */
   function toggle<T>(current: ReadonlySet<T>, all: readonly T[], value: T, only: boolean): Set<T> {
     const hidden = new Set(current);
@@ -59,112 +74,106 @@ export function Sidebar(props: {
     return hidden;
   }
   const kindIcons = { code: "code", tests: "checkCircle", generated: "gear", docs: "fileText" } as const;
-  const label = (word: string) => word[0]!.toUpperCase() + word.slice(1);
+  function label(word: string) {
+    return word[0]!.toUpperCase() + word.slice(1);
+  }
 
   return (
-    <Tabs
-      class="sidebar"
-      render={(attributes) => <aside {...attributes} />}
-      id="sidebar"
-      value={view()}
-      onValueChange={(value) => value && setSidebarView(value as SidebarView)}
-    >
+    <aside class="sidebar" id="sidebar" aria-label="Files">
       <div class="side-head">
-        <TabsList class="side-views" aria-label="Sidebar">
-          <TabsTab
-            class="icon-button"
-            value="files"
-            aria-label="Files"
-            title={preferences.hint("Files", "showFiles")}
-          >
-            <TabsTabIcon>
-              <Icon name="fileTree" />
-            </TabsTabIcon>
-          </TabsTab>
-          <TabsTab
-            class="icon-button"
-            value="comments"
-            aria-label="Comments"
-            title={preferences.hint("Comments", "showComments")}
-          >
-            <TabsTabIcon>
-              <Icon name="comment" />
-            </TabsTabIcon>
-          </TabsTab>
-        </TabsList>
-        <input
-          class="side-search"
-          ref={props.searchRef}
-          type="search"
-          placeholder="Search"
-          aria-label={view() === "files" ? "Search files" : "Search comments"}
-          title={preferences.hint(
-            `Filter the list · Enter ${view() === "files" ? "finds in the diff" : "opens the first"}`,
-            "search",
-          )}
+        <SearchField
           value={query()}
-          onInput={(event) => setQuery(event.currentTarget.value)}
-          onKeyDown={(event) => {
-            // An input method's own Escape or Enter ends its word.
-            if (event.isComposing) return;
-            if (event.key === "Enter") {
-              event.preventDefault();
-              enter();
-            } else if (event.key === "Escape") {
-              setQuery("");
-              event.currentTarget.blur();
-            }
+          onInput={setQuery}
+          onEnter={() => {
+            const best = search(
+              paths().map((path) => ({ label: path, path: true })),
+              query(),
+            )[0];
+            if (best) props.onOpen(best.entry.label);
           }}
+          placeholder={state.showUnchanged() ? "Search all files" : "Search files"}
+          label="Search files"
+          title="Filter the files · Enter opens the best match"
+          clearAction="clearSearch"
         />
-        <Show
-          when={view() === "files"}
-          fallback={
-            <button
-              class="icon-button"
-              title={preferences.hint("Global comment", "globalComment")}
-              onClick={() => state.compose(globalTarget)}
-            >
-              <Icon name="plus" />
-            </button>
-          }
+        <button
+          class={{ "icon-button": true, active: state.showUnchanged() }}
+          aria-pressed={state.showUnchanged() ? "true" : "false"}
+          title={preferences.hint(
+            state.showUnchanged() ? "Show only what changed" : "Explore: every file in the repository",
+            "showUnchanged",
+          )}
+          onClick={() => state.setShowUnchanged((shown) => !shown)}
         >
-          <Popover open={filterOpen()} onOpenChange={setFilterOpen}>
-            <PopoverTrigger
-              class={{ "icon-button": true, active: filtered() }}
-              title={filtered() ? "Filtered" : "Filter by kind or Git status"}
-            >
-              <Icon name="filter" />
-            </PopoverTrigger>
-            <PopoverContent class="menu" side="bottom" align="end" sideOffset={6}>
+          <Icon name="folder" />
+        </button>
+        <Popover open={filterOpen()} onOpenChange={setFilterOpen}>
+          <PopoverTrigger
+            class={{ "icon-button": true, active: filtered() }}
+            title={filtered() ? "Filtered" : "Filter by kind or Git status"}
+          >
+            <Icon name="filter" />
+          </PopoverTrigger>
+          <PopoverContent class="menu filter-menu" side="bottom" align="end" sideOffset={6}>
+            <div class="filter-head">
               <PopoverTitle class="menu-title">Filter</PopoverTitle>
-              <PopoverDescription class="menu-hint">Option-click to show only one</PopoverDescription>
-              <Show when={present().kinds.length > 1}>
-                <div class="menu-group">
-                  <For each={present().kinds}>
-                    {(kind) => (
-                      <button
-                        class="menu-item"
-                        aria-pressed={state.hiddenKinds().has(kind) ? "false" : "true"}
-                        onClick={(event) =>
-                          state.setHiddenKinds(
-                            toggle(state.hiddenKinds(), present().kinds, kind, event.altKey),
-                          )
-                        }
-                      >
-                        <span class="status">
-                          <Icon name={kindIcons[kind]} />
-                        </span>
-                        {label(kind)}
-                      </button>
-                    )}
-                  </For>
-                </div>
-              </Show>
+              <button class="link" disabled={!filtered()} onClick={() => state.clearFilter()}>
+                Clear
+              </button>
+            </div>
+            <PopoverDescription class="sr-only">Option-click shows only that one.</PopoverDescription>
+            <div class="menu-group">
+              <button
+                class="menu-item"
+                aria-pressed={state.onlyUnviewed() ? "true" : "false"}
+                title="Only files not marked viewed"
+                onClick={() => state.setOnlyUnviewed((only) => !only)}
+              >
+                <span class="status">
+                  <Icon name="checkCircle" />
+                </span>
+                Not viewed
+              </button>
+              <button
+                class="menu-item"
+                aria-pressed={state.onlyCommented() ? "true" : "false"}
+                title="Only files with comments"
+                onClick={() => state.setOnlyCommented((only) => !only)}
+              >
+                <span class="status">
+                  <Icon name="comment" />
+                </span>
+                With comments
+              </button>
+            </div>
+            <Show when={present().kinds.length > 1}>
+              <div class="menu-group">
+                <For each={present().kinds}>
+                  {(kind) => (
+                    <button
+                      class="menu-item"
+                      title="Option-click to show only these"
+                      aria-pressed={state.hiddenKinds().has(kind) ? "false" : "true"}
+                      onClick={(event) =>
+                        state.setHiddenKinds(toggle(state.hiddenKinds(), present().kinds, kind, event.altKey))
+                      }
+                    >
+                      <span class="status">
+                        <Icon name={kindIcons[kind]} />
+                      </span>
+                      {label(kind)}
+                    </button>
+                  )}
+                </For>
+              </div>
+            </Show>
+            <Show when={present().statuses.length > 1}>
               <div class="menu-group">
                 <For each={present().statuses}>
                   {(status) => (
                     <button
                       class="menu-item"
+                      title="Option-click to show only these"
                       aria-pressed={state.hiddenStatuses().has(status) ? "false" : "true"}
                       onClick={(event) =>
                         state.setHiddenStatuses(
@@ -178,27 +187,66 @@ export function Sidebar(props: {
                   )}
                 </For>
               </div>
-              <div class="menu-group">
-                <button class="menu-item" disabled={!filtered()} onClick={() => state.clearFilter()}>
-                  <span class="status status-clear">
-                    <Icon name="x" />
-                  </span>
-                  Clear filter
-                </button>
-              </div>
-            </PopoverContent>
-          </Popover>
-        </Show>
+            </Show>
+          </PopoverContent>
+        </Popover>
       </div>
 
       {/* The tree takes focus inside its shadow root, where the panel can't see it. */}
-      <TabsPanel class="side-body" value="files" keepMounted tabindex={-1}>
-        <Tree files={state.visibleFiles()} search={fileQuery()} onOpen={props.onOpenFile} />
-      </TabsPanel>
-
-      <TabsPanel class="side-comments" value="comments">
-        <CommentsPanel search={commentQuery()} onOpen={props.onOpenComment} />
-      </TabsPanel>
-    </Tabs>
+      <div class="side-body" tabindex={-1}>
+        <Show
+          when={!state.showUnchanged() || Array.isArray(state.catalog())}
+          fallback={
+            <p class="empty">
+              {state.catalog() instanceof Error ? (state.catalog() as Error).message : "Reading the files…"}
+            </p>
+          }
+        >
+          <Show
+            when={grouped()}
+            fallback={
+              <Tree
+                paths={paths()}
+                status={status()}
+                quietFolders={!state.showUnchanged()}
+                expansion={expansion()}
+                onOpen={props.onOpen}
+              />
+            }
+          >
+            <For each={sections()} keyed={(section) => section.kind}>
+              {(section) => (
+                <section class="kind-section" aria-label={label(section().kind)}>
+                  <button
+                    class={{ "kind-head": true, closed: folded[section().kind] ?? false }}
+                    aria-expanded={folded[section().kind] ? "false" : "true"}
+                    onClick={() =>
+                      setFolded((s) => {
+                        s[section().kind] = !s[section().kind];
+                      })
+                    }
+                  >
+                    <Icon name="chevronSm" />
+                    <Icon name={kindIcons[section().kind]} />
+                    <span class="kind-name">{label(section().kind)}</span>
+                    <span class="kind-count">{section().paths.length}</span>
+                  </button>
+                  <Show when={!folded[section().kind]}>
+                    <Tree
+                      paths={section().paths}
+                      status={section().status}
+                      quietFolders
+                      expansion="open"
+                      fit
+                      onOpen={props.onOpen}
+                    />
+                  </Show>
+                </section>
+              )}
+            </For>
+          </Show>
+        </Show>
+      </div>
+    </aside>
   );
 }

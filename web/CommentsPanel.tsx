@@ -1,12 +1,14 @@
-//! The review as it stands: every comment, in the order the diff has them. One opens
-//! where it is in the diff; one the diff has no place for is written and edited here.
+//! The review as it stands: every comment, in the order the diff has them, in a
+//! panel of its own beside the diff. One opens where it is in the diff; one the
+//! diff has no place for is written and edited here.
 
-import { createMemo, For, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import type { Comment } from "../src/protocol.ts";
 import { Icon } from "./Icon.tsx";
+import { SearchField } from "./SearchField.tsx";
 import { aboutLabel, Composer, removeComment, Tags } from "./Notes.tsx";
 import { preferences } from "./settings.ts";
-import { state } from "./state.ts";
+import { globalTarget, state } from "./state.ts";
 
 const split = (path: string) => {
   const at = path.lastIndexOf("/") + 1;
@@ -113,5 +115,53 @@ export function CommentsPanel(props: { search: string; onOpen: (comment: Comment
         </p>
       </Show>
     </div>
+  );
+}
+
+/** The comments panel: its search, a global comment, and every comment. */
+export function CommentsSide(props: { onOpen: (comment: Comment) => void; onClose: () => void }) {
+  const [query, setQuery] = createSignal("");
+  // A new comment must not vanish from the list as it is saved.
+  createEffect(
+    () => {
+      const target = state.composer();
+      return target && !target.id && state.lineOf(target) === undefined;
+    },
+    (starting) => {
+      if (starting) setQuery("");
+    },
+  );
+  return (
+    <aside class="comments-side" id="comments" aria-label="Comments">
+      <div class="side-head">
+        <SearchField
+          class="comments-search"
+          value={query()}
+          onInput={setQuery}
+          onEnter={() => {
+            const first = query().trim() && findComments(query())[0];
+            if (first) props.onOpen(first);
+          }}
+          placeholder="Search comments"
+          label="Search comments"
+          title="Filter the comments · Enter opens the first"
+        />
+        <button
+          class="icon-button"
+          title={preferences.hint("Global comment", "globalComment")}
+          onClick={() => state.compose(globalTarget)}
+        >
+          <Icon name="plus" />
+        </button>
+        <button
+          class="icon-button"
+          title={preferences.hint("Hide the comments", "showComments")}
+          onClick={() => props.onClose()}
+        >
+          <Icon name="x" />
+        </button>
+      </div>
+      <CommentsPanel search={query()} onOpen={props.onOpen} />
+    </aside>
   );
 }
