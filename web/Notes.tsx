@@ -85,7 +85,7 @@ export function Composer(props: { target: Target }) {
   let input: HTMLTextAreaElement | undefined;
 
   onSettled(() => {
-    requestAnimationFrame(() => {
+    const frame = requestAnimationFrame(() => {
       input?.focus({ preventScroll: true });
       // Opened under the last line on screen, it would be below the fold. Only then: the
       // diff draws it again later, when the reader may be elsewhere.
@@ -93,6 +93,8 @@ export function Composer(props: { target: Target }) {
       seen.add(props.target);
       input?.form?.scrollIntoView?.({ block: "nearest" });
     });
+    // An editor closed within its first frame has nothing to focus.
+    return () => cancelAnimationFrame(frame);
   });
 
   const keep = () => {
