@@ -6,8 +6,10 @@
 - The CLI is Rust (`cli/`). `src/protocol.ts` and `cli/src/protocol.rs` are the
   same JSON shapes; change both, and run `tests/contract.test.ts` against the
   binary.
-- In remote mode every request needs the session cookie and an exact Host; keep
-  both checks when adding routes.
+- Every request needs an exact Host, and one from the tailnet also the review's
+  cookie, which only its link gets, and on an owned machine only from the
+  owner's device (`handle` in `cli/src/server.rs`); keep these checks when
+  adding routes.
 - stdout of `patchr review` is the agent's input. Everything for humans goes to
   stderr.
 - The page is Solid 2. Read `node_modules/solid-js/CHEATSHEET.md` before

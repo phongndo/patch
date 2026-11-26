@@ -13,10 +13,11 @@ mod protocol;
 mod server;
 #[cfg(unix)]
 mod slot;
+mod tailnet;
 mod update;
 
 use std::io::{Read, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::process::{ExitCode, Stdio};
 
@@ -43,13 +44,14 @@ everything a pull request would: the branch since it left its base, plus
 uncommitted and untracked files. When the reviewer submits, the feedback is
 printed on stdout as Markdown and patchr exits.
 
---remote serves the page on this machine's Tailscale address, behind a
-one-time link, for a browser on another device. It is the default over SSH;
---local keeps the page on 127.0.0.1.
+On a machine signed in to Tailscale, the page is also served on its tailnet
+address, and the link printed opens on any of your devices there. --local
+keeps the page on 127.0.0.1; --remote fails without Tailscale.
 
 Environment:
   PATCH_BROWSER   Program that opens the page; \"none\" prints the URL only.
   PATCH_PORT      Port to listen on instead of a random one.
+  PATCH_REMOTE    1 or 0: --remote or --local, unless one is passed.
 "
     )
 }
@@ -143,9 +145,11 @@ fn parse_words(parsed: &mut Args, args: &[String], adapter: bool) -> Result<(), 
 
 /// Opens a running review's page again when no browser has it any more.
 pub fn reopen(url: &str) {
-    let Some(host) = url.strip_prefix("http://").and_then(|rest| rest.strip_suffix('/')) else { return };
-    // Only a local review opens a browser; its answer says whether it wants one.
-    let Some(port) = host.strip_prefix("127.0.0.1:").and_then(|port| port.parse::<u16>().ok()) else { return };
+    // A review listens on loopback at the port of any link it printed. Only one
+    // that opens a browser itself does again; its answer says whether it wants to.
+    let authority = url.strip_prefix("http://").and_then(|rest| rest.split('/').next()).unwrap_or_default();
+    let Some(port) = authority.rsplit_once(':').and_then(|(_, port)| port.parse::<u16>().ok()) else { return };
+    let host = format!("127.0.0.1:{port}");
     let ask = || -> std::io::Result<String> {
         let wait = std::time::Duration::from_secs(2);
         let mut stream = std::net::TcpStream::connect_timeout(&SocketAddr::from((Ipv4Addr::LOCALHOST, port)), wait)?;
@@ -156,7 +160,8 @@ pub fn reopen(url: &str) {
         Ok(answer)
     };
     if ask().is_ok_and(|answer| answer.ends_with("{\"reopen\":true}")) {
-        open_browser(url);
+        let query = url.split_once('?').map(|(_, query)| format!("?{query}")).unwrap_or_default();
+        open_browser(&format!("http://{host}/{query}"));
     }
 }
 
@@ -190,21 +195,6 @@ fn open_browser(url: &str) {
     let _ = command.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn();
 }
 
-/// This machine's Tailscale address and name, for serving the page to the tailnet.
-fn tailscale() -> Option<(Ipv4Addr, String)> {
-    let output = std::process::Command::new("tailscale").args(["status", "--json"]).stderr(Stdio::null()).output().ok()?;
-    let status: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
-    let me = status.get("Self")?;
-    let name = me.get("DNSName")?.as_str()?.trim_end_matches('.').to_string();
-    let ip = me.get("TailscaleIPs")?.as_array()?.iter().filter_map(|ip| ip.as_str()?.parse::<Ipv4Addr>().ok()).next()?;
-    Some((ip, name))
-}
-
-/// The first free port in the range the user's previews use.
-fn free_port(ip: Ipv4Addr) -> u16 {
-    (8766..=8799).find(|port| std::net::TcpListener::bind((ip, *port)).is_ok()).unwrap_or(0)
-}
-
 async fn review(args: &[String]) -> Result<(), String> {
     let args = parse_review(args)?;
     let near = match (&args.directory, &args.near) {
@@ -225,52 +215,66 @@ async fn review(args: &[String]) -> Result<(), String> {
     let dev = args.dev.then(|| PathBuf::from(env!("PATCH_WEB_DIST")));
 
     let over_ssh = std::env::var_os("SSH_CONNECTION").is_some();
-    let remote = args.remote.unwrap_or(over_ssh);
-    let (options, public): (server::Options, Box<dyn FnOnce(u16) -> String>) = if remote {
-        let (ip, name) = tailscale()
-            .ok_or("Remote review needs Tailscale on this machine. Use --local and forward the port with ssh -L instead.")?;
-        let secret = random_token(24);
-        let short = name.split('.').next().unwrap_or(&name).to_string();
-        let port = args.port.unwrap_or_else(|| free_port(ip));
-        let link = name.clone();
-        let token = secret.clone();
-        (
-            server::Options {
-                root: root.clone(),
-                scope,
-                bind: SocketAddr::new(IpAddr::V4(ip), port),
-                hosts: vec![name.clone(), short, ip.to_string()],
-                secret: Some(secret),
-                dev,
-                unopened,
-                opens: false,
-                compress: true,
-            },
-            Box::new(move |port| format!("http://{link}:{port}/?t={token}")),
-        )
-    } else {
-        (
-            server::Options {
-                root: root.clone(),
-                scope,
-                bind: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), args.port.unwrap_or(0)),
-                hosts: vec!["127.0.0.1".into(), "localhost".into()],
-                secret: None,
-                dev,
-                unopened,
-                opens: args.open && !over_ssh,
-                compress: over_ssh,
-            },
-            Box::new(|port| format!("http://127.0.0.1:{port}/")),
-        )
+    let wanted = args.remote.or_else(|| match std::env::var("PATCH_REMOTE").ok()?.as_str() {
+        "1" | "true" => Some(true),
+        "0" | "false" => Some(false),
+        _ => None,
+    });
+    let machine = if wanted == Some(false) { None } else { tailnet::find().await };
+    if wanted == Some(true) && machine.is_none() {
+        return Err("--remote needs Tailscale running on this machine. Without it, forward the port with ssh -L.".into());
+    }
+    let secret = random_token(24);
+    let tailnet = |machine: &tailnet::Machine| {
+        let mut hosts = vec![machine.ip.to_string()];
+        if machine.name != hosts[0] {
+            let short = machine.name.split('.').next().unwrap_or(&machine.name).to_string();
+            hosts.extend([machine.name.clone(), short]);
+        }
+        server::Tailnet {
+            ip: machine.ip,
+            hosts,
+            secret: secret.clone(),
+            owner: machine.owner.map(|account| server::Owner { account, cli: machine.cli.clone() }),
+        }
+    };
+    let opens = args.open && !over_ssh;
+    let options = |tailnet| server::Options {
+        root: root.clone(),
+        scope: scope.clone(),
+        port: args.port.unwrap_or(0),
+        tailnet,
+        dev: dev.clone(),
+        unopened,
+        opens,
+        compress: over_ssh,
     };
 
-    let mut session = server::start(options, public).await?;
-    eprintln!("Patch is open at {}", session.url);
-    if remote {
-        eprintln!("Open that link on any device on your tailnet. It works for this review only.");
-    } else if args.open && !over_ssh {
-        open_browser(&session.url);
+    let (mut session, machine) = match &machine {
+        Some(machine) => match server::start(options(Some(tailnet(machine)))).await {
+            Ok(session) => (session, Some(machine)),
+            // An address Tailscale named but this machine cannot listen on.
+            Err(why) if wanted.is_none() => {
+                eprintln!("Not on the tailnet: {why}");
+                (server::start(options(None)).await?, None)
+            }
+            Err(why) => return Err(why),
+        },
+        None => (server::start(options(None)).await?, None),
+    };
+    // Loopback takes the link as well while the page is on the tailnet.
+    let query = if machine.is_some() { format!("?t={secret}") } else { String::new() };
+    let local = format!("http://127.0.0.1:{}/{query}", session.port);
+    match machine {
+        Some(machine) => {
+            eprintln!("Patch is open at http://{}:{}/{query}", machine.name, session.port);
+            let who = if machine.owner.is_some() { "Your devices on Tailscale" } else { "Devices on your tailnet" };
+            eprintln!("{who} can open that link, for this review only; on this machine it is also at {local}");
+        }
+        None => eprintln!("Patch is open at {local}"),
+    }
+    if opens {
+        open_browser(&local);
     }
 
     let outcome = tokio::select! {

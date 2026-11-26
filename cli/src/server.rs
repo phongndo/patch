@@ -1,17 +1,23 @@
 //! One review session: an HTTP server for the page, resolved when the reviewer
-//! submits or leaves. It listens on loopback, or on the Tailscale address in
-//! remote mode, where every request must also carry the session's secret.
+//! submits or leaves. It listens on loopback and, when the machine is on a
+//! tailnet, on the same port at its Tailscale address. Then every request
+//! carries a pass in a cookie, which the review's link trades for it and which
+//! works only from the address that traded it; where the machine has an owner,
+//! only the owner's own devices (`tailscale whois`) may trade it from the
+//! tailnet, so the link alone lets no one else in. Without a tailnet, loopback
+//! needs nothing.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use axum::Extension;
 use axum::Router;
 use axum::body::{Body, Bytes};
-use axum::extract::{Query, Request, State};
+use axum::extract::{ConnectInfo, Query, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -24,6 +30,7 @@ use crate::git::{self, Ref, Review};
 use crate::github;
 use crate::paths::review_paths;
 use crate::protocol::{GrepMatch, Mode, ReviewResponse, Scope, ScopesResponse, Submission};
+use crate::tailnet::{self, Account};
 
 /// One file of the page as a release build embeds it: compressed where Vite left
 /// compressed copies (build.rs), else as it is.
@@ -55,6 +62,8 @@ const LOAD_GRACE: Duration = Duration::from_secs(60);
 const SILENT_GRACE: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// A page opened this recently is still on its way and not opened again.
 const OPENING: Duration = Duration::from_secs(10);
+/// Browsers keep a cookie per host, whatever the port: each review names its
+/// own by its port, so two open at once on one device keep theirs.
 const COOKIE: &str = "patch_session";
 /// How often an open page's repository is checked for changes.
 const WATCH_EVERY: Duration = Duration::from_secs(3);
@@ -73,23 +82,46 @@ pub enum Outcome {
     Unopened,
 }
 
+/// The account whose devices alone may open the link, and the `tailscale`
+/// command that names a device's account.
+pub struct Owner {
+    pub account: u64,
+    pub cli: PathBuf,
+}
+
+/// The page's second address, on the machine's tailnet.
+pub struct Tailnet {
+    pub ip: Ipv4Addr,
+    /// Host names the page answers to there, without the port.
+    pub hosts: Vec<String>,
+    /// In the link, which trades it for a pass: this review's alone.
+    pub secret: String,
+    /// None on a machine without a person's account, a tagged server.
+    pub owner: Option<Owner>,
+}
+
+/// The listener a request came in on.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Loopback,
+    Tailnet,
+}
+
 pub struct Options {
     pub root: PathBuf,
     pub scope: Scope,
-    pub bind: SocketAddr,
-    /// Host headers the server answers to.
-    pub hosts: Vec<String>,
-    /// Required on every request when the page is served beyond loopback.
-    pub secret: Option<String>,
+    /// The port to listen on; 0 picks one.
+    pub port: u16,
+    pub tailnet: Option<Tailnet>,
     /// Serve the page from this folder instead of the copy built in.
     pub dev: Option<PathBuf>,
     /// How long to wait for the page to be opened at all; None waits forever.
     pub unopened: Option<Duration>,
     /// Whether this review opens the browser itself, and so may again.
     pub opens: bool,
-    /// Whether large answers are compressed: the browser may be on another
-    /// machine, also behind a forwarded port. Over loopback alone, compressing
-    /// takes longer than sending.
+    /// Whether large answers over loopback are compressed: the browser may be
+    /// behind a forwarded port. Over loopback alone, compressing takes longer
+    /// than sending. Answers over the tailnet always are.
     pub compress: bool,
 }
 
@@ -122,8 +154,16 @@ impl Live {
 
 struct App {
     options: Options,
+    /// Host headers answered on loopback and on the tailnet, with the port.
+    loopback_hosts: Vec<String>,
+    tailnet_hosts: Vec<String>,
     /// Names this run to its page, which keeps the comments until they are sent.
     session: String,
+    /// The cookie a device gets for the link, and its name.
+    pass: String,
+    cookie: String,
+    /// The addresses that got it, from which alone it works.
+    holders: Mutex<HashSet<IpAddr>>,
     /// Each review read, by scope.
     reviews: Mutex<HashMap<String, Arc<Loaded>>>,
     /// Counts reviews read, so what was made for an older read of a scope is never taken for a newer one.
@@ -139,7 +179,8 @@ struct App {
 }
 
 pub struct Session {
-    pub url: String,
+    /// One port for both addresses, so a link to either names the other.
+    pub port: u16,
     pub outcome: oneshot::Receiver<Outcome>,
 }
 
@@ -176,18 +217,43 @@ pub fn state_dir() -> PathBuf {
         .join("patch")
 }
 
-pub async fn start(options: Options, public_url: impl FnOnce(u16) -> String) -> Result<Session, String> {
-    let listener = tokio::net::TcpListener::bind(options.bind)
-        .await
-        .map_err(|error| format!("Could not listen on {}: {error}", options.bind))?;
-    let port = listener.local_addr().map_err(|error| error.to_string())?.port();
-    let mut options = options;
-    options.hosts = options.hosts.iter().map(|host| format!("{host}:{port}")).collect();
+/// The first port free on both addresses, from the range the user's previews
+/// use when none is asked for.
+async fn listen(port: u16, tailnet: Option<Ipv4Addr>) -> Result<(Vec<(Side, tokio::net::TcpListener)>, u16), String> {
+    use tokio::net::TcpListener;
+    let loopback = Ipv4Addr::LOCALHOST;
+    let Some(ip) = tailnet else {
+        let listener =
+            TcpListener::bind((loopback, port)).await.map_err(|error| format!("Could not listen on port {port}: {error}"))?;
+        let port = listener.local_addr().map_err(|error| error.to_string())?.port();
+        return Ok((vec![(Side::Loopback, listener)], port));
+    };
+    let tries: Vec<u16> = if port == 0 { (8766..=8799).chain([0; 8]).collect() } else { vec![port] };
+    for port in tries {
+        let Ok(outer) = TcpListener::bind((ip, port)).await else { continue };
+        let port = outer.local_addr().map_err(|error| error.to_string())?.port();
+        if let Ok(inner) = TcpListener::bind((loopback, port)).await {
+            return Ok((vec![(Side::Loopback, inner), (Side::Tailnet, outer)], port));
+        }
+    }
+    Err(if port == 0 { "Could not find a free port.".into() } else { format!("Could not listen on port {port}.") })
+}
+
+pub async fn start(options: Options) -> Result<Session, String> {
+    let (listeners, port) = listen(options.port, options.tailnet.as_ref().map(|tailnet| tailnet.ip)).await?;
+    let with_port = |hosts: &[String]| hosts.iter().map(|host| format!("{host}:{port}")).collect::<Vec<_>>();
+    let loopback_hosts = with_port(&["127.0.0.1".into(), "localhost".into()]);
+    let tailnet_hosts = options.tailnet.as_ref().map(|tailnet| with_port(&tailnet.hosts)).unwrap_or_default();
 
     let (sender, receiver) = oneshot::channel();
     let app = Arc::new(App {
         options,
+        loopback_hosts,
+        tailnet_hosts,
         session: crate::random_token(24),
+        pass: crate::random_token(24),
+        cookie: format!("{COOKIE}_{port}"),
+        holders: Mutex::default(),
         reviews: Mutex::new(HashMap::new()),
         reads: std::sync::atomic::AtomicU64::new(0),
         unchanged: Mutex::new(HashMap::new()),
@@ -202,10 +268,13 @@ pub async fn start(options: Options, public_url: impl FnOnce(u16) -> String) -> 
         end_after(&app, grace, Outcome::Unopened);
     }
     let router = Router::new().fallback(handle).with_state(app.clone());
-    tokio::spawn(async move {
-        let _ = axum::serve(listener, router).await;
-    });
-    Ok(Session { url: public_url(port), outcome: receiver })
+    for (side, listener) in listeners {
+        let service = router.clone().layer(Extension(side)).into_make_service_with_connect_info::<SocketAddr>();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, service).await;
+        });
+    }
+    Ok(Session { port, outcome: receiver })
 }
 
 /// Checks the repository while a page is open and tells it when anything moved.
@@ -260,8 +329,8 @@ fn gzip(bytes: &[u8], level: u32) -> Vec<u8> {
 
 /// Compresses a large JSON or text answer when it may cross a network and the
 /// browser accepts gzip.
-fn compressed(app: &App, headers: &HeaderMap, mut response: Response, bytes: Vec<u8>) -> Response {
-    if app.options.compress && bytes.len() > 8 * 1024 && accepts(headers, "gzip") {
+fn compressed(compress: bool, headers: &HeaderMap, mut response: Response, bytes: Vec<u8>) -> Response {
+    if compress && bytes.len() > 8 * 1024 && accepts(headers, "gzip") {
         *response.body_mut() = Body::from(gzip(&bytes, 1));
         response.headers_mut().insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
         response.headers_mut().insert(header::VARY, HeaderValue::from_static("accept-encoding"));
@@ -271,19 +340,29 @@ fn compressed(app: &App, headers: &HeaderMap, mut response: Response, bytes: Vec
     response
 }
 
-fn cookie_secret(headers: &HeaderMap) -> Option<&str> {
+fn cookie_secret<'a>(headers: &'a HeaderMap, cookie: &str) -> Option<&'a str> {
     headers.get(header::COOKIE)?.to_str().ok()?.split(';').find_map(|pair| {
         let (name, value) = pair.trim().split_once('=')?;
-        (name == COOKIE).then_some(value)
+        (name == cookie).then_some(value)
     })
 }
 
-/// The exact host, the same origin, JSON for writes, and in remote mode the secret.
-fn trusted(app: &App, method: &Method, headers: &HeaderMap) -> bool {
+/// Whether the device at a tailnet address may take the link's secret: any,
+/// unless the machine has an owner, whose devices alone may.
+async fn may_take(tailnet: &Tailnet, peer: Option<IpAddr>) -> bool {
+    match (&tailnet.owner, peer) {
+        (None, _) => true,
+        (Some(owner), Some(ip)) => tailnet::account(&owner.cli, ip).await == Some(Account::Person(owner.account)),
+        (Some(_), None) => false,
+    }
+}
+
+/// The exact host, the same origin, and JSON for writes.
+fn trusted(hosts: &[String], method: &Method, headers: &HeaderMap) -> bool {
     let Some(host) = headers.get(header::HOST).and_then(|value| value.to_str().ok()) else {
         return false;
     };
-    if !app.options.hosts.iter().any(|allowed| allowed == host) {
+    if !hosts.iter().any(|allowed| allowed == host) {
         return false;
     }
     if let Some(origin) = headers.get(header::ORIGIN).and_then(|value| value.to_str().ok())
@@ -300,10 +379,7 @@ fn trusted(app: &App, method: &Method, headers: &HeaderMap) -> bool {
             return false;
         }
     }
-    match &app.options.secret {
-        Some(secret) => cookie_secret(headers) == Some(secret.as_str()),
-        None => true,
-    }
+    true
 }
 
 fn parse_scope(params: &HashMap<String, String>, fallback: &Scope) -> Result<Scope, String> {
@@ -404,11 +480,11 @@ async fn unchanged(app: &App, key: &str) -> Result<Arc<Catalog>, String> {
     Ok(catalog)
 }
 
-fn text(app: &App, headers: &HeaderMap, text: String) -> Response {
+fn text(compress: bool, headers: &HeaderMap, text: String) -> Response {
     let mut response = Response::new(Body::empty());
     response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"));
     response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    compressed(app, headers, response, text.into_bytes())
+    compressed(compress, headers, response, text.into_bytes())
 }
 
 /// A stream ended: by itself that says only that the page went quiet.
@@ -616,27 +692,50 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
     let params: HashMap<String, String> = Query::try_from_uri(&parts.uri).map(|Query(q)| q).unwrap_or_default();
     let headers = parts.headers;
     let method = parts.method;
+    let via = parts.extensions.get::<Side>().copied().unwrap_or(Side::Tailnet);
+    let hosts = if via == Side::Tailnet { &app.tailnet_hosts } else { &app.loopback_hosts };
+    let compress = via == Side::Tailnet || app.options.compress;
+    let peer = parts.extensions.get::<ConnectInfo<SocketAddr>>().map(|ConnectInfo(addr)| addr.ip());
 
-    // In remote mode the link carries the secret once; it then lives in a cookie.
-    if let Some(secret) = &app.options.secret
-        && params.get("t") == Some(secret)
+    // The link carries the secret once; it then lives in a cookie. While the
+    // page is on a tailnet, loopback takes the link too: a shared machine's
+    // other users reach loopback as well.
+    if let Some(tailnet) = &app.options.tailnet
+        && let Some(peer) = peer
+        && params.get("t") == Some(&tailnet.secret)
         && method == Method::GET
     {
-        let host_ok = headers
-            .get(header::HOST)
-            .and_then(|value| value.to_str().ok())
-            .is_some_and(|host| app.options.hosts.iter().any(|allowed| allowed == host));
+        // The exact host and, when it says, the same origin, as for any request.
+        let host_ok = trusted(hosts, &method, &headers);
+        if host_ok && via == Side::Tailnet && !may_take(tailnet, Some(peer)).await {
+            let why = "This review opens only on devices signed in to the Tailscale account that started it.";
+            return (StatusCode::FORBIDDEN, why).into_response();
+        }
         if host_ok {
+            app.holders.lock().unwrap().insert(peer);
+            // Lax, not Strict: a link followed from another site's page must
+            // still bring it to `/`. Writes need JSON and the same origin anyway.
+            let pass = &app.pass;
             let mut response = (StatusCode::SEE_OTHER, "").into_response();
             response.headers_mut().insert(header::LOCATION, HeaderValue::from_static("/"));
             response.headers_mut().insert(
                 header::SET_COOKIE,
-                HeaderValue::from_str(&format!("{COOKIE}={secret}; HttpOnly; SameSite=Strict; Path=/")).unwrap(),
+                HeaderValue::from_str(&format!("{}={pass}; HttpOnly; SameSite=Lax; Path=/", app.cookie)).unwrap(),
             );
             return response;
         }
     }
-    if !trusted(&app, &method, &headers) {
+    // The pass works only from where it was handed over. Whether to open the
+    // page again tells nothing, and `patchr hook reopen` has no cookie.
+    let passed = match &app.options.tailnet {
+        None => via == Side::Loopback,
+        Some(_) if via == Side::Loopback && method == Method::GET && path == "/api/reopen" => true,
+        Some(_) => {
+            cookie_secret(&headers, &app.cookie) == Some(app.pass.as_str())
+                && peer.is_some_and(|peer| app.holders.lock().unwrap().contains(&peer))
+        }
+    };
+    if !passed || !trusted(hosts, &method, &headers) {
         return (StatusCode::FORBIDDEN, "Forbidden").into_response();
     }
     let body = || async { axum::body::to_bytes(body, 32 * 1024 * 1024).await.unwrap_or_else(|_| Bytes::new()) };
@@ -669,7 +768,7 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                     app.unchanged.lock().unwrap().remove(&scope_key);
                     app.reviews.lock().unwrap().insert(scope_key, Arc::new(loaded));
                     let bytes = serde_json::to_vec(&response).unwrap_or_default();
-                    compressed(&app, &headers, json(StatusCode::OK, &()), bytes)
+                    compressed(compress, &headers, json(StatusCode::OK, &()), bytes)
                 }
                 Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
             }
@@ -721,7 +820,7 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                 _ => git::read_side(root, &reference, &file).await,
             };
             match read {
-                Ok(contents) => text(&app, &headers, contents),
+                Ok(contents) => text(compress, &headers, contents),
                 Err(_) => (StatusCode::NOT_FOUND, "").into_response(),
             }
         }
@@ -731,7 +830,7 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                 Ok(catalog) => {
                     let mut paths: Vec<&String> = catalog.files.keys().collect();
                     paths.sort();
-                    compressed(&app, &headers, json(StatusCode::OK, &()), serde_json::to_vec(&paths).unwrap_or_default())
+                    compressed(compress, &headers, json(StatusCode::OK, &()), serde_json::to_vec(&paths).unwrap_or_default())
                 }
                 Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
             }
@@ -762,7 +861,7 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                 Ok(()) => {
                     let matches: Vec<GrepMatch> =
                         found.into_iter().map(|(file, line, text)| GrepMatch { file, line, text }).collect();
-                    compressed(&app, &headers, json(StatusCode::OK, &()), serde_json::to_vec(&matches).unwrap_or_default())
+                    compressed(compress, &headers, json(StatusCode::OK, &()), serde_json::to_vec(&matches).unwrap_or_default())
                 }
                 Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
             }
@@ -775,7 +874,7 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                 return error(StatusCode::NOT_FOUND, "Unknown file.");
             };
             match git::read_text(&app.options.root, &blob).await {
-                Ok(contents) => text(&app, &headers, contents),
+                Ok(contents) => text(compress, &headers, contents),
                 Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
             }
         }
@@ -834,15 +933,14 @@ mod tests {
         let options = Options {
             root: std::env::temp_dir(),
             scope: Scope::All { base: None },
-            bind: "127.0.0.1:0".parse().unwrap(),
-            hosts: vec![],
-            secret: None,
+            port: 0,
+            tailnet: None,
             dev: None,
             unopened: Some(Duration::from_millis(20)),
             opens: false,
             compress: false,
         };
-        let mut session = start(options, |port| port.to_string()).await.unwrap();
+        let mut session = start(options).await.unwrap();
         let outcome = tokio::time::timeout(Duration::from_secs(5), &mut session.outcome).await.unwrap();
         assert!(matches!(outcome, Ok(Outcome::Unopened)));
     }

@@ -721,6 +721,169 @@ describe("patchr review", () => {
     }
   });
 
+  // 127.0.0.2 stands in for the tailnet address, and a fake `tailscale` for Tailscale.
+  const tailnetTestable = (() => {
+    if (local.length === 0) return false;
+    try {
+      Bun.listen({ hostname: "127.0.0.2", port: 0, socket: { data() {} } }).stop(true);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+
+  test.skipIf(!tailnetTestable)("on a tailnet, the link lets in its owner's devices alone", async () => {
+    const bin = await mkdtemp(join(tmpdir(), "patch-tailscale-"));
+    const whois = join(bin, "whois.json");
+    await writeFile(
+      join(bin, "tailscale"),
+      `#!/bin/sh
+case "$1" in
+status) printf '{"BackendState":"Running","Self":{"DNSName":"box.tail.ts.net.","UserID":1,"Tags":%s,"TailscaleIPs":["127.0.0.2"]}}' "\${FAKE_TAGS:-null}";;
+whois) cat '${whois}';;
+esac
+`,
+      { mode: 0o755 },
+    );
+    const children: Bun.Subprocess[] = [];
+    const review = async (tags = "null") => {
+      const child = Bun.spawn([...command, "review", "--no-open"], {
+        cwd: repo,
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH}`,
+          FAKE_TAGS: tags,
+          PATCH_BROWSER: "none",
+          PATCH_PORT: "0",
+          XDG_STATE_HOME: state,
+          XDG_CONFIG_HOME: state,
+          SSH_CONNECTION: "",
+          PATCH_REMOTE: "",
+        },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      children.push(child);
+      // Both lines, then the stream is let go of, not cancelled: patchr still writes to it.
+      const reader = child.stderr.getReader();
+      let said = "";
+      while (!/on this machine it is also at \S+\n/.test(said)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`patchr exited early: ${said}`);
+        said += new TextDecoder().decode(value);
+      }
+      reader.releaseLock();
+      const link = new URL(said.match(/open at (\S+)/)![1]!);
+      const local = new URL(said.match(/on this machine it is also at (\S+)/)![1]!);
+      return { child, link, local, port: Number(link.port) };
+    };
+    // Raw HTTP, so the Host header and the address it reaches are the test's.
+    const ask = async (
+      port: number,
+      path: string,
+      headers: Record<string, string> = {},
+      ip = "127.0.0.2",
+      from?: string,
+    ) => {
+      const { request } = await import("node:http");
+      return new Promise<{ status: number; cookie: string; body: string }>((done, fail) => {
+        const req = request(
+          {
+            host: ip,
+            port,
+            path,
+            localAddress: from,
+            headers: { host: `box.tail.ts.net:${port}`, ...headers },
+          },
+          (res) => {
+            let body = "";
+            res.on("data", (chunk) => (body += chunk));
+            res.on("end", () =>
+              done({
+                status: res.statusCode!,
+                cookie: (res.headers["set-cookie"]?.[0] ?? "").split(";")[0]!,
+                body,
+              }),
+            );
+          },
+        );
+        req.on("error", fail);
+        req.end();
+      });
+    };
+    try {
+      const first = await review();
+      const { link, port } = first;
+      const secret = link.searchParams.get("t")!;
+      expect(link.hostname).toBe("box.tail.ts.net");
+
+      // Loopback, at the same port, takes the link too: other users of the machine reach it.
+      const loopback = { host: `127.0.0.1:${port}` };
+      expect(first.local.port).toBe(String(port));
+      expect(first.local.searchParams.get("t")).toBe(secret);
+      expect((await ask(port, "/api/review", loopback, "127.0.0.1")).status).toBe(403);
+      expect((await ask(port, "/api/reopen", loopback, "127.0.0.1")).status).toBe(200);
+      const here = await ask(port, `/?t=${secret}`, loopback, "127.0.0.1");
+      expect(here.status).toBe(303);
+      expect((await ask(port, "/api/review", { ...loopback, cookie: here.cookie }, "127.0.0.1")).status).toBe(
+        200,
+      );
+
+      // Another account's device, or a tagged one, can't trade the link, nor use it as the cookie.
+      for (const other of [
+        '{"Node":{},"UserProfile":{"ID":2}}',
+        '{"Node":{"Tags":["tag:ci"]},"UserProfile":{"ID":1}}',
+        "",
+      ]) {
+        await writeFile(whois, other);
+        const traded = await ask(port, `/?t=${secret}`);
+        expect(traded.status).toBe(403);
+        expect(traded.cookie).toBe("");
+      }
+      expect((await ask(port, "/api/review", { cookie: `patch_session_${port}=${secret}` })).status).toBe(
+        403,
+      );
+
+      // The owner's device trades it for a pass that works only with this machine's names.
+      await writeFile(whois, '{"Node":{},"UserProfile":{"ID":1}}');
+      const traded = await ask(port, `/?t=${secret}`);
+      expect(traded.status).toBe(303);
+      expect(traded.cookie).toStartWith(`patch_session_${port}=`);
+      expect(traded.cookie).not.toContain(secret);
+      expect((await ask(port, "/api/review")).status).toBe(403);
+      expect((await ask(port, "/api/review", { cookie: traded.cookie })).status).toBe(200);
+      // From another address the same pass is no good.
+      const elsewhere = await ask(port, "/api/review", { cookie: traded.cookie }, "127.0.0.2", "127.0.0.3");
+      expect(elsewhere.status).toBe(403);
+      expect(
+        (await ask(port, "/api/review", { cookie: traded.cookie, host: `127.0.0.1:${port}` })).status,
+      ).toBe(403);
+      expect((await ask(port, "/api/review", { cookie: traded.cookie, host: `evil:${port}` })).status).toBe(
+        403,
+      );
+      expect((await ask(port, `/?t=wrong`)).status).toBe(403);
+      const foreign = await ask(port, `/?t=${secret}`, { origin: "http://other.invalid" });
+      expect(foreign.status).toBe(403);
+      expect(foreign.cookie).toBe("");
+
+      // Nothing from one review opens the next. A tagged machine lets any device trade its link.
+      const second = await review('["tag:ci"]');
+      await writeFile(whois, '{"Node":{},"UserProfile":{"ID":2}}');
+      expect((await ask(second.port, "/api/review", { cookie: traded.cookie })).status).toBe(403);
+      expect((await ask(second.port, `/?t=${secret}`)).status).toBe(403);
+      const next = await ask(second.port, `/?t=${second.link.searchParams.get("t")}`);
+      expect(next.status).toBe(303);
+      expect((await ask(second.port, "/api/review", { cookie: next.cookie })).status).toBe(200);
+      // One browser holds both, as cookies go by host and not by port.
+      const jar = `${traded.cookie}; ${next.cookie}`;
+      expect((await ask(port, "/api/review", { cookie: jar })).status).toBe(200);
+      expect((await ask(second.port, "/api/review", { cookie: jar })).status).toBe(200);
+    } finally {
+      for (const child of children) child.kill();
+      await rm(bin, { recursive: true, force: true });
+    }
+  });
+
   test("a bad base fails before serving", async () => {
     const child = Bun.spawn([...command, "review", "--no-open", ...local, "--base", "nope"], {
       cwd: repo,
