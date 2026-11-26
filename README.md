@@ -66,7 +66,8 @@ and `/patch` opens it again if it is gone. Feedback the agent's harness
 refuses is kept in `~/.local/state/patch/unsent`, and its path is shown.
 
 ⌘K opens the command palette, which has every command, file, comment and
-setting, and ⌘O chooses what to review: ← → switch its tabs and ⇧↵ starts a run
+setting; in it `/` searches the code, `#` filters files by name, `:` goes to a
+line and `?` lists the rest, and ⌘↵ opens a file on its own. ⌘O chooses what to review: ← → switch its tabs and ⇧↵ starts a run
 of commits. ⌘/ comments on the selected lines or the line under the pointer, a
 file's header on the whole file, and the Comments list adds a global one. ⌃J
 and ⌃K step through changes, ⌃N and ⌃P through comments and ⌥↓ and ⌥↑ through
