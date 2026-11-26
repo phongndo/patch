@@ -144,6 +144,26 @@ describe("patchr review", () => {
       expect(await old.text()).toBe("one\ntwo\nthree\n");
       expect((await fetch(`${origin}/api/file?key=${key}&side=new&path=..%2Fx`)).status).toBe(404);
 
+      // Unchanged files are read from the base commit; changed, untracked and unknown ones are not served.
+      expect(await (await fetch(`${origin}/api/unchanged?key=${key}`)).json()).toEqual(["gone.txt"]);
+      const whole = (path: string) =>
+        fetch(`${origin}/api/unchanged/file?key=${key}&path=${encodeURIComponent(path)}`);
+      expect(await (await whole("gone.txt")).text()).toBe("bye\n");
+      for (const path of ["a.ts", "with space.txt", "../x", ".git/config"])
+        expect((await whole(path)).status).toBe(404);
+      expect((await fetch(`${origin}/api/unchanged?key=nope`)).status).toBe(422);
+
+      // Grep reads only what the page may open: the changed files as they are now, and the
+      // others as reviewed. Capitals match only capitals.
+      const grep = async (q: string) =>
+        (await fetch(`${origin}/api/grep?key=${key}&q=${encodeURIComponent(q)}`)).json();
+      expect(await grep("bye")).toEqual([{ file: "gone.txt", line: 1, text: "bye" }]);
+      expect(await grep("two")).toEqual([{ file: "a.ts", line: 2, text: "TWO" }]);
+      expect(await grep("hello")).toEqual([{ file: "with space.txt", line: 1, text: "hello" }]);
+      expect(await grep("BYE")).toEqual([]);
+      expect(await grep("b")).toEqual([]);
+      expect(await grep("--output=x")).toEqual([]);
+
       // Other origins, plain-text posts and unknown hosts are refused.
       expect((await post(`${origin}/api/submit`, {}, { origin: "http://evil.test" })).status).toBe(403);
       expect((await fetch(`${origin}/api/submit`, { method: "POST", body: '{"comments":[]}' })).status).toBe(

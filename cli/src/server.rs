@@ -24,7 +24,7 @@ use tokio::task::JoinHandle;
 use crate::git::{self, Ref, Review};
 use crate::github;
 use crate::paths::patch_paths;
-use crate::protocol::{Mode, ReviewResponse, Scope, ScopesResponse, Submission};
+use crate::protocol::{GrepMatch, Mode, ReviewResponse, Scope, ScopesResponse, Submission};
 
 #[derive(RustEmbed)]
 #[folder = "$PATCH_WEB_DIST"]
@@ -109,7 +109,12 @@ struct App {
     options: Options,
     /// Names this run to its page, which keeps the comments until they are sent.
     session: String,
-    reviews: Mutex<HashMap<String, (Review, HashSet<String>)>>,
+    /// Each review read, by scope.
+    reviews: Mutex<HashMap<String, Loaded>>,
+    /// Counts reviews read, so what was made for an older read of a scope is never taken for a newer one.
+    reads: std::sync::atomic::AtomicU64,
+    /// The files each review leaves alone, by path, with their blobs; read once it is asked for.
+    unchanged: Mutex<HashMap<String, Arc<Catalog>>>,
     live: Mutex<Live>,
     started: Instant,
     outcome: Mutex<Option<oneshot::Sender<Outcome>>>,
@@ -169,6 +174,8 @@ pub async fn start(options: Options, public_url: impl FnOnce(u16) -> String) -> 
         options,
         session: crate::random_token(24),
         reviews: Mutex::new(HashMap::new()),
+        reads: std::sync::atomic::AtomicU64::new(0),
+        unchanged: Mutex::new(HashMap::new()),
         live: Mutex::default(),
         started: Instant::now(),
         outcome: Mutex::new(Some(sender)),
@@ -322,6 +329,60 @@ async fn review(app: &App, scope: &Scope) -> Result<Review, String> {
         new: Ref::Commit(pr.head_sha),
         patch: pr.patch,
     })
+}
+
+/// A review as read: the paths its diff names, and which read it was.
+type Loaded = (Review, HashSet<String>, u64);
+
+/// What one read of a review lets the page open beyond its diff: the files it leaves alone,
+/// by path with their blobs and the tree they are read from, and its changed files as they
+/// are now, all from the same read.
+struct Catalog {
+    read: u64,
+    tree: String,
+    files: HashMap<String, String>,
+    new: Ref,
+    changed: Vec<String>,
+}
+
+/// The files a review leaves alone, which the page may open for context.
+async fn unchanged(app: &App, key: &str) -> Result<Arc<Catalog>, String> {
+    let current = app.reviews.lock().unwrap().get(key).map(|(review, _, read)| {
+        // Commits are read as reviewed. A working tree or index is not a tree to read, but
+        // what it leaves alone is as its base has it.
+        let tree = match (&review.new, &review.old) {
+            (Ref::Commit(sha), _) | (_, Ref::Commit(sha)) => Some(sha.clone()),
+            _ => None,
+        };
+        (tree, review.new.clone(), crate::paths::changed_paths(&review.patch), *read)
+    });
+    let Some((Some(tree), new, changed, read)) = current else {
+        return Err("Unknown review.".into());
+    };
+    if let Some(catalog) = app.unchanged.lock().unwrap().get(key).filter(|catalog| catalog.read == read) {
+        return Ok(catalog.clone());
+    }
+    let root = &app.options.root;
+    if tree != git::EMPTY_TREE && !git::has_commit(root, &tree).await {
+        return Err("Fetch this pull request to open the files it leaves alone.".into());
+    }
+    let files = git::unchanged_files(root, &tree, &changed).await?;
+    let mut changed: Vec<String> = changed.into_iter().collect();
+    changed.sort();
+    let catalog = Arc::new(Catalog { read, tree, files, new, changed });
+    // Kept only while it is still the scope's latest read; a newer one makes its own.
+    let latest = app.reviews.lock().unwrap().get(key).is_some_and(|(_, _, now)| *now == read);
+    if latest {
+        app.unchanged.lock().unwrap().insert(key.to_string(), catalog.clone());
+    }
+    Ok(catalog)
+}
+
+fn text(headers: &HeaderMap, text: String) -> Response {
+    let mut response = Response::new(Body::empty());
+    response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"));
+    response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    compressed(headers, response, text.into_bytes())
 }
 
 /// A stream ended: by itself that says only that the page went quiet.
@@ -529,7 +590,9 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                         patch: current.patch.clone(),
                         session: app.session.clone(),
                     };
-                    app.reviews.lock().unwrap().insert(scope_key, (current, files));
+                    let read = app.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    app.unchanged.lock().unwrap().remove(&scope_key);
+                    app.reviews.lock().unwrap().insert(scope_key, (current, files, read));
                     let bytes = serde_json::to_vec(&response).unwrap_or_default();
                     compressed(&headers, json(StatusCode::OK, &()), bytes)
                 }
@@ -563,7 +626,7 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
             let side = params.get("side").map(String::as_str);
             let file = params.get("path").cloned().unwrap_or_default();
             let current = app.reviews.lock().unwrap().get(&key).cloned();
-            let Some((current, files)) = current else {
+            let Some((current, files, _)) = current else {
                 return error(StatusCode::NOT_FOUND, "Unknown file.");
             };
             let reference = match side {
@@ -575,21 +638,70 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                 return error(StatusCode::NOT_FOUND, "Unknown file.");
             }
             let root = &app.options.root;
-            let text = match (&current.scope, &reference) {
+            let read = match (&current.scope, &reference) {
                 // A pull request's commits may not be in the local repository; read them from GitHub then.
                 (Scope::Pr { .. }, Ref::Commit(sha)) if !git::has_commit(root, sha).await => {
                     github::read_remote_file(root, sha, &file).await
                 }
                 _ => git::read_side(root, &reference, &file).await,
             };
-            match text {
-                Ok(text) => {
-                    let mut response = Response::new(Body::empty());
-                    response.headers_mut().insert(header::CONTENT_TYPE, HeaderValue::from_static("text/plain; charset=utf-8"));
-                    response.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-                    compressed(&headers, response, text.into_bytes())
-                }
+            match read {
+                Ok(contents) => text(&headers, contents),
                 Err(_) => (StatusCode::NOT_FOUND, "").into_response(),
+            }
+        }
+        (Method::GET, "/api/unchanged") => {
+            let key = params.get("key").cloned().unwrap_or_default();
+            match unchanged(&app, &key).await {
+                Ok(catalog) => {
+                    let mut paths: Vec<&String> = catalog.files.keys().collect();
+                    paths.sort();
+                    compressed(&headers, json(StatusCode::OK, &()), serde_json::to_vec(&paths).unwrap_or_default())
+                }
+                Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
+            }
+        }
+        (Method::GET, "/api/grep") => {
+            let key = params.get("key").cloned().unwrap_or_default();
+            let text = params.get("q").cloned().unwrap_or_default();
+            if text.trim().chars().count() < 2 {
+                return json(StatusCode::OK, &Vec::<GrepMatch>::new());
+            }
+            let catalog = match unchanged(&app, &key).await {
+                Ok(catalog) => catalog,
+                Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, &message),
+            };
+            let root = &app.options.root;
+            // Only what the page may open: the changed files as the review has them now, which
+            // /api/file reads, then the files the review leaves alone, as reviewed.
+            let mut found = Vec::new();
+            for path in &catalog.changed {
+                if found.len() >= git::GREP_LIMIT {
+                    break;
+                }
+                if let Ok(contents) = git::read_side(root, &catalog.new, path).await {
+                    git::grep_text(path, &contents, &text, &mut found);
+                }
+            }
+            match git::grep(root, &catalog.tree, &text, |path| catalog.files.contains_key(path), &mut found).await {
+                Ok(()) => {
+                    let matches: Vec<GrepMatch> =
+                        found.into_iter().map(|(file, line, text)| GrepMatch { file, line, text }).collect();
+                    compressed(&headers, json(StatusCode::OK, &()), serde_json::to_vec(&matches).unwrap_or_default())
+                }
+                Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
+            }
+        }
+        (Method::GET, "/api/unchanged/file") => {
+            let key = params.get("key").cloned().unwrap_or_default();
+            let path = params.get("path").cloned().unwrap_or_default();
+            let blob = unchanged(&app, &key).await.ok().and_then(|catalog| catalog.files.get(&path).cloned());
+            let Some(blob) = blob else {
+                return error(StatusCode::NOT_FOUND, "Unknown file.");
+            };
+            match git::read_text(&app.options.root, &blob).await {
+                Ok(contents) => text(&headers, contents),
+                Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
             }
         }
         (Method::POST, "/api/submit") => {

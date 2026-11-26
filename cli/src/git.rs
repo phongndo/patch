@@ -2,6 +2,7 @@
 //! repository: every command is read-only and runs without optional locks,
 //! and untracked files are diffed through a throwaway copy of the index.
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -49,7 +50,8 @@ pub async fn run(program: &str, cwd: &Path, args: &[&str], options: Run<'_>) -> 
     let mut command = Command::new(program);
     if program == "git" {
         command.args(["-c", "core.quotepath=false"]);
-        command.env("GIT_OPTIONAL_LOCKS", "0").env("GIT_TERMINAL_PROMPT", "0").env("LC_ALL", "C");
+        // A partial clone fetches missing objects into the repository; Patch never does.
+        command.env("GIT_OPTIONAL_LOCKS", "0").env("GIT_TERMINAL_PROMPT", "0").env("GIT_NO_LAZY_FETCH", "1").env("LC_ALL", "C");
     } else {
         command.env("GH_PROMPT_DISABLED", "1").env("NO_COLOR", "1");
     }
@@ -369,10 +371,160 @@ pub async fn read_side(root: &Path, reference: &Ref, path: &str) -> Result<Strin
         return Err("Bad path.".into());
     }
     match reference {
-        Ref::Worktree => tokio::fs::read_to_string(root.join(path)).await.map_err(|error| error.to_string()),
+        Ref::Worktree => read_worktree(root, path).await,
         Ref::Index => git(root, &["show", &format!(":{path}")]).await,
         Ref::Commit(sha) => git(root, &["show", &format!("{sha}:{path}")]).await,
     }
+}
+
+/// A file of the working tree as Git sees it: a link's text is where it points,
+/// never what it points at, and nothing is read from outside the repository,
+/// through a linked folder either.
+async fn read_worktree(root: &Path, path: &str) -> Result<String> {
+    let full = root.join(path);
+    let meta = tokio::fs::symlink_metadata(&full).await.map_err(|error| error.to_string())?;
+    if meta.file_type().is_symlink() {
+        let target = tokio::fs::read_link(&full).await.map_err(|error| error.to_string())?;
+        return Ok(target.to_string_lossy().into_owned());
+    }
+    let inside = match (tokio::fs::canonicalize(&full).await, tokio::fs::canonicalize(root).await) {
+        (Ok(real), Ok(root)) => real.starts_with(root),
+        _ => false,
+    };
+    if !inside || !meta.is_file() {
+        return Err("Not a file in the repository.".into());
+    }
+    tokio::fs::read_to_string(&full).await.map_err(|error| error.to_string())
+}
+
+/// The largest file the page may open whole; bigger ones are left out.
+const OPEN_LIMIT: u64 = 4 * 1024 * 1024;
+
+/// The regular files in a commit's tree, by path, each with its blob, except
+/// those in `changed`. Read from Git, never the working tree, where an ignored
+/// file or a link out of the repository could be reached.
+pub async fn unchanged_files(root: &Path, tree: &str, changed: &HashSet<String>) -> Result<HashMap<String, String>> {
+    let out = git(root, &["ls-tree", "-r", "-z", "-l", "--end-of-options", tree]).await?;
+    let mut files = HashMap::new();
+    for entry in out.split('\0') {
+        let Some((meta, path)) = entry.split_once('\t') else { continue };
+        let mut parts = meta.split_whitespace();
+        let (Some(mode), Some("blob"), Some(id), Some(size)) = (parts.next(), parts.next(), parts.next(), parts.next()) else {
+            continue;
+        };
+        // Links and submodules have no text of their own.
+        if !matches!(mode, "100644" | "100755") || changed.contains(path) {
+            continue;
+        }
+        if size.parse::<u64>().is_ok_and(|size| size <= OPEN_LIMIT) {
+            files.insert(path.to_string(), id.to_string());
+        }
+    }
+    Ok(files)
+}
+
+/// The most lines a search returns, and how much of each.
+pub const GREP_LIMIT: usize = 300;
+const GREP_WIDTH: usize = 300;
+
+/// Whether a line has `text` in it; capitals in `text` match only capitals.
+pub fn finds(text: &str) -> impl Fn(&str) -> bool + '_ {
+    let exact = text.chars().any(char::is_uppercase);
+    let lower = text.to_lowercase();
+    move |line: &str| if exact { line.contains(text) } else { line.to_lowercase().contains(&lower) }
+}
+
+/// The lines of one file's text with `text` in them, added to `found` up to the limit.
+pub fn grep_text(path: &str, contents: &str, text: &str, found: &mut Vec<(String, u64, String)>) {
+    let has = finds(text);
+    for (index, line) in contents.lines().enumerate() {
+        if found.len() >= GREP_LIMIT {
+            return;
+        }
+        if has(line) {
+            found.push((path.to_string(), index as u64 + 1, line.chars().take(GREP_WIDTH).collect()));
+        }
+    }
+}
+
+/// Lines with `text` in a tree's files that `allowed` admits, as path, line and text, added
+/// to `found` up to the limit; Git stops once it is reached. Binary files are skipped.
+pub async fn grep(
+    root: &Path,
+    tree: &str,
+    text: &str,
+    allowed: impl Fn(&str) -> bool,
+    found: &mut Vec<(String, u64, String)>,
+) -> Result<()> {
+    use tokio::io::AsyncBufReadExt;
+    let mut args = vec!["-c", "core.quotepath=false", "grep", "-n", "-I", "-z", "--no-color", "-F"];
+    if !text.chars().any(char::is_uppercase) {
+        args.push("-i");
+    }
+    args.extend(["-e", text, "--end-of-options", tree, "--"]);
+    let mut child = Command::new("git")
+        .args(&args)
+        .env("GIT_OPTIONAL_LOCKS", "0")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_NO_LAZY_FETCH", "1")
+        .env("LC_ALL", "C")
+        .current_dir(root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let Some(stdout) = child.stdout.take() else { return Ok(()) };
+    let mut reader = tokio::io::BufReader::new(stdout);
+    let prefix = format!("{tree}:");
+    // Each match is the tree and path, NUL, the line number, NUL, the text and a newline; a
+    // path may hold a newline, so it is read up to its NUL.
+    let read = async {
+        let (mut path, mut number, mut line) = (Vec::new(), Vec::new(), Vec::new());
+        while found.len() < GREP_LIMIT {
+            path.clear();
+            number.clear();
+            line.clear();
+            if reader.read_until(0, &mut path).await? == 0
+                || reader.read_until(0, &mut number).await? == 0
+                || reader.read_until(b'\n', &mut line).await? == 0
+            {
+                break;
+            }
+            let path = String::from_utf8_lossy(path.strip_suffix(&[0]).unwrap_or(&path)).into_owned();
+            let Some(path) = path.strip_prefix(&prefix) else { continue };
+            let number = String::from_utf8_lossy(number.strip_suffix(&[0]).unwrap_or(&number)).parse::<u64>();
+            let (Ok(number), true) = (number, allowed(path)) else { continue };
+            let line = String::from_utf8_lossy(&line);
+            let line = line.trim_end_matches(['\n', '\r']);
+            found.push((path.to_string(), number, line.chars().take(GREP_WIDTH).collect()));
+        }
+        Ok::<_, std::io::Error>(())
+    };
+    match tokio::time::timeout(TIMEOUT, read).await {
+        Ok(result) => result.map_err(|error| error.to_string())?,
+        Err(_) => return Err("git grep timed out.".into()),
+    }
+    // Enough found: dropping the child stops Git. Otherwise it ran out, and exit 1 is no
+    // match; anything else is a failure, such as an object the repository lacks.
+    if found.len() >= GREP_LIMIT {
+        return Ok(());
+    }
+    let output = child.wait_with_output().await.map_err(|error| error.to_string())?;
+    match output.status.code() {
+        Some(0 | 1) => Ok(()),
+        _ => Err(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+    }
+}
+
+/// A blob's text; a binary one is refused.
+pub async fn read_text(root: &Path, blob: &str) -> Result<String> {
+    let text = git(root, &["cat-file", "blob", blob]).await.map_err(|_| "Not a text file.".to_string())?;
+    if text.contains('\0') {
+        return Err("Not a text file.".into());
+    }
+    Ok(text)
 }
 
 /// Whether the repository already has a commit, so it can be read without the network.
@@ -391,6 +543,20 @@ mod tests {
         assert!(!is_commit_id("--output=/tmp/x"));
         assert!(!is_commit_id("ABC1234"));
         assert!(!is_commit_id("abc"));
+    }
+
+    #[tokio::test]
+    async fn a_link_reads_as_where_it_points_and_nothing_outside_is_read() {
+        let outside = TempDir::new("patch-outside-").unwrap();
+        let root = TempDir::new("patch-root-").unwrap();
+        std::fs::write(outside.0.join("secret"), "hidden").unwrap();
+        std::fs::write(root.0.join("plain.txt"), "hello").unwrap();
+        std::os::unix::fs::symlink(outside.0.join("secret"), root.0.join("link")).unwrap();
+        std::os::unix::fs::symlink(&outside.0, root.0.join("folder")).unwrap();
+        let read = async |path: &str| read_side(&root.0, &Ref::Worktree, path).await;
+        assert_eq!(read("plain.txt").await.unwrap(), "hello");
+        assert_eq!(read("link").await.unwrap(), outside.0.join("secret").to_string_lossy());
+        assert!(read("folder/secret").await.is_err());
     }
 
     #[test]

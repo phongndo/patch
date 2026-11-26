@@ -66,6 +66,16 @@ export interface ScopesResponse {
   commits: Commit[];
 }
 
+/** `/api/unchanged`: the files a review leaves alone, which can be opened whole for context. */
+export type UnchangedFiles = string[];
+
+/** `/api/grep`: a line of an unchanged file with the text searched for, capitals only matching capitals. */
+export interface GrepMatch {
+  file: string;
+  line: number;
+  text: string;
+}
+
 /** A finished review; with no comments, it passed. */
 export interface Submission {
   comments: Comment[];

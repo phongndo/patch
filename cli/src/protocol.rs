@@ -125,6 +125,16 @@ pub struct PullRequest {
     pub draft: bool,
 }
 
+// `/api/unchanged` answers `UnchangedFiles`, a plain list of paths (server.rs).
+
+/// A line of an unchanged file with the text searched for in it.
+#[derive(Debug, Serialize)]
+pub struct GrepMatch {
+    pub file: String,
+    pub line: u64,
+    pub text: String,
+}
+
 /// A finished review; with no comments, it passed. They have no default, so a
 /// malformed request never reads as that.
 #[derive(Debug, Deserialize)]

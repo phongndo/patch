@@ -36,21 +36,60 @@ fn unquote(body: &str) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
+/// A path as Git writes it in a header: quoted when unusual, maybe after a/ or b/.
+fn header_path(text: &str, prefixed: bool) -> Option<String> {
+    let (body, quoted) = match text.strip_prefix('"').and_then(|rest| rest.strip_suffix('"')) {
+        Some(inner) => (inner, true),
+        None => (text, false),
+    };
+    let body = if prefixed { body.strip_prefix("a/").or_else(|| body.strip_prefix("b/"))? } else { body };
+    Some(if quoted { unquote(body) } else { body.to_string() })
+}
+
+/// The lines of each file's header: from `diff --git` to its first hunk. Lines
+/// in a hunk are the file's text, which may read like a header (a removed line
+/// `-- a/.env` shows as `--- a/.env`), so they never name a path.
+fn header_lines(patch: &str) -> impl Iterator<Item = &str> {
+    let mut in_header = false;
+    patch.lines().filter(move |line| {
+        if line.starts_with("diff --git ") {
+            in_header = true;
+        } else if line.starts_with("@@") {
+            in_header = false;
+        }
+        in_header
+    })
+}
+
 /// Every path a unified diff names on either side. Git ends a path that
 /// contains a space with a tab, and quotes unusual ones.
 pub fn patch_paths(patch: &str) -> HashSet<String> {
     let mut paths = HashSet::new();
-    for line in patch.lines() {
-        let Some(rest) = line.strip_prefix("+++ ").or_else(|| line.strip_prefix("--- ")) else {
-            continue;
-        };
-        let rest = rest.strip_suffix('\t').unwrap_or(rest);
-        if let Some(quoted) = rest.strip_prefix('"').and_then(|r| r.strip_suffix('"')) {
-            if let Some(path) = quoted.strip_prefix("a/").or_else(|| quoted.strip_prefix("b/")) {
-                paths.insert(unquote(path));
+    for line in header_lines(patch) {
+        if let Some(rest) = line.strip_prefix("+++ ").or_else(|| line.strip_prefix("--- ")) {
+            paths.extend(header_path(rest.strip_suffix('\t').unwrap_or(rest), true));
+        }
+    }
+    paths
+}
+
+/// Every path the diff touches, also those with no `---` and `+++` lines: a
+/// file renamed unchanged, or a binary one. These have no text to read, so
+/// they only say what is not unchanged.
+pub fn changed_paths(patch: &str) -> HashSet<String> {
+    let mut paths = patch_paths(patch);
+    for line in header_lines(patch) {
+        if let Some(rest) =
+            ["rename from ", "rename to ", "copy from ", "copy to "].iter().find_map(|prefix| line.strip_prefix(prefix))
+        {
+            paths.extend(header_path(rest, false));
+        } else if let Some(rest) = line.strip_prefix("Binary files ").and_then(|rest| rest.strip_suffix(" differ")) {
+            // Unquoted names may hold " and " themselves: take the first split where both sides read as paths.
+            let side = |text: &str| if text == "/dev/null" { Some(None) } else { header_path(text, true).map(Some) };
+            let found = rest.match_indices(" and ").find_map(|(at, _)| Some((side(&rest[..at])?, side(&rest[at + 5..])?)));
+            if let Some((old, new)) = found {
+                paths.extend(old.into_iter().chain(new));
             }
-        } else if let Some(path) = rest.strip_prefix("a/").or_else(|| rest.strip_prefix("b/")) {
-            paths.insert(path.to_string());
         }
     }
     paths
@@ -63,10 +102,13 @@ mod tests {
     #[test]
     fn plain_spaced_and_quoted_paths() {
         let patch = [
+            "diff --git a/plain.ts b/plain.ts",
             "--- a/plain.ts",
             "+++ b/plain.ts",
+            "diff --git a/with space.txt b/with space.txt",
             "--- /dev/null",
             "+++ b/with space.txt\t",
+            "diff --git \"a/caf\\303\\251 \\\"q\\\".md\" \"b/caf\\303\\251 \\\"q\\\".md\"",
             "--- \"a/caf\\303\\251 \\\"q\\\".md\"",
             "+++ \"b/caf\\303\\251 \\\"q\\\".md\"",
         ]
@@ -76,5 +118,41 @@ mod tests {
         assert!(paths.contains("with space.txt"));
         assert!(paths.contains("café \"q\".md"));
         assert_eq!(paths.len(), 3);
+    }
+
+    #[test]
+    fn renamed_unchanged_and_binary_files() {
+        let patch = [
+            "diff --git a/old name.ts b/new.ts",
+            "similarity index 100%",
+            "rename from old name.ts",
+            "rename to new.ts",
+            "diff --git a/logo.png b/logo.png",
+            "Binary files a/logo.png and b/logo.png differ",
+            "Binary files /dev/null and b/cats and dogs.png differ",
+        ]
+        .join("\n");
+        assert!(patch_paths(&patch).is_empty());
+        let mut paths: Vec<_> = changed_paths(&patch).into_iter().collect();
+        paths.sort();
+        assert_eq!(paths, ["cats and dogs.png", "logo.png", "new.ts", "old name.ts"]);
+    }
+
+    #[test]
+    fn a_hunk_line_that_reads_like_a_header_names_nothing() {
+        let patch = [
+            "diff --git a/a.ts b/a.ts",
+            "--- a/a.ts",
+            "+++ b/a.ts",
+            "@@ -1,2 +1,1 @@",
+            "--- a/.env",
+            "+++ b/secret",
+            "-rename from x",
+            " kept",
+        ]
+        .join("\n");
+        let mut paths: Vec<_> = changed_paths(&patch).into_iter().collect();
+        paths.sort();
+        assert_eq!(paths, ["a.ts"]);
     }
 }
