@@ -88,11 +88,15 @@ them into `web/themes/community`, with their sources and licenses in
 
 ## Remote review
 
-Over SSH, or with `--remote`, Patch serves the page on the machine's Tailscale
-address (the first free port from 8766) behind a link that holds a one-time
-secret, and prints that link instead of opening a browser. Open it on your
-laptop or phone; the agent on the remote machine gets the feedback. `--local`
-keeps the page on 127.0.0.1 for `ssh -L` forwarding instead.
+On a machine signed in to Tailscale, Patch also serves the page on its tailnet
+address (the first port free from 8766), and the link it prints is that one.
+Open it on your laptop or phone, however you reach the agent (SSH, tmux, a
+terminal app on your phone); the agent gets the feedback. The link holds a
+secret for that review alone, and only devices signed in to the machine's own
+Tailscale account can use it, as `tailscale whois` tells; on a tagged server,
+which has no such account, any device with the link can. A browser on the
+machine itself opens the page on 127.0.0.1, at the same port, which also serves
+`ssh -L`. `--local` or `PATCH_REMOTE=0` keeps the page on loopback only.
 
 ## Development
 
