@@ -2207,10 +2207,12 @@ kbd {
   height: var(--icon-meta);
 }
 
+/* Clips rather than hides: `overflow: hidden` would make it a scroller, and under
+   `overscroll-behavior: none` a wheel starting over it never reaches the list. */
 .palette-label {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
+  overflow: clip;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2227,7 +2229,7 @@ kbd {
 .palette-detail {
   flex: none;
   max-width: 45%;
-  overflow: hidden;
+  overflow: clip;
   color: var(--muted);
   font-size: var(--text-meta);
   text-overflow: ellipsis;
