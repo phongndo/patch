@@ -11,6 +11,7 @@ import {
   type FileDiffMetadata,
   i18n,
   type LineAnnotation,
+  resolveThemes,
   type SelectedLineRange,
 } from "@pierre/diffs";
 import { getOrCreateWorkerPoolSingleton } from "@pierre/diffs/worker";
@@ -38,6 +39,12 @@ export interface DiffViewHooks {
 const startup = preferences.settings;
 // A community theme must be registered before the first render asks for it.
 await Promise.all([useTheme(startup.lightTheme), useTheme(startup.darkTheme)]);
+// The pool starts its workers only once its themes are resolved. Resolved first, it starts
+// them as it is made, ahead of the review. Only the default themes, which the page preloads
+// (vite.config.ts), are waited for: any other would keep the page blank while it loads.
+const preloaded = new Set(["pierre-light", "pierre-dark"]);
+if (preloaded.has(startup.lightTheme) && preloaded.has(startup.darkTheme))
+  await resolveThemes([startup.lightTheme, startup.darkTheme], "highlights").catch(() => {});
 const themesOf = (settings: Settings) => ({ dark: settings.darkTheme, light: settings.lightTheme });
 // What the highlighter workers were last told, so they are re-told only on a change.
 let workers = { ...themesOf(startup), wordDiff: startup.wordDiff };

@@ -8,8 +8,15 @@ import type {
   GrepMatch,
 } from "../src/protocol.ts";
 
-async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(path);
+declare global {
+  interface Window {
+    /** The first review, asked for by index.html before any script loaded. */
+    __PATCH_REVIEW__?: Promise<Response>;
+  }
+}
+
+async function getJson<T>(path: string, request: Promise<Response> = fetch(path)): Promise<T> {
+  const response = await request;
   const body = await response.json();
   if (!response.ok) throw new Error(body.error ?? "Patch could not read that.");
   return body as T;
@@ -25,8 +32,11 @@ export function scopeQuery(scope: Scope): URLSearchParams {
   return params;
 }
 
-export const loadReview = (scope?: Scope) =>
-  getJson<ReviewResponse>(scope ? `/api/review?${scopeQuery(scope)}` : "/api/review");
+export function loadReview(scope?: Scope) {
+  const early = scope ? undefined : window.__PATCH_REVIEW__;
+  window.__PATCH_REVIEW__ = undefined;
+  return getJson<ReviewResponse>(scope ? `/api/review?${scopeQuery(scope)}` : "/api/review", early);
+}
 
 export const loadScopes = (base?: string) =>
   getJson<ScopesResponse>(base ? `/api/scopes?${new URLSearchParams({ base })}` : "/api/scopes");

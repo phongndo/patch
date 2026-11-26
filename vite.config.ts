@@ -65,9 +65,36 @@ export default {};`
   };
 }
 
+/**
+ * The worker pool resolves its themes before it starts its workers, through two
+ * dynamic imports: the theme catalog, then the theme. The page names them up
+ * front for the default themes, so they are fetched while the script loads.
+ */
+function preloadDefaultThemes(): Plugin {
+  // The same themes web/diff.ts waits for.
+  const wanted = /@pierre\/highlights\/dist\/themes\/(loader|pierre-dark|pierre-light)\.js$/;
+  return {
+    name: "patch:preload-default-themes",
+    apply: "build",
+    transformIndexHtml: {
+      order: "post",
+      handler(_html, { bundle }) {
+        const chunks = Object.values(bundle ?? {}).filter(
+          (chunk) => chunk.type === "chunk" && wanted.test(chunk.facadeModuleId ?? ""),
+        );
+        return chunks.map((chunk) => ({
+          tag: "link",
+          attrs: { rel: "modulepreload", crossorigin: true, href: `/${chunk.fileName}` },
+          injectTo: "head",
+        }));
+      },
+    },
+  };
+}
+
 export default defineConfig({
   root: "web",
-  plugins: [withoutShikiGrammars(), solid(), precompressed()],
+  plugins: [withoutShikiGrammars(), solid(), preloadDefaultThemes(), precompressed()],
   optimizeDeps: { exclude: ["@ui-sdk/core"] },
   worker: { format: "es", plugins: () => [withoutShikiGrammars()] },
   build: {
