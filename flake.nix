@@ -1,5 +1,5 @@
 {
-  description = "Patch: a browser diff review loop for coding agents";
+  description = "Patch: review your coding agent's changes in the browser";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
@@ -45,7 +45,7 @@
               install -Dm644 -t $out/share/doc/patchr LICENSE THIRD_PARTY_NOTICES.md
             '';
             meta = {
-              description = "A browser diff review loop for coding agents";
+              description = "Review your coding agent's changes in the browser";
               homepage = "https://github.com/phongndo/patch";
               license = pkgs.lib.licenses.mit;
               mainProgram = "patchr";

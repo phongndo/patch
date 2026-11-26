@@ -251,7 +251,19 @@ function npm() {
   write(main, {
     name: "@phongndo/patchr", // npm refuses the bare name as too similar to others
     description: json("package.json").description,
-    keywords: ["code-review", "diff", "claude-code", "codex", "pi", "opencode", "gemini-cli", "cursor"],
+    keywords: [
+      "code-review",
+      "diff",
+      "coding-agent",
+      "claude-code",
+      "codex",
+      "pi",
+      "opencode",
+      "gemini-cli",
+      "cursor",
+      "amp",
+      "droid",
+    ],
     ...common,
     bin: { patchr: "bin/patchr.js" },
     files: ["bin"],
@@ -274,7 +286,7 @@ ${branch("arm", `aarch64-${rust}`)}
 ${branch("intel", `x86_64-${rust}`)}
   end`;
   const text = `class Patchr < Formula
-  desc "Browser diff review loop for coding agents"
+  desc "Review your coding agent's changes in the browser"
   homepage "https://github.com/phongndo/patch"
   version "${version}"
   license "MIT"
@@ -289,7 +301,7 @@ ${system("linux", "unknown-linux-musl")}
 
   def caveats
     <<~EOS
-      Add /patch to your agent harnesses with:
+      Add /patch to your coding agents with:
         #{opt_bin}/patchr install
     EOS
   end

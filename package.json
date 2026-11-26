@@ -2,7 +2,7 @@
   "name": "patch",
   "version": "0.2.0",
   "private": true,
-  "description": "A fast, quiet browser diff review loop for coding agents.",
+  "description": "Review your coding agent's changes in the browser.",
   "type": "module",
   "scripts": {
     "dev": "bun scripts/dev.ts",
