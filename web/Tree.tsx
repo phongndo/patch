@@ -70,15 +70,30 @@ export function Tree(props: {
           if (path && known.has(path)) props.onOpen(path);
         },
       });
-      tree.render({ containerWrapper: mount });
       // A tree among others is as tall as its rows, which change as folders open and close.
       const made = tree;
+      const target = mount;
       const measure = () => {
-        if (fit && mount) mount.style.height = `${made.getVisibleCount() * made.getItemHeight()}px`;
+        if (fit) target.style.height = `${made.getVisibleCount() * made.getItemHeight()}px`;
       };
       const unsubscribe = made.subscribe(measure);
       measure();
+      // Being as tall as its rows, it draws every one of them: one among others draws them
+      // only once it nears the part of the list on screen, and keeps its height until then.
+      let near: IntersectionObserver | undefined;
+      if (fit) {
+        near = new IntersectionObserver(
+          (entries) => {
+            if (!entries.some((entry) => entry.isIntersecting)) return;
+            near?.disconnect();
+            made.render({ containerWrapper: target });
+          },
+          { root: target.closest(".side-body"), rootMargin: "100% 0px" },
+        );
+        near.observe(target);
+      } else made.render({ containerWrapper: target });
       return () => {
+        near?.disconnect();
         unsubscribe();
         tree?.cleanUp();
         tree = undefined;
