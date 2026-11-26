@@ -287,6 +287,12 @@ async fn review(args: &[String]) -> Result<(), String> {
         Outcome::Unopened => None,
         Outcome::Closed => (!args.adapter).then(|| feedback::CLOSED.to_string()),
     };
+    // An adapter's harness has no model waiting, so a pass ends quietly instead of starting a turn.
+    let quiet = args.adapter && text.as_deref() == Some(feedback::PASSED);
+    if quiet {
+        eprintln!("The review passed.");
+    }
+    let text = text.filter(|_| !quiet);
     let submitted = text.as_ref().is_some_and(|text| text != feedback::CLOSED);
     // Kept before anything can fail: the page closes as soon as it has its answer.
     let output = match &text {

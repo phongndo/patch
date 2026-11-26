@@ -260,6 +260,20 @@ describe("patchr review", () => {
     }
   });
 
+  test("in an adapter a pass sends nothing, so no turn starts, and stderr says it passed", async () => {
+    const { child, origin, stdout } = await start("--typed", "--uncommitted");
+    try {
+      await post(`${origin}/api/submit`, { comments: [] });
+      expect(await stdout).toBe("");
+      let stderr = "";
+      for await (const piece of child.stderr) stderr += new TextDecoder().decode(piece);
+      expect(stderr).toContain("The review passed.");
+      expect(await child.exited).toBe(0);
+    } finally {
+      child.kill();
+    }
+  });
+
   test("settings are saved for the next review and written into the page", async () => {
     const first = await start("--uncommitted");
     try {
@@ -630,7 +644,8 @@ describe("patchr review", () => {
   test("Codex: one review per thread, and no feedback is lost", async () => {
     const thread = crypto.randomUUID();
     const bin = await mkdtemp(join(tmpdir(), "patch-bin-"));
-    await writeFile(join(bin, "codex"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    // Refuses every message, so it is kept; and notes each call, so a pass can be seen to make none.
+    await writeFile(join(bin, "codex"), `#!/bin/sh\necho "$1" >> "${bin}/calls"\nexit 1\n`, { mode: 0o755 });
     const env = {
       ...process.env,
       PATH: `${bin}:${process.env.PATH}`,
@@ -686,6 +701,21 @@ describe("patchr review", () => {
       expect(context.indexOf("FIRST")).toBeGreaterThan(-1);
       expect(context.indexOf("SECOND")).toBeGreaterThan(context.indexOf("FIRST"));
       expect(await hook("Continue.")).toBeUndefined();
+      expect(await kept()).toBe(0);
+
+      // A pass queues nothing: the thread gets no turn.
+      const calls = async () => (await Bun.file(join(bin, "calls")).text()).split("\n").filter(Boolean);
+      const before = (await calls()).length;
+      reason = await open();
+      await post(`${url(reason)}api/submit`, { comments: [] });
+      const ended = () =>
+        fetch(url(reason)).then(
+          () => false,
+          () => true,
+        );
+      for (let i = 0; i < 100 && !(await ended()); i++) await Bun.sleep(50);
+      expect(await ended()).toBe(true);
+      expect((await calls()).length).toBe(before);
       expect(await kept()).toBe(0);
     } finally {
       Bun.spawnSync(["pkill", "-9", "-f", `codex ${thread}`]);

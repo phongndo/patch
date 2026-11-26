@@ -6,6 +6,8 @@ import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 const PATCHR = "patchr"; // install writes the binary's full path here
+/** What `patchr review` says on stderr when a review passed: nothing is sent, so no turn starts. */
+const PASSED = "The review passed.";
 
 /** The file the agent last changed, whose repository may not be where Pi started. */
 function lastEdited(ctx: ExtensionCommandContext): string | undefined {
@@ -78,7 +80,7 @@ export default function (pi: ExtensionAPI) {
           ctx.ui.setStatus("patch", undefined);
           if (failure) notify(ctx, failure, "error");
           else if (output.trim()) deliver(ctx, output);
-          else notify(ctx, "Patch closed without feedback.", "info");
+          else notify(ctx, stderr.includes(PASSED) ? PASSED : "Patch closed without feedback.", "info");
         }
         done();
       };

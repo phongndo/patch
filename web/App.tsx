@@ -109,6 +109,9 @@ export function App() {
   const totals = () => breakdown().get("total")!;
   const number = new Intl.NumberFormat();
   const commentCount = () => store.comments.length;
+  /** Where a finished review went: with no comments it passed, which a harness may take quietly. */
+  const sent = () =>
+    store.comments.some((comment) => comment.body.trim()) ? "Sent to the agent." : "The review passed.";
   /** Finishing with no comments passes the changes, so there must be some to pass. */
   const canFinish = () =>
     !store.submitted && (state.hasUnsent() || (!store.loading && !store.error && state.files().length > 0));
@@ -860,7 +863,7 @@ export function App() {
       </Show>
       <Show when={store.submitted}>
         <div class="overlay">
-          <p>Sent to the agent. You can close this tab.</p>
+          <p>{sent()} You can close this tab.</p>
         </div>
       </Show>
       <ToastRegion align="center" aria-label="Notifications">

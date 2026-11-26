@@ -3,7 +3,7 @@
 
 use crate::protocol::{Comment, Submission};
 
-const PASSED: &str = "The user reviewed the changes in Patch and has no comments. The review passed.";
+pub const PASSED: &str = "The user reviewed the changes in Patch and has no comments. The review passed.";
 
 const ASK: &str = "The user reviewed the changes and left the numbered comments below. Address every one: make the change it asks for or, if it only asks a question, answer it without changing code for it. Then say what you did for each, by number.";
 

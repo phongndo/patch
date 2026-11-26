@@ -32,7 +32,7 @@ const LINK: &str = "The command first prints `Patch is open at <url>` on stderr.
 const OUTCOMES: &str = "Then act on its stdout:
 
 - Comments: address every one now, answering those that are only questions without changing code for them, then say what you did for each, by number.
-- No comments: say the review passed and continue.
+- No comments: say in one sentence that the review passed, and stop.
 - Closed without feedback: say so in one sentence and stop. Closing is not approval.
 - If the command was cut off by a timeout, say so and run it again. The new review starts empty; the tab of the old one can still copy its comments.";
 
@@ -117,7 +117,7 @@ fn gemini_command() -> String {
 
 ## Your task
 
-If the review above has comments, address every one now, answering those that are only questions without changing code for them, then say what you did for each, by number. If it has no comments, say the review passed and continue. If it was closed without feedback, or is empty, say so in one sentence and stop: closing is not approval.
+If the review above has comments, address every one now, answering those that are only questions without changing code for them, then say what you did for each, by number. If it has no comments, say in one sentence that the review passed, and stop. If it was closed without feedback, or is empty, say so in one sentence and stop: closing is not approval.
 ",
         patchr()
     );

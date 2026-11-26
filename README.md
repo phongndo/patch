@@ -58,7 +58,9 @@ Codex's default sandbox blocks the local port it needs; allow it to escalate.
 is what the command runs. By default it shows what a pull request would: the branch since
 it left its base, plus uncommitted and untracked files. A review is one pass:
 comment, finish, and the next `/patch` starts empty. Finishing with no comments
-tells the agent the review passed; closing the tab ends it without saying so.
+passes the review: in the first four harnesses that ends it quietly, with no
+turn, and in the others the waiting model is told it passed. Closing the tab
+ends it without saying so.
 Comments live in the tab: a reload keeps them, closing with any unsent asks
 first, and if Patch is cut off (an agent's timeout) the tab can still copy them.
 A tab that sleeps, is suspended or loses its connection doesn't end the review,

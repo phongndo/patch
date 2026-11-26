@@ -5,6 +5,8 @@
 import type { CommandRunResult, EngineInterface, Register } from "claude-code";
 
 const PATCHR = "patchr"; // install writes the binary's full path here
+/** What `patchr review` says on stderr when a review passed: nothing is sent, so no turn starts. */
+const PASSED = "The review passed.";
 
 /** Submits the feedback, then lets go of the file that keeps it until then. */
 async function deliver($: EngineInterface, output: string) {
@@ -117,6 +119,7 @@ export const register: Register = (on) => {
         if (failure && !run.url) answer(failure);
         else if (failure) $.ui.toast(failure);
         else if (output.trim()) await deliver($, output);
+        else if (stderr.includes(PASSED)) $.ui.toast(PASSED);
         else $.ui.toast("Patch closed without feedback.");
       })();
     });
