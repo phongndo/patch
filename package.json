@@ -22,7 +22,8 @@
     "lint:rust": "cargo clippy --manifest-path cli/Cargo.toml --all-targets --locked -- -D warnings",
     "check": "bun run typecheck && bun run lint && bun run format:check && bun run format:rust && bun run lint:rust",
     "bump": "bun scripts/release.ts bump",
-    "build:web": "vite build"
+    "build:web": "vite build",
+    "bench": "bun run build && bun scripts/bench.ts"
   },
   "dependencies": {
     "@pierre/diffs": "1.7.1",
