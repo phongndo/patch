@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import type { Comment } from "../src/protocol.ts";
 import { feedbackText } from "../web/feedback.ts";
 
@@ -287,6 +288,44 @@ describe("patchr review", () => {
       expect(page).toContain('window.__PATCH_SETTINGS__={"colorScheme":"dark","sidebarSide":"right"}');
     } finally {
       second.child.kill();
+    }
+  });
+
+  test("the page's script comes as the browser takes it, and the same whichever way", async () => {
+    const review = await start("--uncommitted");
+    try {
+      const page = await (await fetch(`${review.origin}/`)).text();
+      const script = page.match(/src="(\/a\/[^"]+\.js)"/)?.[1];
+      if (!script) return; // A page built for the tests alone has no script.
+      const get = async (encoding: string) => {
+        const response = await fetch(`${review.origin}${script}`, {
+          headers: { "accept-encoding": encoding },
+          decompress: false,
+        });
+        expect(response.ok).toBe(true);
+        expect(response.headers.get("vary")).toBe("accept-encoding");
+        expect(response.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
+        const bytes = Buffer.from(await response.arrayBuffer());
+        const coding = response.headers.get("content-encoding");
+        const decode = coding === "br" ? brotliDecompressSync : coding === "gzip" ? gunzipSync : Buffer.from;
+        const text = decode(bytes).toString();
+        return { coding, text };
+      };
+      const plain = await get("identity");
+      expect(plain.coding).toBeNull();
+      // A release build serves the copies Vite compressed; a development build gzips as it goes.
+      for (const [offered, allowed] of [
+        ["br, gzip", hurry ? ["gzip"] : ["br"]],
+        ["gzip", ["gzip"]],
+        ["br;q=0, gzip", ["gzip"]],
+        ["br", hurry ? [null] : ["br"]],
+      ] as const) {
+        const answer = await get(offered);
+        expect(allowed as readonly (string | null)[]).toContain(answer.coding);
+        expect(answer.text).toBe(plain.text);
+      }
+    } finally {
+      review.child.kill();
     }
   });
 

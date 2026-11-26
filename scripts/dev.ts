@@ -75,8 +75,10 @@ async function rebuild() {
 }
 
 // The page first: the CLI embeds its folder.
-if ((await start([join(bin, "vite"), "build"]).exited) !== 0 || (await build()) !== 0) await stop(1);
-start([join(bin, "vite"), "build", "--watch"]);
+// The page is served from disk here, so it is not compressed for embedding (vite.config.ts).
+const page = { PATCH_DEV: "1" };
+if ((await start([join(bin, "vite"), "build"], page).exited) !== 0 || (await build()) !== 0) await stop(1);
+start([join(bin, "vite"), "build", "--watch"], page);
 open(true);
 
 let soon: Timer | undefined;

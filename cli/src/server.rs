@@ -16,7 +16,6 @@ use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
-use rust_embed::RustEmbed;
 use serde::Serialize;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
@@ -26,9 +25,21 @@ use crate::github;
 use crate::paths::patch_paths;
 use crate::protocol::{GrepMatch, Mode, ReviewResponse, Scope, ScopesResponse, Submission};
 
-#[derive(RustEmbed)]
-#[folder = "$PATCH_WEB_DIST"]
-struct Page;
+/// One file of the page as a release build embeds it: compressed where Vite left
+/// compressed copies (build.rs), else as it is.
+struct Asset {
+    name: &'static str,
+    raw: Option<&'static [u8]>,
+    br: Option<&'static [u8]>,
+    gz: Option<&'static [u8]>,
+}
+
+/// Sorted by name. Empty in a development build, which reads the page from disk.
+static PAGE: &[Asset] = include!(concat!(env!("OUT_DIR"), "/page.rs"));
+
+fn embedded(name: &str) -> Option<&'static Asset> {
+    PAGE.binary_search_by(|asset| asset.name.cmp(name)).ok().map(|at| &PAGE[at])
+}
 
 /// How long after its tab closed a review ends: no time for the reader, enough
 /// for messages that pass each other.
@@ -118,7 +129,7 @@ struct App {
     live: Mutex<Live>,
     started: Instant,
     outcome: Mutex<Option<oneshot::Sender<Outcome>>>,
-    gzip: Mutex<HashMap<String, Arc<Vec<u8>>>>,
+    gzip: Mutex<HashMap<String, Bytes>>,
     /// Bumped when the repository changes, so open pages can offer a refresh.
     changes: tokio::sync::watch::Sender<u64>,
 }
@@ -226,11 +237,15 @@ fn error(status: StatusCode, message: &str) -> Response {
     json(status, &serde_json::json!({ "error": message }))
 }
 
-fn accepts_gzip(headers: &HeaderMap) -> bool {
-    headers
-        .get(header::ACCEPT_ENCODING)
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.split(',').any(|part| part.trim().starts_with("gzip")))
+/// Whether the browser takes `coding`, and has not turned it down with q=0.
+fn accepts(headers: &HeaderMap, coding: &str) -> bool {
+    headers.get(header::ACCEPT_ENCODING).and_then(|value| value.to_str().ok()).is_some_and(|value| {
+        value.split(',').any(|part| {
+            let mut parts = part.split(';');
+            parts.next().is_some_and(|name| name.trim().eq_ignore_ascii_case(coding))
+                && !parts.any(|param| param.trim().strip_prefix("q=").and_then(|q| q.trim().parse::<f32>().ok()) == Some(0.0))
+        })
+    })
 }
 
 fn gzip(bytes: &[u8], level: u32) -> Vec<u8> {
@@ -241,7 +256,7 @@ fn gzip(bytes: &[u8], level: u32) -> Vec<u8> {
 
 /// Compresses a large JSON or text answer when the browser accepts gzip.
 fn compressed(headers: &HeaderMap, mut response: Response, bytes: Vec<u8>) -> Response {
-    if bytes.len() > 8 * 1024 && accepts_gzip(headers) {
+    if bytes.len() > 8 * 1024 && accepts(headers, "gzip") {
         *response.body_mut() = Body::from(gzip(&bytes, 1));
         response.headers_mut().insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
         response.headers_mut().insert(header::VARY, HeaderValue::from_static("accept-encoding"));
@@ -461,78 +476,125 @@ fn live_stream(app: Arc<App>, page: String) -> Response {
     Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))).into_response()
 }
 
-fn content_type(path: &str) -> String {
-    mime_guess::from_path(path)
-        .first_raw()
-        .map(|kind| match kind {
-            "text/html" | "text/css" | "text/javascript" | "application/javascript" | "image/svg+xml" => {
-                format!("{kind}; charset=utf-8")
-            }
-            other => other.to_string(),
-        })
-        .unwrap_or_else(|| "application/octet-stream".into())
+fn content_type(path: &str) -> &'static str {
+    match path.rsplit_once('.').map(|(_, ext)| ext) {
+        Some("html") => "text/html; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("js" | "mjs") => "text/javascript; charset=utf-8",
+        Some("svg") => "image/svg+xml; charset=utf-8",
+        Some("json" | "map") => "application/json",
+        Some("wasm") => "application/wasm",
+        Some("woff2") => "font/woff2",
+        Some("woff") => "font/woff",
+        Some("png") => "image/png",
+        Some("ico") => "image/x-icon",
+        Some("txt") => "text/plain; charset=utf-8",
+        _ => "application/octet-stream",
+    }
 }
 
 fn compressible(path: &str) -> bool {
     [".js", ".css", ".html", ".svg", ".json", ".wasm"].iter().any(|ext| path.ends_with(ext))
 }
 
+/// A file of the page: from disk in development, else as built in.
+enum Source {
+    Disk(std::borrow::Cow<'static, [u8]>),
+    Embedded(&'static Asset),
+}
+
+async fn source(app: &App, name: &str) -> Option<Source> {
+    let dir = match &app.options.dev {
+        Some(dir) => Some(dir.as_path()),
+        None if PAGE.is_empty() => Some(Path::new(env!("PATCH_WEB_DIST"))),
+        None => None,
+    };
+    match dir {
+        Some(dir) if git::safe_path(name) => {
+            // Nothing outside the folder, through a link in it either.
+            let (Ok(dir), Ok(file)) = (tokio::fs::canonicalize(dir).await, tokio::fs::canonicalize(dir.join(name)).await) else {
+                return None;
+            };
+            if !file.starts_with(&dir) {
+                return None;
+            }
+            tokio::fs::read(file).await.ok().map(|bytes| Source::Disk(bytes.into()))
+        }
+        Some(_) => None,
+        None => embedded(name).map(Source::Embedded),
+    }
+}
+
 async fn asset(app: &App, headers: &HeaderMap, path: &str) -> Response {
     let path = if path == "/" { "/index.html" } else { path };
     let name = path.trim_start_matches('/');
-    let bytes: Option<std::borrow::Cow<'static, [u8]>> = match &app.options.dev {
-        Some(dir) if git::safe_path(name) => tokio::fs::read(dir.join(name)).await.ok().map(Into::into),
-        Some(_) => None,
-        None => Page::get(name).map(|file| file.data),
-    };
     // Only page routes fall back to the page; a missing asset is a 404, never
     // HTML cached forever under the asset's name.
-    let (path, bytes) = match bytes {
-        Some(bytes) => (path, bytes),
-        None if Path::new(name).extension().is_none() => match &app.options.dev {
-            Some(dir) => match tokio::fs::read(dir.join("index.html")).await {
-                Ok(bytes) => ("/index.html", bytes.into()),
-                Err(_) => return (StatusCode::NOT_FOUND, "Not found").into_response(),
-            },
-            None => match Page::get("index.html") {
-                Some(file) => ("/index.html", file.data),
-                None => return (StatusCode::NOT_FOUND, "Not found").into_response(),
-            },
+    let (path, found) = match source(app, name).await {
+        Some(found) => (path, found),
+        None if Path::new(name).extension().is_none() => match source(app, "index.html").await {
+            Some(found) => ("/index.html", found),
+            None => return (StatusCode::NOT_FOUND, "Not found").into_response(),
         },
         None => return (StatusCode::NOT_FOUND, "Not found").into_response(),
     };
-    let bytes: std::borrow::Cow<'static, [u8]> = if path == "/index.html" { with_settings(&bytes).into() } else { bytes };
-    if path == "/index.html" {
-        app.live.lock().unwrap().coming.push(Instant::now());
-    }
     let immutable = path.starts_with("/a/");
     let mut response = Response::new(Body::empty());
     let out = response.headers_mut();
-    out.insert(header::CONTENT_TYPE, HeaderValue::from_str(&content_type(path)).unwrap());
+    out.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type(path)));
     out.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     out.insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static(if immutable { "public, max-age=31536000, immutable" } else { "no-cache" }),
     );
-    if compressible(path) && bytes.len() > 1024 && accepts_gzip(headers) {
-        let packed = if immutable && app.options.dev.is_none() {
-            let cached = app.gzip.lock().unwrap().get(path).cloned();
-            match cached {
-                Some(packed) => packed,
-                None => {
-                    let packed = Arc::new(gzip(&bytes, 6));
-                    app.gzip.lock().unwrap().insert(path.to_string(), packed.clone());
-                    packed
-                }
+    if compressible(path) {
+        out.insert(header::VARY, HeaderValue::from_static("accept-encoding"));
+    }
+    let bytes: std::borrow::Cow<'static, [u8]> = match found {
+        Source::Embedded(asset) => {
+            if let Some(br) = asset.br.filter(|_| accepts(headers, "br")) {
+                out.insert(header::CONTENT_ENCODING, HeaderValue::from_static("br"));
+                *response.body_mut() = Body::from(br);
+                return response;
             }
-        } else {
-            Arc::new(gzip(&bytes, 6))
+            if let Some(gz) = asset.gz {
+                if accepts(headers, "gzip") {
+                    out.insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+                    *response.body_mut() = Body::from(gz);
+                    return response;
+                }
+                // A browser that takes neither, if there is one.
+                let mut raw = Vec::new();
+                let _ = std::io::Read::read_to_end(&mut flate2::read::GzDecoder::new(gz), &mut raw);
+                *response.body_mut() = Body::from(raw);
+                return response;
+            }
+            asset.raw.unwrap_or_default().into()
+        }
+        Source::Disk(bytes) => bytes,
+    };
+    let bytes: std::borrow::Cow<'static, [u8]> = if path == "/index.html" {
+        app.live.lock().unwrap().coming.push(Instant::now());
+        with_settings(&bytes).into()
+    } else {
+        bytes
+    };
+    if compressible(path) && bytes.len() > 1024 && accepts(headers, "gzip") {
+        let cached = immutable && app.options.dev.is_none();
+        let packed = match cached.then(|| app.gzip.lock().unwrap().get(path).cloned()).flatten() {
+            Some(packed) => packed,
+            None => {
+                let packed = Bytes::from(gzip(&bytes, 6));
+                if cached {
+                    app.gzip.lock().unwrap().insert(path.to_string(), packed.clone());
+                }
+                packed
+            }
         };
         out.insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
-        out.insert(header::VARY, HeaderValue::from_static("accept-encoding"));
-        *response.body_mut() = Body::from(packed.as_ref().clone());
+        *response.body_mut() = Body::from(packed);
     } else {
-        *response.body_mut() = Body::from(bytes.into_owned());
+        *response.body_mut() = Body::from(bytes);
     }
     response
 }
