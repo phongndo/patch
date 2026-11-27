@@ -464,7 +464,9 @@ function createReviewState() {
   const hasUnsent = () => !store.submitted && (store.comments.length > 0 || isWriting());
 
   let loads = 0;
+  let requestedScope: Scope | undefined;
   async function load(scope?: Scope) {
+    requestedScope = scope;
     const turn = ++loads;
     setStore((s) => {
       s.loading = true;
@@ -862,6 +864,7 @@ function createReviewState() {
     keepWriting,
     hasUnsent,
     load,
+    retry: () => load(requestedScope),
     fileByName,
     isMoved,
     lineOf,

@@ -1037,7 +1037,7 @@ export function App() {
       <Show when={store.error}>
         <div class="overlay">
           <p>{store.error}</p>
-          <button class="button" onClick={() => void state.load(store.review?.scope)}>
+          <button class="button" onClick={() => void state.retry()}>
             Try again
           </button>
         </div>

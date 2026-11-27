@@ -442,6 +442,16 @@ const loaded = async () => {
   await settle();
 };
 
+test("retrying a failed change of scope requests the same scope", async () => {
+  await loaded();
+  reviewed = undefined;
+  await state.load({ kind: "staged" });
+  await settle();
+  asked.length = 0;
+  await click(named("button", "Try again"));
+  expect(asked).toContain("/api/review?scope=staged");
+});
+
 test("viewed binary files need review again when their contents change", async () => {
   const loadImage = async (oid: string) => {
     reviewed = {
