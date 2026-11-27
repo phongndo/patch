@@ -315,6 +315,10 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
       "[data-line-number-content]{display:inline-block;min-width:4ch;text-align:right}",
       "[data-separator=line-info-basic] [data-separator-wrapper]{grid-template-columns:100% auto}",
       "[data-separator=line-info-basic] [data-expand-button]{width:100%}",
+      // Its chevron sits where the file header's does, at the header's size, so every chevron down
+      // the left edge lines up.
+      "[data-separator=line-info-basic] [data-expand-button]{box-sizing:border-box;justify-content:start;padding-inline-start:calc(var(--file-head-inset) + (var(--file-head-button) - var(--icon-meta)) / 2)}",
+      "[data-separator=line-info-basic] [data-expand-button] svg{width:var(--icon-meta);height:var(--icon-meta)}",
       // Nothing pulls past its end and springs back, as on the page.
       "[data-code]{overscroll-behavior:none}",
       // What is the review's and not the file's (comments, folded lines) sits on a band of its

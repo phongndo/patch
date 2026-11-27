@@ -46,6 +46,9 @@
   --text-meta: 12px;
   --icon: 16px;
   --icon-meta: 14px;
+  /* A file header's inset and button size. A gap's chevron centers under the header's (diff.ts). */
+  --file-head-inset: 6px;
+  --file-head-button: 26px;
   /* Pierre's diff and tree read these through their shadow roots. */
   --diffs-font-family: var(--mono);
   --diffs-header-font-family: var(--font);
@@ -624,14 +627,14 @@ input {
   align-items: center;
   gap: 8px;
   height: 100%;
-  padding: 0 10px 0 6px;
+  padding: 0 10px 0 var(--file-head-inset);
   color: var(--fg);
   font: var(--text) var(--font);
 }
 
 .file-head .icon-button {
-  width: 26px;
-  height: 26px;
+  width: var(--file-head-button);
+  height: var(--file-head-button);
   color: var(--muted);
 }
 
@@ -2663,6 +2666,7 @@ kbd {
   :root {
     --control: 44px;
     --bar: 56px;
+    --file-head-button: var(--control);
   }
   /* A button looks as it does with a mouse and takes a finger's 44px above and below. */
   .button {
@@ -2678,7 +2682,6 @@ kbd {
     width: auto !important;
     min-width: var(--control);
   }
-  .file-head .icon-button,
   .note .icon-button,
   .search-clear {
     width: var(--control) !important;
