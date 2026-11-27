@@ -176,6 +176,8 @@ test("a small change in a large file opens; a large diff starts folded", async (
     [...header, "@@ -1987,7 +1987,7 @@", " a", " b", " c", "-d", "+D", " e", " f", " g", ""].join("\n"),
   )[0]!;
   expect(opensCollapsed(small)).toBe(false);
+  expect(opensCollapsed({ ...small, name: "schema.gen.ts" })).toBe(true);
+  expect(opensCollapsed({ ...small, name: "schema.gen.ts" }, false)).toBe(false);
   // Two thousand lines added: the diff itself is large.
   const added = [
     "diff --git a/new.ts b/new.ts",

@@ -88,7 +88,7 @@ const largeLines = 1500;
 
 /** Very large diffs open folded, and generated files too unless the reviewer turned that off. */
 export const opensCollapsed = (file: FileDiffMetadata, foldGenerated = true) =>
-  (foldGenerated && generated.test(file.name)) || shownLines(file) > largeLines;
+  (foldGenerated && kindOf(file) === "generated") || shownLines(file) > largeLines;
 
 /** The lines a diff shows before anything is expanded; its unifiedLineCount counts what is hidden too. */
 const shownLines = (file: FileDiffMetadata) =>
