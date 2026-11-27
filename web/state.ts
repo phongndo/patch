@@ -104,8 +104,13 @@ export const stats = (file: FileDiffMetadata) => {
   return { additions, deletions };
 };
 
+/** Fingerprints by parsed file, which never changes in place: filtering on Viewed asks again often. */
+const fingerprints = new WeakMap<FileDiffMetadata, string>();
+
 /** Names a file's changes, so a viewed mark lasts only as long as they do. */
 function fingerprint(file: FileDiffMetadata): string {
+  const known = fingerprints.get(file);
+  if (known !== undefined) return known;
   let hash = 5381;
   const add = (text: string) => {
     for (let index = 0; index < text.length; index++) hash = ((hash * 33) ^ text.charCodeAt(index)) | 0;
@@ -122,6 +127,7 @@ function fingerprint(file: FileDiffMetadata): string {
         for (let index = 0; index < part.additions; index++)
           add(`+${file.additionLines[part.additionLineIndex + index]}`);
       }
+  fingerprints.set(file, String(hash));
   return String(hash);
 }
 
@@ -281,6 +287,11 @@ function createReviewState() {
   // Parsed diffs stay out of the store: they go to the highlighter workers,
   // which cannot clone store proxies, and they never change in place.
   const [files, setFiles] = createSignal<FileDiffMetadata[]>([]);
+  const filesByName = createMemo(() => {
+    const byName = new Map<string, FileDiffMetadata>();
+    for (const file of files()) if (!byName.has(file.name)) byName.set(file.name, file);
+    return byName;
+  });
   // What is being written lives here, not in the editor: the diff drops and redraws
   // its editors as files, filters and layout change. There is one at a time.
   const [composer, setComposer] = createSignal<Target>();
@@ -678,7 +689,7 @@ function createReviewState() {
   };
 
   function fileByName(name: string) {
-    return files().find((file) => file.name === name);
+    return filesByName().get(name);
   }
   const excerptAt = (target: Target) => {
     const file = fileByName(target.file);
