@@ -575,6 +575,12 @@ input {
   font-variant-numeric: tabular-nums;
 }
 
+/* The tree's host hides its overflow, which makes it a scroller: under the page's
+   `overscroll-behavior: none` a wheel or a swipe starting on a row would never reach the list. */
+.tree file-tree-container {
+  overscroll-behavior: auto;
+}
+
 .kind-section .tree {
   flex: none;
 }

@@ -123,7 +123,10 @@ export function Tree(props: {
         // A row is ringed for the keyboard only; a click already fills it.
         unsafeCSS: `${quietFolders ? "[data-item-contains-git-change]>[data-item-section=git]{visibility:hidden}" : ""}
           [data-type=item]:not(:focus-visible)::before{outline-color:transparent!important}
-          [data-file-tree-virtualized-scroll]{overscroll-behavior:none}
+          ${
+            // A tree as tall as its rows never scrolls itself: a swipe on it is the list's.
+            fit ? "" : "[data-file-tree-virtualized-scroll]{overscroll-behavior:none}"
+          }
           ${FITTING}`,
         initialExpansion: expansion,
         flattenEmptyDirectories: true,
