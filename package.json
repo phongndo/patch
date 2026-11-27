@@ -1,6 +1,6 @@
 {
   "name": "patch",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "description": "Review your coding agent's changes in the browser.",
   "type": "module",
