@@ -39,7 +39,8 @@ export interface DiffViewHooks {
   /** Whether a file with code to show is shown rendered too. */
   previewed(file: string): boolean;
   renderHeader(file: string): JSX.Element;
-  onComment(file: string, range: SelectedLineRange): void;
+  /** `selected`: the lines stay selected while the comment is written, for Shift to extend. */
+  onComment(file: string, range: SelectedLineRange, selected?: boolean): void;
   onCollapsedChange(file: string, collapsed: boolean): void;
   /** Names the review whose files context expansion reads. */
   scopeKey(): string;
@@ -167,6 +168,15 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
   // Whether the pointer moved since that step; a page scrolled under a still pointer is not pointing.
   let pointed = true;
   let flash: ReturnType<typeof setTimeout> | undefined;
+  // Lines picked in the gutter are commented on as the press ends: pierre selects a line by its
+  // number, a range by sliding along the numbers or by Shift. `pressedBy` is the pointer whose
+  // press it is, which tells a reader's selection from one made by stepping; the gutter's +
+  // opens its own comment.
+  let pressedBy: number | undefined;
+  let byButton = false;
+  // The file just gone to, while the reader has not scrolled: a last file too short to reach the
+  // top is still the one they chose.
+  let chosen: string | undefined;
   let files = new Map<string, FileDiffMetadata>();
   let opened = new Map<string, OpenedFile>();
   const has = (name: string) => files.has(name) || opened.has(name);
@@ -382,12 +392,20 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     },
     // The whole header is the page's, the same for a diff and a whole file.
     renderCustomHeader(file: { name: string }) {
-      return has(file.name)
-        ? headers.get(file.name, () => hooks.renderHeader(file.name), "header-slot")
-        : undefined;
+      if (!has(file.name)) return undefined;
+      const header = headers.get(file.name, () => hooks.renderHeader(file.name), "header-slot");
+      return header;
     },
     onGutterUtilityClick(range: SelectedLineRange, context?: { item: CodeViewItem<Note> }) {
+      byButton = true;
       if (context) hooks.onComment(context.item.id, range);
+    },
+    onLineSelectionEnd(range: SelectedLineRange | null, context?: { item: CodeViewItem<Note> }) {
+      const file = context?.item.id;
+      if (pressedBy === undefined || byButton || !range || !file) return;
+      // A file seen whole has no sides: its lines are the new ones.
+      const side = range.side ?? "additions";
+      hooks.onComment(file, { ...range, side, endSide: range.endSide ?? side }, true);
     },
     onLineEnter(line: { lineNumber: number }, context?: { item: CodeViewItem<Note> }) {
       if (!context) return;
@@ -439,6 +457,7 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
       name,
       () => {
         stepped = undefined;
+        chosen = undefined;
       },
       { passive: true, signal: listening.signal },
     );
@@ -522,9 +541,29 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     (event) => {
       endFlash(); // What is selected from here on is the reader's own.
       pointed = true;
+      pressedBy ??= event.pointerId;
       if (event.target === root) stepped = undefined; // The scrollbar.
     },
     { capture: true, signal: listening.signal },
+  );
+  // A press ends after pierre has told the selection it made, which counts as the reader's.
+  addEventListener(
+    "pointerup",
+    (event: PointerEvent) => {
+      if (event.pointerId !== pressedBy) return;
+      setTimeout(() => {
+        pressedBy = undefined;
+        byButton = false;
+      });
+    },
+    { signal: listening.signal },
+  );
+  addEventListener(
+    "pointercancel",
+    (event: PointerEvent) => event.pointerId === pressedBy && (pressedBy = undefined),
+    {
+      signal: listening.signal,
+    },
   );
 
   return {
@@ -639,6 +678,7 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     },
     scrollToFile(name: string) {
       stepped = undefined;
+      chosen = name;
       view.scrollTo({ type: "item", id: name, align: "start", behavior: "instant" });
     },
     scrollToLine(name: string, lineNumber: number, side: "additions" | "deletions") {
@@ -658,10 +698,12 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
       if (anchor) view.scrollToAnchor(anchor, "instant");
     },
     topFile(): string | undefined {
-      return anchor()?.id;
+      return chosen && has(chosen) ? chosen : anchor()?.id;
     },
     find: (query?: string) => view.openSearch({ scope: "all", query, mode: "find" }),
-    clearSelection: () => view.clearSelectedLines(),
+    clearSelection() {
+      view.clearSelectedLines();
+    },
     destroy() {
       cancelAnimationFrame(edgeFrame);
       clearTimeout(flash);

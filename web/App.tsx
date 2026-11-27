@@ -148,7 +148,7 @@ export function App() {
     else toast.info("Select lines first, or point at one.", { id: "hint" });
   }
 
-  function openComposer(file: string, range: SelectedLineRange) {
+  function openComposer(file: string, range: SelectedLineRange, selected = false) {
     const side = range.endSide ?? range.side ?? "additions";
     const sameSide = (range.side ?? side) === side;
     const target: Target = {
@@ -158,8 +158,9 @@ export function App() {
       end: sameSide ? Math.max(range.start, range.end) : range.end,
     };
     compose(target);
-    // The gutter click selects its line after this handler runs.
-    requestAnimationFrame(() => diff?.clearSelection());
+    // The gutter's + selects its line after this handler runs; picked lines stay selected, for
+    // Shift to extend, until the comment closes (below).
+    if (!selected) requestAnimationFrame(() => diff?.clearSelection());
   }
 
   /** Opens an editor, in the diff or, for what it has no place for, in the sidebar. */
@@ -431,6 +432,13 @@ export function App() {
 
   // Comments are drawn by id, side and line, and previews by whether they are on; re-annotate
   // only when one of those changes.
+  // Lines picked to comment on are let go as their comment closes.
+  createEffect(
+    () => state.composer() === undefined,
+    (closed, before) => {
+      if (closed && before === false) diff?.clearSelection();
+    },
+  );
   createEffect(
     () =>
       [
