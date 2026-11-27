@@ -19,6 +19,8 @@ import { createDiffView, type DiffView, type Note } from "./diff.ts";
 import { copyText, feedbackText } from "./feedback.ts";
 import { bindActions, type Handler } from "./hotkeys.ts";
 import { FileIcon } from "./FileIcon.tsx";
+import { MediaPreview } from "./MediaPreview.tsx";
+import { previewToggles } from "./media.ts";
 import { Icon, statusIcons } from "./Icon.tsx";
 import { CommentsSide } from "./CommentsPanel.tsx";
 import { CommentCard, Composer } from "./Notes.tsx";
@@ -185,6 +187,19 @@ export function App() {
     for (const file of shown().items) setFileCollapsed(file.name, value);
   }
 
+  /** Shows a file rendered, or its code; false when it has no other view. */
+  function togglePreview(name: string) {
+    const file = state.fileByName(name);
+    if (!file || !previewToggles(file)) return false;
+    state.setPreviewed(name, !state.isPreviewed(name));
+    if (collapsed[name]) setFileCollapsed(name, false);
+    // A comment being written on lines the preview hides goes on in the comments panel: open it.
+    flush();
+    const draft = state.composer();
+    if (draft?.file === name && state.lineOf(draft) === undefined) setComments(true);
+    return true;
+  }
+
   function toggleViewed(file: string) {
     if (!state.fileByName(file)) return false; // An unchanged file has nothing to view.
     const viewed = state.toggleViewed(file);
@@ -264,6 +279,19 @@ export function App() {
             <span class="file-count">{count()}</span>
           </Show>
         </button>
+        <Show when={diffFile() && previewToggles(diffFile()!)}>
+          <button
+            class="icon-button file-action"
+            title={preferences.hint(
+              state.isPreviewed(props.name) ? "Show the code" : "Show the preview",
+              "preview",
+            )}
+            aria-label={state.isPreviewed(props.name) ? "Show the code" : "Show the preview"}
+            onClick={() => togglePreview(props.name)}
+          >
+            <Icon name={state.isPreviewed(props.name) ? "code" : "eye"} />
+          </button>
+        </Show>
         <Show when={diffFile()}>
           <button
             class={{ "icon-button": true, "file-action": true, done: viewed() }}
@@ -299,6 +327,14 @@ export function App() {
         ) : (
           <Composer target={note.target} />
         ),
+      renderMedia: (file, side) => (
+        <MediaPreview
+          file={file}
+          side={side}
+          review={{ key: store.review?.scopeKey ?? "", read: store.review?.read ?? -1 }}
+        />
+      ),
+      previewed: state.isPreviewed,
       renderHeader: (name) => <FileHeader name={name} />,
       onComment: openComposer,
       onCollapsedChange: (file, value) =>
@@ -373,7 +409,7 @@ export function App() {
         : (collapsed[item.name] ??
           (state.isViewed(item.name) || ("hunks" in item && opensCollapsed(item, settings.foldGenerated))));
     setCollapsed((s) => void Object.assign(s, next));
-    diff?.setExpanded(browsing);
+    diff?.setExpanded(browsing || settings.wholeFiles);
     diff?.setFiles(items, (name) => next[name] ?? false);
     requestAnimationFrame(() => {
       if (place) diff?.restore(place);
@@ -381,14 +417,26 @@ export function App() {
     });
   });
 
-  // Comments are drawn by id, side and line; re-annotate only when one of those changes.
+  // Comments are drawn by id, side and line, and previews by whether they are on; re-annotate
+  // only when one of those changes.
   createEffect(
-    () => [state.composer(), store.comments.map((c) => `${c.id}:${c.side}:${c.end}`).join()] as const,
+    () =>
+      [
+        state.composer(),
+        store.comments.map((c) => `${c.id}:${c.side}:${c.end}`).join(),
+        state.previewChoices(),
+      ] as const,
     () => diff?.refreshAnnotations(),
     { defer: true },
   );
 
   createEffect(layout, (value) => diff?.setLayout(value));
+  // Whole files, or folded to their changes; browsing always reads them whole.
+  createEffect(
+    () => settings.wholeFiles || state.isBrowsing(),
+    (whole) => diff?.setExpanded(whole),
+    { defer: true },
+  );
   // Remember a layout chosen with the toggle; "auto" stays auto until then.
   const chooseLayout = (value: Layout) => {
     setLayout(value);
@@ -567,7 +615,17 @@ export function App() {
 
   const running = () => !store.submitted && palette() === undefined;
   const idle = () => running() && !settingsOpen() && !scopeOpen() && !filterOpen();
-  const flip = (name: "wrap" | "wordDiff" | "foldGenerated" | "groupByKind" | "ligatures") => ({
+  const flip = (
+    name:
+      | "wrap"
+      | "wordDiff"
+      | "foldGenerated"
+      | "previewSvg"
+      | "previewMarkdown"
+      | "wholeFiles"
+      | "groupByKind"
+      | "ligatures",
+  ) => ({
     run: () => preferences.update({ [name]: !settings[name] }),
   });
   const page = (action: Action) => ({ run: () => openPalette(action) });
@@ -633,6 +691,14 @@ export function App() {
     },
     contrast: page("contrast"),
     foldGenerated: flip("foldGenerated"),
+    preview: {
+      run: withCurrentFile((file) => {
+        if (!togglePreview(file)) toast.info("This file has no preview.", { id: "hint" });
+      }),
+    },
+    previewSvg: flip("previewSvg"),
+    previewMarkdown: flip("previewMarkdown"),
+    wholeFiles: flip("wholeFiles"),
     groupByKind: flip("groupByKind"),
     sidebar: { run: () => setSidebar((shown) => !shown) },
     sidebarSide: {
@@ -756,6 +822,17 @@ export function App() {
               onClick={toggleAll}
             >
               <Icon name={allCollapsed() ? "chevrons" : "chevronsClose"} />
+            </button>
+            <button
+              class="icon-button"
+              title={preferences.hint(
+                layout() === "split" ? "Split · switch to unified" : "Unified · switch to split",
+                "layout",
+              )}
+              aria-label={layout() === "split" ? "Switch to unified" : "Switch to split"}
+              onClick={() => chooseLayout(layout() === "split" ? "unified" : "split")}
+            >
+              <Icon name={layout() === "split" ? "diffSplit" : "diffUnified"} />
             </button>
             <button
               class={{ "icon-button": true, active: commentsShown() }}

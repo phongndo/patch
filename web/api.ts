@@ -49,6 +49,16 @@ export const loadSide = async (key: string, side: "old" | "new", path: string) =
   return response.ok ? response.text() : "";
 };
 
+/**
+ * One side of a changed file, read only if it is at most `max` bytes: its text, or the status it
+ * could not be read with (413 for too long), never mistaken for an empty file.
+ */
+export const loadSideText = async (key: string, side: "old" | "new", path: string, max: number) => {
+  const query = new URLSearchParams({ key, side, path, max: String(max) });
+  const response = await fetch(`/api/file?${query}`).catch(() => undefined);
+  return { status: response?.status ?? 0, text: response?.ok ? await response.text() : undefined };
+};
+
 export const loadUnchanged = (key: string) =>
   getJson<UnchangedFiles>(`/api/unchanged?${new URLSearchParams({ key })}`);
 

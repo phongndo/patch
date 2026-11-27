@@ -2,10 +2,11 @@
 //! signal for the parsed diff. It belongs to one run of Patch: the tab keeps it
 //! over a reload, and no other review sees it.
 
-import { parsePatchFiles, type FileDiffMetadata } from "@pierre/diffs";
+import { hydratePartialDiff, parsePatchFiles, type FileDiffMetadata } from "@pierre/diffs";
 import { createEffect, createMemo, createRoot, createSignal, createStore, flush, snapshot } from "solid-js";
-import type { Comment, ReviewResponse, Scope, Side } from "../src/protocol.ts";
+import type { ChangedPaths, Comment, ReviewResponse, Scope, Side } from "../src/protocol.ts";
 import { loadReview, loadUnchanged, loadUnchangedFile, submit } from "./api.ts";
+import { previewKind, previewPanes, previewToggles } from "./media.ts";
 import { preferences } from "./settings.ts";
 
 /** What a comment is about, as `Comment` says it. */
@@ -85,9 +86,13 @@ const generated =
   /(^|\/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|bun\.lockb?|Cargo\.lock|flake\.lock|go\.sum|poetry\.lock|uv\.lock|Gemfile\.lock|composer\.lock|[^/]*\.min\.(js|css)|[^/]*\.map|[^/]*\.snap)$/;
 const largeLines = 1500;
 
-/** Very large files open folded, and generated ones too unless the reviewer turned that off. */
+/** Very large diffs open folded, and generated files too unless the reviewer turned that off. */
 export const opensCollapsed = (file: FileDiffMetadata, foldGenerated = true) =>
-  (foldGenerated && generated.test(file.name)) || file.unifiedLineCount > largeLines;
+  (foldGenerated && generated.test(file.name)) || shownLines(file) > largeLines;
+
+/** The lines a diff shows before anything is expanded; its unifiedLineCount counts what is hidden too. */
+const shownLines = (file: FileDiffMetadata) =>
+  file.hunks.reduce((sum, hunk) => sum + hunk.unifiedLineCount, 0);
 
 export const stats = (file: FileDiffMetadata) => {
   let additions = 0;
@@ -123,6 +128,47 @@ export interface Change {
   side: Side;
   start: number;
   end: number;
+}
+
+/**
+ * A parsed file named as Git recorded it. A parser reads a binary file's name from its header line,
+ * which a name holding " and b/" splits more than one way; Git's record of the change does not.
+ */
+export function withRecordedPaths(file: FileDiffMetadata, paths: ChangedPaths): FileDiffMetadata {
+  const name = paths.new ?? paths.old;
+  const prevName = paths.old && paths.new && paths.old !== paths.new ? paths.old : undefined;
+  if (name && (file.name !== name || file.prevName !== prevName)) {
+    file.name = name;
+    file.prevName = prevName;
+  }
+  return file;
+}
+
+/** The context Git gives around a change (cli/src/git.rs, `--unified=3`; GitHub's diffs the same). */
+const CONTEXT_LINES = 3;
+
+/**
+ * Marks a diff that already holds both files whole as complete, so nothing offers to load more
+ * of them. Its hunks run unbroken from the first line, and the last ends on fewer context lines
+ * than Git gives, which only the end of the file cuts short. Any other diff is left partial: a
+ * last hunk ending on a full three lines may or may not be the end.
+ */
+export function completeWhole(file: FileDiffMetadata): FileDiffMetadata {
+  if (!file.isPartial || (file.type !== "change" && file.type !== "rename-changed") || !file.hunks.length)
+    return file;
+  let nextOld = 1;
+  let nextNew = 1;
+  for (const hunk of file.hunks) {
+    if (hunk.deletionStart !== nextOld || hunk.additionStart !== nextNew) return file;
+    nextOld += hunk.deletionCount;
+    nextNew += hunk.additionCount;
+  }
+  const last = file.hunks.at(-1)!.hunkContent.at(-1);
+  if (last?.type === "context" && last.lines >= CONTEXT_LINES) return file;
+  return hydratePartialDiff("merge", file, {
+    oldFile: { name: file.prevName ?? file.name, contents: file.deletionLines.join("") },
+    newFile: { name: file.name, contents: file.additionLines.join("") },
+  });
 }
 
 /** Every run of changed lines in a file, in order; a replaced run is its new side. */
@@ -221,7 +267,7 @@ const newId = () =>
 
 function createReviewState() {
   const [store, setStore] = createStore({
-    review: undefined as Omit<ReviewResponse, "patch"> | undefined,
+    review: undefined as Omit<ReviewResponse, "patch" | "files"> | undefined,
     comments: [] as Comment[],
     /** Files marked viewed, by name, each with the fingerprint of the changes that were. */
     viewed: {} as Record<string, string>,
@@ -259,6 +305,34 @@ function createReviewState() {
   const [nameQuery, setNameQuery] = createSignal("");
   /** Whether the tree holds the whole repository, not only what changed. */
   const [showUnchanged, setShowUnchanged] = createSignal(false);
+  /** Files the reviewer switched between preview and code, against the settings. */
+  const [previews, setPreviews] = createStore<Record<string, boolean>>({});
+  /** Whether a file with a preview and code is shown rendered, in place of its code. An image Git
+   * took for text (no NUL in it) is still an image. */
+  const isPreviewed = (name: string) => previews[name] ?? previewedFirst(name);
+  /** As a file opens: by what its sides are (an SVG renamed to text is still an SVG on one). */
+  function previewedFirst(name: string) {
+    const file = fileByName(name);
+    const paths = file ? previewPanes(file).map((pane) => pane.path) : [name];
+    if (paths.some((path) => /\.svg$/i.test(path))) return preferences.settings.previewSvg;
+    if (paths.some((path) => previewKind(path) === "markdown")) return preferences.settings.previewMarkdown;
+    // An image Git took for text (no NUL in it) is still an image.
+    return true;
+  }
+  const setPreviewed = (name: string, shown: boolean) =>
+    setPreviews((s) => {
+      s[name] = shown;
+    });
+  /** Names every choice of preview, so what draws them knows when one changed. */
+  const previewChoices = () =>
+    [
+      preferences.settings.previewSvg,
+      preferences.settings.previewMarkdown,
+      ...Object.entries(previews).map(([name, shown]) => `${name}:${shown}`),
+    ].join("|");
+  /** Whether the diff shows a file's lines: not when it has none, or is shown as its preview. */
+  const showsCode = (file: FileDiffMetadata) =>
+    file.hunks.length > 0 && !(previewToggles(file) && isPreviewed(file.name));
   // Browsing shows files in place of the review: a window of the tree's files, from the one
   // chosen on, that grows as the reader scrolls. The texts of unchanged ones are read as it
   // does; plain, like the parsed diff.
@@ -383,12 +457,19 @@ function createReviewState() {
       s.error = "";
     });
     try {
-      const { patch, ...review } = await loadReview(scope);
+      const { patch, files: recorded, ...review } = await loadReview(scope);
       if (turn !== loads) return; // Something else was chosen meanwhile.
       const started = performance.now();
-      const parsed = parsePatchFiles(patch, {
+      const files = parsePatchFiles(patch, {
         cacheKeyPrefix: `${review.session}:${Date.now()}:`,
       }).flatMap((entry) => entry.files);
+      // Git's record of each file, in the same order, names it when the parser could not.
+      const named =
+        recorded?.length === files.length
+          ? files.map((file, at) => withRecordedPaths(file, recorded[at]!))
+          : files;
+      // Only Patch's own diffs are known to give three lines of context; a pull request's patch is GitHub's.
+      const parsed = review.scope.kind === "pr" ? named : named.map(completeWhole);
       console.debug(`patch: parsed ${parsed.length} files in ${(performance.now() - started).toFixed(1)}ms`);
       const target = composer();
       const before = target && excerptAt(target);
@@ -616,10 +697,13 @@ function createReviewState() {
    * the whole file or lines that changed. Undefined when the diff has no place for it, and the sidebar does.
    */
   function lineOf(target: Target): number | undefined {
-    // A file without lines (binary, only renamed) has nothing to draw one on.
+    // A file without lines on screen (binary, only renamed, or shown as its preview) has nothing
+    // to draw one on, but a comment on the whole of it goes under its preview.
     const drawn =
-      visibleFiles().some((file) => file.name === target.file && file.hunks.length) ||
-      openedByName(target.file) !== undefined;
+      visibleFiles().some(
+        (file) =>
+          file.name === target.file && (showsCode(file) || (!hasLines(target) && previewPanes(file).length)),
+      ) || openedByName(target.file) !== undefined;
     if (!drawn) return undefined;
     const comment = target.id ? store.comments.find((comment) => comment.id === target.id) : undefined;
     return comment && isMoved(comment) ? 0 : target.end;
@@ -767,6 +851,10 @@ function createReviewState() {
     fileByName,
     isMoved,
     lineOf,
+    isPreviewed,
+    setPreviewed,
+    previewChoices,
+    showsCode,
     ordered,
     saveComment,
     deleteComment,

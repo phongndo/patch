@@ -711,6 +711,27 @@ function GeneralPage() {
             <Toggle name="foldGenerated" />
           </Row>
           <Row
+            label="Open SVG as a preview"
+            description="Show changed SVGs drawn, in place of their code. Each file's header switches."
+            keys={["previewSvg"]}
+          >
+            <Toggle name="previewSvg" />
+          </Row>
+          <Row
+            label="Open Markdown as a preview"
+            description="Show changed Markdown rendered, in place of its code. Each file's header switches."
+            keys={["previewMarkdown"]}
+          >
+            <Toggle name="previewMarkdown" />
+          </Row>
+          <Row
+            label="Show whole files"
+            description="Unfold every unchanged line of a changed file, so there is nothing to expand."
+            keys={["wholeFiles"]}
+          >
+            <Toggle name="wholeFiles" />
+          </Row>
+          <Row
             label="Group files by kind"
             description="List and show the changes as code, tests, docs, then generated files."
             keys={["groupByKind"]}

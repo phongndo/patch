@@ -1,6 +1,8 @@
 //! Drives Pierre's CodeView: one virtualized scroller for every file, with
 //! comments rendered as line annotations. Unchanged files the reviewer opened
-//! follow the diff as plain files.
+//! follow the diff as plain files. A changed file's preview (an image, SVG,
+//! Markdown) is an annotation above its first line, which CodeView measures
+//! like a comment.
 
 import {
   CodeView,
@@ -18,15 +20,24 @@ import { getOrCreateWorkerPoolSingleton } from "@pierre/diffs/worker";
 import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import { render, type JSX } from "@solidjs/web";
 import { loadSide } from "./api.ts";
+import { previewPanes, previewPlaces, previewToggles } from "./media.ts";
 import { preferences, type Settings } from "./settings.ts";
 import { useTheme } from "./themes.ts";
 import { changesOf, rememberFile, type Change, type OpenedFile, type Target } from "./state.ts";
 
-export type Note = { kind: "comment"; id: string } | { kind: "composer"; target: Target };
+export type Note =
+  | { kind: "comment"; id: string }
+  | { kind: "composer"; target: Target }
+  /** A file's preview: its sides together, or one side over its own column of a split diff. */
+  | { kind: "media"; file: string; side?: "old" | "new" };
 
 export interface DiffViewHooks {
   annotationsFor(file: string): DiffLineAnnotation<Note>[];
-  renderNote(note: Note): JSX.Element;
+  renderNote(note: Exclude<Note, { kind: "media" }>): JSX.Element;
+  /** A changed file rendered (an image, SVG, Markdown), before its lines and comments. */
+  renderMedia(file: FileDiffMetadata, side?: "old" | "new"): JSX.Element;
+  /** Whether a file with code to show is shown rendered too. */
+  previewed(file: string): boolean;
   renderHeader(file: string): JSX.Element;
   onComment(file: string, range: SelectedLineRange): void;
   onCollapsedChange(file: string, collapsed: boolean): void;
@@ -65,15 +76,19 @@ const pool = getOrCreateWorkerPoolSingleton({
 i18n.set({
   messages: {
     searchPlaceholder: "Find",
-    unmodifiedLines: "{count, plural, one {# line} other {# lines}}",
-    unknownUnmodifiedLines: "More lines",
+    unmodifiedLines: "{count, plural, one {# unchanged line} other {# unchanged lines}}",
+    unknownUnmodifiedLines: "Rest of the file",
   },
 });
 
 const chevron = (direction: "up" | "down") =>
   `url("data:image/svg+xml,${encodeURIComponent(
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="${
-      direction === "up" ? "M4 10l4-4 4 4" : "M4 6l4 4 4-4"
+      direction === "up"
+        ? "M4 10l4-4 4 4"
+        : direction === "down"
+          ? "M4 6l4 4 4-4"
+          : "M5 6l3-3 3 3M5 10l3 3 3-3"
     }" fill="none" stroke="black" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
   )}")`;
 
@@ -137,7 +152,9 @@ class Mounts {
 export const noteKey = (note: Note) =>
   note.kind === "comment"
     ? `c:${note.id}`
-    : `composer:${note.target.file}:${note.target.side}:${note.target.end}:${note.target.id ?? ""}`;
+    : note.kind === "media"
+      ? `media:${note.file}:${note.side ?? ""}`
+      : `composer:${note.target.file}:${note.target.side}:${note.target.end}:${note.target.id ?? ""}`;
 
 export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
   const notes = new Mounts();
@@ -154,16 +171,95 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
   let opened = new Map<string, OpenedFile>();
   const has = (name: string) => files.has(name) || opened.has(name);
 
-  const annotate = (name: string) => {
+  /** A file's notes: its preview first, then its comments. */
+  const annotationsOf = (name: string): DiffLineAnnotation<Note>[] => {
     const annotations = hooks.annotationsFor(name);
+    const diff = files.get(name);
+    // Shown as one side alone, the diff draws notes above its lines only on that side: comments on
+    // the whole file go there too.
+    const alone = diff && onScreen(diff).type;
+    if (alone === "new" || alone === "deleted")
+      for (const annotation of annotations)
+        if (annotation.lineNumber === 0) annotation.side = alone === "new" ? "additions" : "deletions";
+    if (!diff || (previewToggles(diff) && !hooks.previewed(name))) return annotations;
+    const places = previewPlaces(diff);
+    annotations.unshift(
+      ...places.map(
+        ({ side, pane }) =>
+          ({
+            side,
+            lineNumber: 0,
+            metadata: { kind: "media", file: name, side: pane },
+          }) as DiffLineAnnotation<Note>,
+      ),
+    );
+    return annotations;
+  };
+  /**
+   * Names where each gap between hunks leads: the function the hunk after it is in, from its
+   * `@@` line. It goes at the end of the row's last column, which split leaves empty; CodeView
+   * draws rows afresh, so this runs after each render.
+   */
+  function decorateGaps(container: HTMLElement) {
+    const file = files.get(container.querySelector(".file-path")?.textContent ?? "");
+    if (!file || !container.shadowRoot) return;
+    for (const cell of container.shadowRoot.querySelectorAll<HTMLElement>(
+      "[data-separator][data-expand-index]",
+    )) {
+      if (!cell.closest("[data-content]") || !cell.closest("[data-additions],[data-unified]")) continue;
+      // Without the brace that opens its body: "export function route91(request: Request)".
+      const context = file.hunks[Number(cell.getAttribute("data-expand-index"))]?.hunkContext
+        ?.trim()
+        .replace(/\s*\{$/, "");
+      let tag = cell.querySelector<HTMLElement>(":scope > [data-patch-context]");
+      if (!context) {
+        tag?.remove();
+        continue;
+      }
+      if (!tag) {
+        tag = document.createElement("span");
+        tag.setAttribute("data-patch-context", "");
+        cell.append(tag);
+      }
+      if (tag.textContent !== context) tag.textContent = context;
+    }
+  }
+  const annotate = (name: string) => {
+    const annotations = annotationsOf(name);
     signatures.set(name, annotations.map((annotation) => noteKey(annotation.metadata)).join("|"));
     const version = (versions.get(name) ?? 0) + 1;
     versions.set(name, version);
     return { annotations, version };
   };
+  // A file shown as its preview goes to CodeView without its lines, as a binary file does, under a
+  // key of its own so nothing drawn for its code is reused. One whose preview has one side (a file
+  // only renamed or moved) goes as that side alone, so it takes the whole width as a new file
+  // does. One copy per parse keeps it the same.
+  const previewOnly = new WeakMap<FileDiffMetadata, FileDiffMetadata>();
+  const onScreen = (file: FileDiffMetadata): FileDiffMetadata => {
+    const hidden = previewToggles(file) && hooks.previewed(file.name);
+    const panes = hidden || !file.hunks.length ? previewPanes(file) : [];
+    const oneSide = panes.length === 1 && file.type !== "new" && file.type !== "deleted";
+    if (!hidden && !oneSide) return file;
+    let bare = previewOnly.get(file);
+    if (!bare) {
+      bare = {
+        ...file,
+        type: oneSide ? (panes[0]!.side === "old" ? "deleted" : "new") : file.type,
+        hunks: [],
+        additionLines: [],
+        deletionLines: [],
+        splitLineCount: 0,
+        unifiedLineCount: 0,
+        cacheKey: file.cacheKey && `${file.cacheKey}:preview`,
+      };
+      previewOnly.set(file, bare);
+    }
+    return bare;
+  };
   const diffItem = (file: FileDiffMetadata, collapsed: boolean): CodeViewDiffItem<Note> => {
     const { annotations, version } = annotate(file.name);
-    return { id: file.name, type: "diff", fileDiff: file, annotations, collapsed, version };
+    return { id: file.name, type: "diff", fileDiff: onScreen(file), annotations, collapsed, version };
   };
   // A whole file has one side, so its notes have none.
   const fileItem = (file: OpenedFile, collapsed: boolean): CodeViewFileItem<Note> => {
@@ -189,7 +285,7 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
   const options = {
     theme: themesOf(startup),
     themeType: startup.colorScheme,
-    itemMetrics: { lineHeight: startup.lineHeight, diffHeaderHeight: 44 },
+    itemMetrics: { lineHeight: startup.lineHeight, diffHeaderHeight: 44, paddingBottom: 0 },
     preferredHighlighter: "highlights",
     diffStyle: "split",
     diffIndicators: startup.indicators,
@@ -209,7 +305,8 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     enableGutterUtility: true,
     enableLineSelection: true,
     lineHoverHighlight: "number",
-    expansionLineCount: 20,
+    // A gap opens whole, in one click: never in steps.
+    expansionLineCount: Number.MAX_SAFE_INTEGER,
     parseDiffOptions: { preferredDiffLib: "@pierre/patches" },
     layout: { paddingTop: 0, paddingBottom: 160, gap: 0 },
     // Comment rows sit on the editor's background; how strongly changes are
@@ -224,10 +321,38 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
       "[data-diffs-header]{display:block;height:44px;background:color-mix(in srgb,var(--fg) 4%,var(--panel))!important;box-shadow:inset 0 -1px var(--line),inset 0 1px var(--line)}",
       // What is folded away is a quiet line of text, not a bar.
       "[data-separator],[data-separator] *{background:transparent!important;border-color:transparent!important}",
+      // A gap's row opens whole from anywhere on it: its words reach across the row (CodeView takes
+      // a click there as theirs, and gapRow, below, sends it clicks on the rest), and say so on hover.
+      "[data-separator=line-info-basic] [data-unmodified-lines]::before{content:'';position:absolute;inset:0 -100vw 0 100%;cursor:pointer}",
+      "[data-separator=line-info-basic][data-patch-hover] [data-unmodified-lines]::after{content:' · show all';color:var(--diffs-fg-number)}",
+      "[data-separator=line-info-basic] [data-expand-button]{cursor:pointer}",
+      "[data-separator-content]:hover{text-decoration:none}",
+      // Where a gap leads: the function the next hunk is in, as Git names it (decorateGaps).
+      "[data-patch-context]{position:absolute;top:0;right:16px;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:32px;font-family:var(--diffs-font-family,var(--mono));font-size:0.92em;color:var(--diffs-fg-number);opacity:0.8;pointer-events:none}",
+      "[data-separator][data-patch-hover] [data-patch-context]{opacity:1}",
+      // Lit as one block, gutters and chevrons too, while pointed at (gapRow, below).
+      "[data-separator][data-patch-hover]{background:color-mix(in srgb,var(--diffs-fg) 6%,var(--diffs-bg))!important}",
+      "[data-separator][data-patch-hover] [data-separator-content]{color:var(--diffs-fg);text-decoration:none}",
       // A change is an edge and a tint that runs through its line number; nothing is hatched.
       "[data-column-number],[data-gutter-buffer]{border-right-color:transparent!important}",
       "[data-indicators=bars] [data-column-number][data-line-type=change-deletion]::before{background:var(--diffs-deletion-base)}",
+      // Where a split side has fewer lines, it is padded with empty rows: empty in the gutter too,
+      // not a grey bar beside them.
       "[data-content-buffer]{background-image:none}",
+      "[data-gutter-buffer=buffer]{--diffs-line-bg:var(--diffs-bg)}",
+      // A file with no lines on screen (an image, or a file shown as its preview) has nothing to
+      // number: its preview runs edge to edge, as a line of code does.
+      "[data-code]:not(:has([data-line]))>[data-gutter]{display:none}",
+      // A file's lines end at the next header, as they start at theirs: no band of background
+      // below a last changed line (itemMetrics.paddingBottom says the same to the layout).
+      "[data-diff],[data-code]{padding-bottom:0!important}",
+      // Code scrolls sideways only when a line is wider than it: always-visible scrollbars
+      // would otherwise draw an empty track under every file. CodeView's own override still wins.
+      "[data-code]{overflow-x:var(--diffs-overflow-override,auto)}",
+      // Split, a preview's tint fills its whole side of the row (MediaPreview.tsx), so a short
+      // side meets the other's end as a short side of code does.
+      "[data-diff-type=split]:not(:has([data-line])) [data-line-annotation]{position:relative;--patch-pane-anchor:static}",
+      "[data-diff-type=split]:not(:has([data-line])) [data-annotation-content]{position:static}",
       "[data-line],[data-no-newline],[data-gutter-buffer],[data-column-number]{--mix-dark:var(--patch-line-dark,82%);--mix-light:var(--patch-line-light,90%)}",
     ].join("\n"),
     async loadDiffFiles(fileDiff) {
@@ -242,8 +367,17 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
         newFile: { name: fileDiff.name, contents: newText },
       };
     },
+    onPostRender(container: HTMLElement) {
+      decorateGaps(container);
+    },
     renderAnnotation(annotation: { metadata: Note }) {
       const note = annotation.metadata;
+      if (note.kind === "media") {
+        const file = files.get(note.file);
+        return (
+          file && notes.get(noteKey(note), () => hooks.renderMedia(file, note.side), "note-slot media-slot")
+        );
+      }
       return notes.get(noteKey(note), () => hooks.renderNote(note), "note-slot");
     },
     // The whole header is the page's, the same for a diff and a whole file.
@@ -277,6 +411,20 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
   view.setup(root);
 
   const anchor = () => view.getScrollAnchor(view.getScrollTop());
+
+  /** Re-sends a file whose comments or preview changed; unchanged files are left alone. */
+  function refreshAnnotations() {
+    const keep = new Set<string>();
+    for (const name of [...files.keys(), ...opened.keys()]) {
+      const annotations = annotationsOf(name);
+      for (const annotation of annotations) keep.add(noteKey(annotation.metadata));
+      const signature = annotations.map((annotation) => noteKey(annotation.metadata)).join("|");
+      if (signature === signatures.get(name)) continue;
+      const next = item(name, view.getItem(name)?.collapsed ?? false);
+      if (next) view.updateItem(next);
+    }
+    notes.retain(keep);
+  }
 
   function endFlash() {
     if (flash === undefined) return;
@@ -325,6 +473,50 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     },
     { passive: true, signal: listening.signal },
   );
+
+  // A gap's row is drawn as a cell per column, gutters included, of which only the first gutter's
+  // words and chevrons open it. The row works as one: lit whole while pointed at, and opened by a
+  // click anywhere on it.
+  let lit: Element[] = [];
+  const gapRow = (event: Event): Element[] => {
+    const cell = event
+      .composedPath()
+      .find(
+        (node): node is HTMLElement =>
+          node instanceof HTMLElement && node.matches("[data-separator][data-expand-index]"),
+      );
+    const index = cell?.getAttribute("data-expand-index");
+    const pre = cell?.closest("pre");
+    return pre ? [...pre.querySelectorAll(`[data-separator][data-expand-index="${index}"]`)] : [];
+  };
+  const light = (row: Element[]) => {
+    if (row[0] === lit[0] && (!row[0] || row[0].isConnected)) return;
+    for (const cell of lit) cell.removeAttribute("data-patch-hover");
+    for (const cell of row) cell.setAttribute("data-patch-hover", "");
+    lit = row;
+  };
+  // On every move, not only on entering a cell: a row redrawn under a still pointer (as one is
+  // when it opens) has new cells, which no pointer entered.
+  root.addEventListener("pointermove", (event) => light(gapRow(event)), {
+    passive: true,
+    signal: listening.signal,
+  });
+  root.addEventListener("pointerleave", () => light([]), { signal: listening.signal });
+  root.addEventListener(
+    "click",
+    (event) => {
+      const target = event.composedPath()[0];
+      if (!(target instanceof Element) || target.closest("[data-expand-button],[data-unmodified-lines]"))
+        return;
+      // A cell of the row CodeView does not open it from (the other side's gutter): open it as its
+      // words would.
+      gapRow(event)
+        .map((cell) => cell.querySelector<HTMLElement>("[data-unmodified-lines]"))
+        .find((words) => words && words.getBoundingClientRect().width > 0)
+        ?.click();
+    },
+    { signal: listening.signal },
+  );
   root.addEventListener(
     "pointerdown",
     (event) => {
@@ -343,7 +535,7 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
      */
     stepChange(direction: 1 | -1) {
       const changes = [...files.values()]
-        .filter((file) => !view.getItem(file.name)?.collapsed)
+        .filter((file) => !view.getItem(file.name)?.collapsed && onScreen(file) === file)
         .flatMap(changesOf);
       const same = (a: Change, b: Change) =>
         a.file === b.file && a.side === b.side && a.start === b.start && a.end === b.end;
@@ -407,26 +599,14 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     },
     /** Says whether the reader is near either end, as after scrolling there. */
     checkEdges,
-    /** Re-sends a file whose comments changed; unchanged files are left alone. */
-    refreshAnnotations() {
-      const keep = new Set<string>();
-      for (const name of [...files.keys(), ...opened.keys()]) {
-        const annotations = hooks.annotationsFor(name);
-        for (const annotation of annotations) keep.add(noteKey(annotation.metadata));
-        const signature = annotations.map((annotation) => noteKey(annotation.metadata)).join("|");
-        if (signature === signatures.get(name)) continue;
-        const next = item(name, view.getItem(name)?.collapsed ?? false);
-        if (next) view.updateItem(next);
-      }
-      notes.retain(keep);
-    },
+    refreshAnnotations,
     setCollapsed(name: string, collapsed: boolean) {
       const current = view.getItem(name);
       if (!current || (current.collapsed ?? false) === collapsed) return;
       const next = item(name, collapsed);
       if (next) view.updateItem(next);
     },
-    /** Shows changed files whole, every unchanged line unfolded, as browsing reads them. */
+    /** Shows changed files whole, every unchanged line unfolded: while browsing, or when asked for. */
     setExpanded(whole: boolean) {
       if ((options.expandUnchanged ?? false) === whole) return;
       options.expandUnchanged = whole;
@@ -452,7 +632,7 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
         diffIndicators: settings.indicators,
         lineDiffType,
         overflow: settings.wrap ? "wrap" : "scroll",
-        itemMetrics: { lineHeight: settings.lineHeight, diffHeaderHeight: 44 },
+        itemMetrics: { lineHeight: settings.lineHeight, diffHeaderHeight: 44, paddingBottom: 0 },
       });
       if (workersChanged) void pool.setRenderOptions({ theme, lineDiffType });
       view.setOptions({ ...options });

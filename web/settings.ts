@@ -56,6 +56,11 @@ export interface Settings {
   contrast: "low" | "medium" | "high";
   wordDiff: boolean;
   foldGenerated: boolean;
+  /** Whether SVG and Markdown open rendered, in place of their code; each file's header toggles it. */
+  previewSvg: boolean;
+  previewMarkdown: boolean;
+  /** Changed files shown whole: every unchanged line unfolded, nothing to expand. */
+  wholeFiles: boolean;
   /** Changed files in sections by kind: code, tests, docs, then generated. */
   groupByKind: boolean;
   /** Bindings that differ from the defaults; an empty one has no key. */
@@ -87,6 +92,9 @@ export const defaults: Settings = {
   contrast: "medium",
   wordDiff: true,
   foldGenerated: true,
+  previewSvg: true,
+  previewMarkdown: false,
+  wholeFiles: false,
   groupByKind: true,
   keys: {},
 };

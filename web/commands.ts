@@ -140,11 +140,31 @@ export const actions = {
     words: "side by side",
   },
   layoutAuto: { label: "Layout: automatic", group: "View", icon: "diffSplit" },
-  wrap: { label: "Wrap long lines", group: "View", icon: "fileText" },
+  // Alt+Z, as in VS Code; Control on a Mac, like the motions, since Option types a character there.
+  wrap: { label: "Wrap long lines", key: `${motion}+Z`, group: "View", icon: "fileText", words: "word wrap" },
   wordDiff: { label: "Highlight changed words", group: "View", icon: "type", words: "intraline" },
   indicators: { label: "Change markers: bars or + and −", group: "View", icon: "plus", words: "signs" },
   contrast: { label: "Change contrast…", group: "View", icon: "brush", words: "tint strength" },
   foldGenerated: { label: "Fold generated files", group: "View", icon: "gear", words: "lockfiles" },
+  preview: {
+    label: "Preview the file or show its code",
+    group: "View",
+    icon: "eye",
+    words: "render svg markdown image raw code toggle",
+  },
+  previewSvg: { label: "Open SVG as a preview", group: "View", icon: "eye", words: "render image default" },
+  previewMarkdown: {
+    label: "Open Markdown as a preview",
+    group: "View",
+    icon: "eye",
+    words: "render md docs default",
+  },
+  wholeFiles: {
+    label: "Show whole files",
+    group: "View",
+    icon: "chevrons",
+    words: "expand unfold full context unchanged lines everything",
+  },
   groupByKind: {
     label: "Group files by kind",
     group: "View",
