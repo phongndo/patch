@@ -49,7 +49,7 @@ import {
   narrow,
   ownComments,
   ownFiles,
-  ownLayout,
+  shownLayout,
   setOwnComments,
   setOwnFiles,
   setOwnLayout,
@@ -69,15 +69,11 @@ const SettingsDialog = lazy(() =>
   import("./SettingsDialog.tsx").then((m) => ({ default: m.SettingsDialog })),
 );
 
-type Layout = "split" | "unified";
 const title = (word: string) => word[0]!.toUpperCase() + word.slice(1);
 const { settings } = preferences;
-const initialLayout: Layout =
-  settings.layout === "auto" ? (innerWidth >= 1200 ? "split" : "unified") : settings.layout;
 
 export function App() {
   const { store } = state;
-  const [layout, setLayout] = createSignal<Layout>(initialLayout);
   // A device that keeps its own view opens its panels for itself (ui.ts); on a narrow window
   // they are drawers, so one opening closes the other.
   const sidebar = () => (keepsOwnView() ? ownFiles() : settings.sidebarOpen);
@@ -98,7 +94,6 @@ export function App() {
   createEffect(commentsWidth, (width) =>
     document.documentElement.style.setProperty("--comments", `${width}px`),
   );
-  const shownLayout = () => (touchOnly() ? ownLayout() : layout());
   const commentsShown = () => (keepsOwnView() ? ownComments() : settings.commentsOpen);
   const setComments = (shown: boolean) => {
     if (!keepsOwnView()) return preferences.update({ commentsOpen: shown });
@@ -507,9 +502,8 @@ export function App() {
     { defer: true },
   );
   // Remember a layout chosen with the toggle; "auto" stays auto until then.
-  const chooseLayout = (value: Layout) => {
+  const chooseLayout = (value: "split" | "unified" | "auto") => {
     if (touchOnly()) return setOwnLayout(value);
-    setLayout(value);
     preferences.update({ layout: value });
   };
   createEffect(
@@ -760,13 +754,7 @@ export function App() {
     foldFile: { run: withCurrentFile((file) => setFileCollapsed(file, !collapsed[file])) },
     foldAll: { run: toggleAll },
     layout: { run: () => chooseLayout(shownLayout() === "split" ? "unified" : "split") },
-    layoutAuto: {
-      run: () => {
-        if (touchOnly()) return setOwnLayout("auto");
-        setLayout(innerWidth >= 1200 ? "split" : "unified");
-        preferences.update({ layout: "auto" });
-      },
-    },
+    layoutAuto: { run: () => chooseLayout("auto") },
     wrap: flip("wrap"),
     wordDiff: flip("wordDiff"),
     indicators: {

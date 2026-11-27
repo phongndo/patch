@@ -50,7 +50,6 @@ import {
   keepsOwnView,
   ownComments,
   ownFiles,
-  ownLayout,
   ownLayoutChoice,
   palette,
   requests,
@@ -149,7 +148,7 @@ const shortSize = (value: number) => `${value}px`;
 const details: Partial<Record<Action, () => string>> = {
   layout: () =>
     touchOnly()
-      ? `${ownLayoutChoice() === "auto" ? "Automatic" : title(ownLayout())} on this device`
+      ? `${ownLayoutChoice() === "auto" ? "Automatic" : title(ownLayoutChoice())} on this device`
       : settings.layout === "auto"
         ? "Automatic"
         : title(settings.layout),

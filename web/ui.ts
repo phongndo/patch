@@ -24,10 +24,9 @@ wideQuery.addEventListener("change", (event) => setWide(event.matches));
 export const keepsOwnView = () => narrow() || touchOnly();
 
 type Layout = "split" | "unified";
-/** A touch screen's layout; "auto" follows the window, as the setting's Automatic does. */
 export const [ownLayoutChoice, setOwnLayout] = createSignal<"auto" | Layout>("auto");
-export const ownLayout = (): Layout => {
-  const choice = ownLayoutChoice();
+export const shownLayout = (): Layout => {
+  const choice = touchOnly() ? ownLayoutChoice() : preferences.settings.layout;
   if (choice !== "auto") return choice;
   return wide() ? "split" : "unified";
 };

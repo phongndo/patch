@@ -442,6 +442,19 @@ const loaded = async () => {
   await settle();
 };
 
+test("changing the saved layout updates the active review", async () => {
+  try {
+    preferences.update({ layout: "split" });
+    await settle();
+    expect(named("button", "Switch to unified")).toBeTruthy();
+    preferences.update({ layout: "unified" });
+    await settle();
+    expect(named("button", "Switch to split")).toBeTruthy();
+  } finally {
+    preferences.update({ layout: "auto" });
+  }
+});
+
 test("comments are searched by their text and file, apart from the files", async () => {
   await clear();
   await loaded();
