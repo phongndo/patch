@@ -1,21 +1,21 @@
 {
-  "version": "0.2.0",
+  "version": "0.2.1",
   "systems": {
     "aarch64-darwin": {
-      "url": "https://github.com/phongndo/patch/releases/download/v0.2.0/patchr-v0.2.0-aarch64-apple-darwin.tar.gz",
-      "sha256": "65ff5ac638d2173255412bc1f0fe3f517f6dd1395b4c0f8018d50fed2fb4525f"
+      "url": "https://github.com/phongndo/patch/releases/download/v0.2.1/patchr-v0.2.1-aarch64-apple-darwin.tar.gz",
+      "sha256": "9cba024639aca29f94ab140d3100bf8c2b1477d87e0e7ced8876b51bea307f56"
     },
     "x86_64-darwin": {
-      "url": "https://github.com/phongndo/patch/releases/download/v0.2.0/patchr-v0.2.0-x86_64-apple-darwin.tar.gz",
-      "sha256": "18069c32b30712b895a73dc6742f46543fa3ed871b2ae63e0b252e7d94637bf4"
+      "url": "https://github.com/phongndo/patch/releases/download/v0.2.1/patchr-v0.2.1-x86_64-apple-darwin.tar.gz",
+      "sha256": "8b4110830da020e924a9288a28c4f4517080905ed272c8497b300add0f4d3224"
     },
     "aarch64-linux": {
-      "url": "https://github.com/phongndo/patch/releases/download/v0.2.0/patchr-v0.2.0-aarch64-unknown-linux-musl.tar.gz",
-      "sha256": "57689d638892dcd2ddea5e58846dc6aa7696cd438ec939b19ff582bfb957e261"
+      "url": "https://github.com/phongndo/patch/releases/download/v0.2.1/patchr-v0.2.1-aarch64-unknown-linux-musl.tar.gz",
+      "sha256": "4e7e4aa612d19731c0565274dd7f9654a0e5a83a1e444ca8f49aae55de4f93fe"
     },
     "x86_64-linux": {
-      "url": "https://github.com/phongndo/patch/releases/download/v0.2.0/patchr-v0.2.0-x86_64-unknown-linux-musl.tar.gz",
-      "sha256": "03d8d93c34d03578435906aed1ffc099e98826c8b7574a9d153ec745dd6ae817"
+      "url": "https://github.com/phongndo/patch/releases/download/v0.2.1/patchr-v0.2.1-x86_64-unknown-linux-musl.tar.gz",
+      "sha256": "8cb60dd4ae56ae49aad1f94e19d8b264168356d09f9d5d9e2ed9748b2e09ea6b"
     }
   }
 }
