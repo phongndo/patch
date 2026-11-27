@@ -76,6 +76,9 @@ fn read(root: &Path) -> Option<Repo> {
 struct Shadow {
     /// The operations it was last brought up to date for.
     operations: String,
+    /// Whether a `jj` has read through it since: until one has, any may rebuild the index, and
+    /// two rebuilding it at once fail, so they take turns.
+    settled: bool,
 }
 
 /// Each root's shadow, brought up to date one caller at a time.
@@ -99,15 +102,17 @@ fn shadow_dir(root: &Path) -> Result<PathBuf> {
 }
 
 /// The shadow of `root`'s workspace, brought up to date with the repository's index.
-async fn shadow(root: &Path, repo: &Repo) -> Result<PathBuf> {
+/// Its path, and while it is unsettled, the turn to read through it, which the caller holds until
+/// its `jj` is done.
+async fn shadow(root: &Path, repo: &Repo) -> Result<(PathBuf, Option<tokio::sync::OwnedMutexGuard<Shadow>>)> {
     let cell = SHADOWS
         .lock()
         .unwrap()
         .get_or_insert_default()
         .entry(root.to_path_buf())
-        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(Shadow { operations: String::new() })))
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(Shadow { operations: String::new(), settled: false })))
         .clone();
-    let mut shadow = cell.lock().await;
+    let mut shadow = cell.lock_owned().await;
     let dir = shadow_dir(root)?;
     let operations = operations(repo);
     if shadow.operations != operations || operations.is_empty() {
@@ -117,8 +122,9 @@ async fn shadow(root: &Path, repo: &Repo) -> Result<PathBuf> {
             .map_err(|error| error.to_string())?
             .map_err(|error| format!("Patch could not prepare its copy of jj's index: {error}"))?;
         shadow.operations = operations;
+        shadow.settled = false;
     }
-    Ok(dir)
+    Ok((dir, (!shadow.settled).then_some(shadow)))
 }
 
 /// Makes `shadow` a workspace whose every part links to the real one's, but whose index folders
@@ -242,20 +248,25 @@ async fn jj(root: &Path, args: &[&str]) -> Result<String> {
     if operation.contains(' ') {
         return Err(DIVERGED.into());
     }
-    let shadow = shadow(root, &repo).await?;
+    let (shadow, mut turn) = shadow(root, &repo).await?;
     // The operation seen, by its id: `@` would look again, and finding two by then, jj tidies them.
     let at = if operation.is_empty() { "--at-op=@".to_string() } else { format!("--at-op={operation}") };
     let root_arg = format!("--repository={}", shadow.display());
     let mut all = vec!["--ignore-working-copy", at.as_str(), "--no-pager", "--color=never", root_arg.as_str()];
     all.extend(args);
     // Started in the shadow: jj reads some configuration from where it starts, and may rewrite it.
-    run("jj", &shadow, &all, Run::default()).await.map_err(|why| {
-        // Its first line says what is wrong; the rest is hints for a terminal.
-        let first = why.lines().next().unwrap_or("").trim();
-        if first.contains("more than one operation") {
+    let read = run("jj", &shadow, &all, Run::default()).await;
+    if let (Ok(_), Some(turn)) = (&read, turn.as_mut()) {
+        turn.settled = true;
+    }
+    read.map_err(|why| {
+        // Its error line says what is wrong; before it may come warnings, and after it hints.
+        let lines: Vec<&str> = why.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        let error = lines.iter().find(|line| line.contains("rror:")).or(lines.first()).copied().unwrap_or("");
+        if why.contains("more than one operation") {
             return DIVERGED.into();
         }
-        first.strip_prefix("Error: ").unwrap_or(first).to_string()
+        error.split_once("rror: ").map_or(error, |(_, said)| said).to_string()
     })
 }
 
