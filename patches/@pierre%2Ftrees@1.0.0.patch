@@ -1,0 +1,75 @@
+diff --git a/dist/render/FileTreeView.js b/dist/render/FileTreeView.js
+index b4c7ee49372580c729bce56f8b16f12f7ffbf14c..e8d33fb392d9005da5a1127ae58366fbe649da22 100644
+--- a/dist/render/FileTreeView.js
++++ b/dist/render/FileTreeView.js
+@@ -4,7 +4,7 @@ import { DEFAULT_FILE_TREE_LABELS } from "../utils/fileTreeLabels.js";
+ import { FILE_TREE_DEFAULT_ITEM_HEIGHT } from "../model/virtualization.js";
+ import { FILE_TREE_RENAME_VIEW } from "../model/FileTreeController.js";
+ import { Icon } from "../components/Icon.js";
+-import { MiddleTruncate, Truncate } from "../components/OverflowText.js";
++import { Fruncate, MiddleTruncate, Truncate } from "../components/OverflowText.js";
+ import { computeFileTreeLayout, computeStickyRows } from "../model/layout.js";
+ import { GIT_STATUS_LABEL } from "../utils/gitStatusPresentation.js";
+ import { shouldBumpControllerRevision } from "./controllerSnapshotSubscription.js";
+@@ -18,10 +18,52 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
+ import { jsx, jsxs } from "preact/jsx-runtime";
+ //#region src/render/FileTreeView.tsx
+ /** @jsxImportSource preact */
++/**
++* Patch: a name cut in the middle keeps its last word with the extension ("Evolution.cpp",
++* "switch.ll"), which tells it from its neighbours, rather than the extension alone. A word
++* starts after -, _, . or a space, or at a capital after a small letter or digit.
++*/
++function splitNameTail(name) {
++	const dot = name.lastIndexOf(".");
++	const extension = dot > 0 && name.length - dot <= 10 ? name.slice(dot) : "";
++	const stem = name.slice(0, name.length - extension.length);
++	let start = stem.length - 1;
++	while (start > 0) {
++		const before = stem[start - 1];
++		if (/[-_. ]/.test(before) || /[a-z0-9]/.test(before) && /[A-Z]/.test(stem[start])) break;
++		start--;
++	}
++	const word = stem.slice(start);
++	if (start <= 0 || word.length > 14) return [stem, extension];
++	return [stem.slice(0, start), word + extension];
++}
+ function formatFlattenedSegments(row, renameInput = null, dragTargetFlattenedSegmentPath = null) {
+ 	"use no memo";
+ 	const segments = row.flattenedSegments;
+ 	if (segments == null || segments.length === 0) return renameInput ?? row.name;
++	// Patch: a long run keeps its first folder and its deepest; the ones between are one piece,
++	// cut from its start, so what is left of it is what lies nearest the deepest.
++	if (segments.length >= 4 && renameInput == null) {
++		const piece = (segment) => /* @__PURE__ */ jsx("span", {
++			"data-item-flattened-subitem": segment.path,
++			"data-item-flattened-subitem-drag-target": dragTargetFlattenedSegmentPath === segment.path ? "true" : void 0,
++			children: /* @__PURE__ */ jsx(Truncate, { children: segment.name })
++		}, segment.path);
++		const between = segments.slice(1, -1);
++		return /* @__PURE__ */ jsxs("span", {
++			"data-item-flattened-subitems": true,
++			children: [
++				piece(segments[0]),
++				" / ",
++				/* @__PURE__ */ jsx("span", {
++					"data-item-flattened-between": true,
++					children: /* @__PURE__ */ jsx(Fruncate, { children: between.map((segment) => segment.name).join(" / ") })
++				}, "between"),
++				" / ",
++				piece(segments.at(-1))
++			]
++		});
++	}
+ 	return /* @__PURE__ */ jsx("span", {
+ 		"data-item-flattened-subitems": true,
+ 		children: segments.map((segment, index) => {
+@@ -380,7 +422,7 @@ function renderFileTreeRowContent(row, resolveIcon, { actionLaneEnabled = false,
+ 			"data-item-section": "content",
+ 			children: row.isFlattened ? formatFlattenedSegments(row, renameInput, dragTargetFlattenedSegmentPath) : renameInput ?? /* @__PURE__ */ jsx(MiddleTruncate, {
+ 				minimumLength: 5,
+-				split: "extension",
++				split: splitNameTail,
+ 				children: row.name
+ 			})
+ 		}),

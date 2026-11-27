@@ -56,6 +56,7 @@
   },
   "packageManager": "bun@1.4.5",
   "patchedDependencies": {
-    "solid-js@2.0.3": "patches/solid-js@2.0.3.patch"
+    "solid-js@2.0.3": "patches/solid-js@2.0.3.patch",
+    "@pierre/trees@1.0.0": "patches/@pierre%2Ftrees@1.0.0.patch"
   }
 }
