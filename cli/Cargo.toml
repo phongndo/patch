@@ -1,6 +1,6 @@
 [package]
 name = "patchr"
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 description = "Review your coding agent's changes in the browser."
 repository = "https://github.com/phongndo/patch"
