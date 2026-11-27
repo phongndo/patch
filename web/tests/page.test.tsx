@@ -442,6 +442,40 @@ const loaded = async () => {
   await settle();
 };
 
+test("viewed binary files need review again when their contents change", async () => {
+  const loadImage = async (oid: string) => {
+    reviewed = {
+      scope: { kind: "all" },
+      patch: `diff --git a/img.png b/img.png\nindex 1111111..${oid} 100644\nBinary files a/img.png and b/img.png differ\n`,
+    };
+    await state.load();
+    await settle();
+  };
+  await loadImage("2222222");
+  state.toggleViewed("img.png");
+  await loadImage("2222222");
+  expect(state.isViewed("img.png")).toBe(true);
+  await loadImage("3333333");
+  expect(state.isViewed("img.png")).toBe(false);
+});
+
+test("a viewed new file needs review again when only its mode changes", async () => {
+  const loadScript = async (mode: string) => {
+    reviewed = {
+      scope: { kind: "all" },
+      patch: `diff --git a/run.sh b/run.sh\nnew file mode ${mode}\nindex 0000000..1111111\n--- /dev/null\n+++ b/run.sh\n@@ -0,0 +1 @@\n+echo hi\n`,
+    };
+    await state.load();
+    await settle();
+  };
+  await loadScript("100644");
+  state.toggleViewed("run.sh");
+  await loadScript("100644");
+  expect(state.isViewed("run.sh")).toBe(true);
+  await loadScript("100755");
+  expect(state.isViewed("run.sh")).toBe(false);
+});
+
 test("panels of different widths keep them while the diff has room", async () => {
   const sidebar = named("separator", "Resize the sidebar");
   const comments = named("separator", "Resize the comments");

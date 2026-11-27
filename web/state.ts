@@ -111,6 +111,9 @@ function fingerprint(file: FileDiffMetadata): string {
     for (let index = 0; index < text.length; index++) hash = ((hash * 33) ^ text.charCodeAt(index)) | 0;
   };
   add(`${file.type} ${file.prevName ?? ""}`);
+  if (!file.hunks.length) add(`${file.prevObjectId ?? ""}:${file.newObjectId ?? ""}`);
+  // An added file has only its new mode.
+  if (file.prevMode || file.mode) add(`${file.prevMode ?? ""}:${file.mode ?? ""}`);
   for (const hunk of file.hunks)
     for (const part of hunk.hunkContent)
       if (part.type === "change") {
