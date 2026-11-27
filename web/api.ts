@@ -1,5 +1,6 @@
 import type {
   CommitsResponse,
+  Forge,
   PullRequestsResponse,
   ReviewResponse,
   Scope,
@@ -8,6 +9,7 @@ import type {
   UnchangedFiles,
   GrepMatch,
 } from "../src/protocol.ts";
+import { setForge } from "./ui.ts";
 
 declare global {
   interface Window {
@@ -43,11 +45,21 @@ export function scopeQuery(scope: Scope): URLSearchParams {
 export function loadReview(scope?: Scope) {
   const early = scope ? undefined : window.__PATCH_REVIEW__;
   window.__PATCH_REVIEW__ = undefined;
-  return getJson<ReviewResponse>(scope ? `/api/review?${scopeQuery(scope)}` : "/api/review", early);
+  return getJson<ReviewResponse>(scope ? `/api/review?${scopeQuery(scope)}` : "/api/review", early).then(
+    sawForge,
+  );
 }
 
+/** Each answer that names the forge says what to call its pull requests. */
+const sawForge = <T extends { forge?: Forge }>(answer: T) => {
+  if (answer.forge) setForge(answer.forge);
+  return answer;
+};
+
 export const loadScopes = (base?: string) =>
-  getJson<ScopesResponse>(base ? `/api/scopes?${new URLSearchParams({ base })}` : "/api/scopes");
+  getJson<ScopesResponse>(base ? `/api/scopes?${new URLSearchParams({ base })}` : "/api/scopes").then(
+    sawForge,
+  );
 
 /** A page of commits or pull requests: what `query` finds, from where the last page ended. */
 function listPage<T>(path: string, query: string, after: string | undefined, signal: AbortSignal) {
@@ -59,7 +71,7 @@ export const loadCommits = (query: string, after: string | undefined, signal: Ab
   listPage<CommitsResponse>("/api/commits", query, after, signal);
 
 export const loadPullRequests = (query: string, after: string | undefined, signal: AbortSignal) =>
-  listPage<PullRequestsResponse>("/api/prs", query, after, signal);
+  listPage<PullRequestsResponse>("/api/prs", query, after, signal).then(sawForge);
 
 export const loadSide = async (key: string, side: "old" | "new", path: string) => {
   const response = await fetch(`/api/file?${new URLSearchParams({ key, side, path })}`);

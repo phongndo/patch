@@ -4,8 +4,10 @@
 
 mod channel;
 mod feedback;
+mod forge;
 mod git;
 mod github;
+mod gitlab;
 mod harness;
 mod history;
 mod install;

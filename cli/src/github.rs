@@ -53,7 +53,7 @@ type Host = std::sync::Arc<tokio::sync::OnceCell<String>>;
 static HOSTS: Mutex<Option<HashMap<PathBuf, Host>>> = Mutex::new(None);
 
 /// Where a remote's URL points: `https://host/…`, `ssh://user@host:port/…` or `user@host:…`.
-fn url_host(url: &str) -> Option<String> {
+pub fn url_host(url: &str) -> Option<String> {
     let host = match url.split_once("://") {
         Some((scheme, rest)) if scheme != "file" => rest.split('/').next()?.rsplit('@').next()?.split(':').next()?,
         Some(_) => return None,
@@ -64,7 +64,7 @@ fn url_host(url: &str) -> Option<String> {
 
 /// The GitHub host `gh` reads this repository from: github.com when every remote is there, else
 /// as `gh` resolves it, for GitHub Enterprise. `gh api` alone would ask its default host.
-async fn host(root: &Path) -> Result<String> {
+pub async fn host(root: &Path) -> Result<String> {
     let cell = HOSTS.lock().unwrap().get_or_insert_default().entry(root.to_path_buf()).or_default().clone();
     cell.get_or_try_init(|| find_host(root)).await.cloned()
 }

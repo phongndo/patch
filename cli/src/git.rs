@@ -58,9 +58,11 @@ pub struct Review {
     pub patch: String,
     /// Each changed file's sides, read with the patch; a pull request's come from GitHub and have none.
     pub changes: Option<Vec<Change>>,
-    /// Read from GitHub (a pull request, or commits this partial clone lacks the contents of):
-    /// a file the repository can't give is asked of GitHub too.
+    /// Read from GitHub or GitLab (a pull request, or commits this partial clone lacks the
+    /// contents of): a file the repository can't give is asked of it too.
     pub remote: bool,
+    /// Where a pull request was read from.
+    pub forge: Option<crate::protocol::Forge>,
 }
 
 #[derive(Default)]
@@ -91,9 +93,14 @@ fn command(program: &str, cwd: &Path, args: &[&str], options: &Run<'_>) -> Comma
         // A partial clone fetches missing objects into the repository; Patch never does.
         command.env("GIT_OPTIONAL_LOCKS", "0").env("GIT_TERMINAL_PROMPT", "0").env("GIT_NO_LAZY_FETCH", "1").env("LC_ALL", "C");
     } else {
-        command.env("GH_PROMPT_DISABLED", "1").env("NO_COLOR", "1");
+        command
+            .env("GH_PROMPT_DISABLED", "1")
+            .env("NO_PROMPT", "1")
+            .env("GLAB_NO_PROMPT", "1")
+            .env("GLAB_CHECK_UPDATE", "false")
+            .env("NO_COLOR", "1");
     }
-    // `gh` finds the repository's remotes through Git too.
+    // `gh` finds the repository's remotes through Git too; `glab` is run outside it (gitlab.rs).
     if program != "jj" {
         crate::jj::git_env(&mut command, cwd);
     }
@@ -699,6 +706,7 @@ pub async fn read_commits(root: &Path, scope: &Scope, commits: &Commits) -> Resu
         patch: checked(patch)?,
         changes: Some(changes),
         remote: false,
+        forge: None,
     })
 }
 
@@ -824,6 +832,7 @@ pub async fn read_review(root: &Path, scope: &Scope) -> Result<Review> {
         patch: checked(patch)?,
         changes: Some(changes),
         remote: false,
+        forge: None,
     })
 }
 

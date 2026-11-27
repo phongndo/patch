@@ -1759,6 +1759,149 @@ esac
     },
   );
 
+  test("a GitLab merge request is read as one snapshot, by the project its remote names, from outside the repository", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "patch-mr-"));
+    const bin = await mkdtemp(join(tmpdir(), "patch-bin-"));
+    try {
+      Bun.spawnSync(["git", "init", "-q", "-b", "main"], { cwd: dir });
+      Bun.spawnSync(["git", "remote", "add", "origin", "git@gitlab.example:acme/web/widgets.git"], {
+        cwd: dir,
+      });
+      const [base, head] = ["a", "c"].map((digit) => digit.repeat(40));
+      const request = (iid: number, state = "opened") => ({
+        iid,
+        title: `Change ${iid}`,
+        state,
+        draft: iid === 8,
+        updated_at: "2026-01-01T00:00:00Z",
+        source_branch: `b${iid}`,
+        target_branch: "main",
+        author: { username: "ann" },
+        diff_refs: { base_sha: base, start_sha: "b".repeat(40), head_sha: head },
+      });
+      const diffs = [
+        {
+          old_path: "a.ts",
+          new_path: "a.ts",
+          a_mode: "100644",
+          b_mode: "100644",
+          diff: "@@ -1 +1 @@\n-one\n+ONE\n",
+        },
+        {
+          old_path: "old.txt",
+          new_path: "moved.txt",
+          a_mode: "100644",
+          b_mode: "100644",
+          diff: "",
+          renamed_file: true,
+        },
+        {
+          old_path: "n.txt",
+          new_path: "n.txt",
+          a_mode: "0",
+          b_mode: "100644",
+          diff: "@@ -0,0 +1 @@\n+n\n",
+          new_file: true,
+        },
+      ];
+      const project = "projects/acme%2Fweb%2Fwidgets";
+      await writeFile(join(bin, "mr.json"), JSON.stringify(request(7)));
+      await writeFile(join(bin, "merged.json"), JSON.stringify(request(1, "merged")));
+      await writeFile(join(bin, "first.json"), JSON.stringify([9, 8].map((iid) => request(iid))));
+      await writeFile(join(bin, "compare.json"), JSON.stringify({ diffs, compare_timeout: false }));
+      await writeFile(
+        join(bin, "tree.json"),
+        JSON.stringify([
+          { id: "1".repeat(40), name: "a.ts", type: "blob", mode: "100644" },
+          { id: "9".repeat(40), name: "link.ts", type: "blob", mode: "120000" },
+        ]),
+      );
+      await writeFile(join(bin, "blob"), "ONE\n");
+      await writeFile(
+        join(bin, "glab"),
+        [
+          "#!/bin/sh",
+          'args="$*"',
+          `echo "$PWD $args" >> "${bin}/calls"`,
+          'case "$args" in',
+          `  *"merge_requests/7") cat "${bin}/mr.json" ;;`,
+          `  *"merge_requests/1") cat "${bin}/merged.json" ;;`,
+          `  *"merge_requests?"*"page=1"*) cat "${bin}/first.json" ;;`,
+          `  *"merge_requests?"*) echo "[]" ;;`,
+          `  *"repository/compare?from=${base}&to=${head}&straight=true"*) cat "${bin}/compare.json" ;;`,
+          `  *"repository/tree?ref=${head}"*) cat "${bin}/tree.json" ;;`,
+          `  *"repository/blobs/${"1".repeat(40)}/raw"*) cat "${bin}/blob" ;;`,
+          "  *) exit 1 ;;",
+          "esac",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      // A host named for GitLab is sent `glab`'s credentials only once `glab` is set up for it.
+      const untrusted = await startWith({ PATH: `${bin}:${process.env.PATH}`, GITLAB_HOST: "" }, dir);
+      try {
+        const refused = await (await fetch(`${untrusted.origin}/api/review?scope=pr&pr=7`)).json();
+        expect(refused.error).toBeDefined();
+        expect(await Bun.file(join(bin, "calls")).text()).not.toContain(" api ");
+      } finally {
+        untrusted.child.kill();
+      }
+      const review = await startWith(
+        { PATH: `${bin}:${process.env.PATH}`, GITLAB_HOST: "gitlab.example" },
+        dir,
+      );
+      try {
+        const body = await (await fetch(`${review.origin}/api/review?scope=pr&pr=7`)).json();
+        expect(body.label).toBe("MR !7 Change 7");
+        expect(body.forge).toBe("gitlab");
+        // GitLab's hunks with Git's header written for each file.
+        expect(body.patch).toBe(
+          [
+            "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-one\n+ONE\n",
+            "diff --git a/old.txt b/moved.txt\nsimilarity index 100%\nrename from old.txt\nrename to moved.txt\n",
+            "diff --git a/n.txt b/n.txt\nnew file mode 100644\n--- /dev/null\n+++ b/n.txt\n@@ -0,0 +1 @@\n+n\n",
+          ].join(""),
+        );
+        const side = async (path: string) => {
+          const query = new URLSearchParams({ key: body.scopeKey, side: "new", path });
+          const response = await fetch(`${review.origin}/api/file?${query}`);
+          return response.ok ? response.text() : response.status;
+        };
+        expect(await side("a.ts")).toBe("ONE\n");
+        const pulls = async (query: string) =>
+          (await fetch(`${review.origin}/api/prs?${new URLSearchParams({ q: query })}`)).json();
+        const first = await pulls("");
+        expect(first.forge).toBe("gitlab");
+        expect(first.pulls.map((pull: { number: number }) => pull.number)).toEqual([9, 8]);
+        expect(first.pulls[1].draft).toBe(true);
+        // A number is that merge request, first, merged or not.
+        const found = await pulls("!1");
+        expect(
+          found.pulls.map((pull: { number: number; state: string }) => [pull.number, pull.state]),
+        ).toEqual([
+          [1, "merged"],
+          [9, "open"],
+          [8, "open"],
+        ]);
+        expect((await (await fetch(`${review.origin}/api/scopes`)).json()).forge).toBe("gitlab");
+        const calls = (await Bun.file(join(bin, "calls")).text()).trim().split("\n");
+        // Every request names the project and host its remote does, never asks `glab` to find them
+        // (which may write to the repository's config), and runs outside the repository.
+        for (const call of calls) {
+          expect(call.startsWith(dir)).toBe(false);
+          // Besides where its configuration is, which names the hosts it is set up for.
+          if (!call.endsWith(" config path"))
+            expect(call).toContain(`api --hostname gitlab.example ${project}/`);
+        }
+        expect(calls.join("\n")).not.toContain(":fullpath");
+      } finally {
+        review.child.kill();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+      await rm(bin, { recursive: true, force: true });
+    }
+  });
+
   test("a bad base fails before serving", async () => {
     const child = Bun.spawn([...command, "review", "--no-open", ...local, "--base", "nope"], {
       cwd: repo,

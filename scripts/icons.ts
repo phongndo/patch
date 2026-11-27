@@ -11,6 +11,7 @@ const names = [
   "Type",
   "Brush",
   "BrandGithub",
+  "Merged",
   "Check",
   "CheckCircle",
   "ChevronSm",

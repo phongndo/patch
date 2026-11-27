@@ -46,7 +46,7 @@ import {
   type Status,
 } from "./state.ts";
 import type { Theme } from "./themes.gen.ts";
-import { palette, setPalette } from "./ui.ts";
+import { palette, requests, setPalette } from "./ui.ts";
 
 const { settings, update } = preferences;
 
@@ -449,6 +449,7 @@ export function Palette(props: {
 
   /** A command's label, in the words of the repository's tools. */
   const labelOf = (action: Action) => {
+    if (action === "choosePull") return `Review a ${requests().one}…`;
     if (action === "reviewUncommitted" && state.store.review?.vcs === "jj") return "Review the working copy";
     return definitionOf(action).label;
   };
@@ -462,7 +463,7 @@ export function Palette(props: {
       .map((action) => ({
         id: action,
         label: labelOf(action),
-        icon: definitionOf(action).icon,
+        icon: action === "choosePull" ? requests().icon : definitionOf(action).icon,
         group: definitionOf(action).group,
         words: definitionOf(action).words,
         detail: details[action]?.(),

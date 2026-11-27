@@ -6,6 +6,9 @@ export type Mode = "all" | "uncommitted" | "staged";
 /** What keeps the repository's history. Jujutsu has no staging area. */
 export type Vcs = "git" | "jj";
 
+/** Where its pull requests are: GitHub's, or GitLab's merge requests. */
+export type Forge = "github" | "gitlab";
+
 /** What is under review: a view of the working tree, a run of commits, or a pull request. */
 export type Scope =
   | { kind: Mode; base?: string }
@@ -58,6 +61,8 @@ export interface ReviewResponse {
   label: string;
   base?: string;
   vcs: Vcs;
+  /** Where a pull request under review was read from. */
+  forge?: Forge;
   patch: string;
   /** Names this run, so a reloaded tab finds its own comments and no other run's. */
   session: string;
@@ -76,6 +81,8 @@ export interface ChangedPaths {
 export interface ScopesResponse {
   base?: string;
   branches: string[];
+  /** Where its pull requests are, as far as its remote's name tells. */
+  forge: Forge;
 }
 
 /** `/api/commits`: a page of the history of HEAD, newest first, or of what a search finds in it. */
@@ -85,8 +92,9 @@ export interface CommitsResponse {
   next?: string;
 }
 
-/** `/api/prs`: a page of pull requests. */
+/** `/api/prs`: a page of pull requests (GitLab's merge requests). */
 export interface PullRequestsResponse {
+  forge: Forge;
   pulls: PullRequest[];
   next?: string;
 }

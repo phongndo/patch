@@ -30,6 +30,14 @@ pub enum Vcs {
     Jj,
 }
 
+/// Where its pull requests are: GitHub's, or GitLab's merge requests.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Forge {
+    Github,
+    Gitlab,
+}
+
 /// What is under review: a view of the working tree, a run of commits, or a pull request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
@@ -95,6 +103,9 @@ pub struct ReviewResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
     pub vcs: Vcs,
+    /// Where a pull request under review was read from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forge: Option<Forge>,
     pub patch: String,
     /// Names this run, so a reloaded tab finds its own comments and no other run's.
     pub session: String,
@@ -130,6 +141,8 @@ pub struct ScopesResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
     pub branches: Vec<String>,
+    /// Where its pull requests are, as far as its remote's name tells.
+    pub forge: Forge,
 }
 
 /// `/api/commits`: a page of the history of HEAD, newest first, or of the commits a search
@@ -142,10 +155,11 @@ pub struct CommitsResponse {
     pub next: Option<String>,
 }
 
-/// `/api/prs`: a page of pull requests, and where the next page starts.
+/// `/api/prs`: a page of pull requests (GitLab's merge requests), and where the next page starts.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequestsResponse {
+    pub forge: Forge,
     pub pulls: Vec<PullRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,

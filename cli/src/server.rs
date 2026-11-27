@@ -32,7 +32,7 @@ use crate::protocol::{
     ChangedPaths, CommitsResponse, GrepMatch, Mode, PullRequestsResponse, ReviewResponse, Scope, ScopesResponse, Submission,
 };
 use crate::tailnet::{self, Account};
-use crate::{github, history, protocol};
+use crate::{forge, github, history, protocol};
 
 /// One file of the page as a release build embeds it: compressed where Vite left
 /// compressed copies (build.rs), else as it is.
@@ -186,7 +186,7 @@ struct App {
     next_pulls: Mutex<Option<NextPulls>>,
 }
 
-type PullsPage = Result<(Vec<protocol::PullRequest>, Option<String>), String>;
+type PullsPage = Result<(protocol::Forge, Vec<protocol::PullRequest>, Option<String>), String>;
 type NextPulls = ((String, Option<String>), tokio::sync::watch::Receiver<Option<PullsPage>>);
 
 pub struct Session {
@@ -425,20 +425,20 @@ fn parse_scope(params: &HashMap<String, String>, fallback: &Scope) -> Result<Sco
 
 async fn review(app: &App, scope: &Scope) -> Result<Review, String> {
     let root = &app.options.root;
-    let (label, old, new, (patch, files)) = match scope {
+    let (label, old, new, (patch, files), forge) = match scope {
         Scope::Pr { number } => {
-            let pr = github::read_pull_request(root, *number).await?;
-            (format!("PR #{} {}", pr.number, pr.title), pr.base_sha, pr.head_sha, (pr.patch, pr.files))
+            let (forge, pr) = forge::read_pull_request(root, *number).await?;
+            (forge::label(forge, pr.number, &pr.title), pr.base_sha, pr.head_sha, (pr.patch, pr.files), Some(forge))
         }
-        // Commits whose contents this partial clone lacks are read from GitHub, which has them.
+        // Commits whose contents this partial clone lacks are read from its forge, which has them.
         Scope::Commits { from, to } => {
             let commits = git::commits(root, from, to).await?;
             if !commits.lacking {
                 return git::read_commits(root, scope, &commits).await;
             }
-            let read = github::read_commits(root, &commits.parent, &commits.first, &commits.to).await;
-            let read = read.map_err(|why| format!("{} Nor could GitHub give them: {why}", commits.lacking_message()))?;
-            (commits.label(), commits.parent, commits.to, read)
+            let read = forge::read_commits(root, &commits.parent, &commits.first, &commits.to).await;
+            let read = read.map_err(|why| format!("{} Nor could its forge give them: {why}", commits.lacking_message()))?;
+            (commits.label(), commits.parent, commits.to, read, None)
         }
         _ => return git::read_review(root, scope).await,
     };
@@ -460,6 +460,7 @@ async fn review(app: &App, scope: &Scope) -> Result<Review, String> {
         patch: git::checked(patch)?,
         changes,
         remote: true,
+        forge,
     })
 }
 
@@ -473,21 +474,20 @@ async fn read_remote_side(
     limit: u64,
 ) -> Result<Vec<u8>, String> {
     match local {
-        Err(message) if message != git::TOO_LARGE => github::read_remote_bytes(root, sha, path, limit).await,
+        Err(message) if message != git::TOO_LARGE => forge::read_remote_bytes(root, sha, path, limit).await,
         local => local,
     }
 }
 
-/// A page of pull requests. Only a search names the repository; listing them finds it out
+/// A page of pull requests. Only a GitHub search names the repository; listing them finds it out
 /// meanwhile, for the search to come.
-async fn pulls(app: &Arc<App>, query: &str, after: Option<&str>) -> Result<(Vec<protocol::PullRequest>, Option<String>), String> {
-    if query.is_empty() {
+async fn pulls(app: &Arc<App>, query: &str, after: Option<&str>) -> PullsPage {
+    let root = &app.options.root;
+    if query.is_empty() && forge::of(root).await? == protocol::Forge::Github {
         let warm = app.clone();
         tokio::spawn(async move { repository(&warm).await });
-        return github::list_pull_requests(&app.options.root, None, query, after).await;
     }
-    let repository = repository(app).await?;
-    github::list_pull_requests(&app.options.root, Some(&repository), query, after).await
+    forge::list(root, async || repository(app).await, query, after).await
 }
 
 /// `owner/name` on GitHub, asked of `gh` once.
@@ -1038,6 +1038,7 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                         label: current.label,
                         base: current.base,
                         vcs: if crate::jj::of(&app.options.root).is_some() { protocol::Vcs::Jj } else { protocol::Vcs::Git },
+                        forge: current.forge,
                         patch: current.patch,
                         session: app.session.clone(),
                         read,
@@ -1055,9 +1056,11 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                 Scope::All { base } => base.as_deref(),
                 _ => None,
             });
-            let base = git::find_base(root, requested).await.ok().flatten();
-            match git::list_branches(root).await {
-                Ok(branches) => json(StatusCode::OK, &ScopesResponse { base, branches }),
+            let (base, branches, forge) =
+                tokio::join!(git::find_base(root, requested), git::list_branches(root), forge::named(root));
+            let base = base.ok().flatten();
+            match branches {
+                Ok(branches) => json(StatusCode::OK, &ScopesResponse { base, branches, forge }),
                 Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
             }
         }
@@ -1081,7 +1084,7 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                 None => pulls(&app, &query, after.as_deref()).await,
             };
             match listed {
-                Ok((pulls, next)) => {
+                Ok((forge, pulls, next)) => {
                     // The next page is asked for now, so it is likely here when the list reaches its end.
                     if let Some(next) = &next {
                         let (send, ready) = tokio::sync::watch::channel(None);
@@ -1091,7 +1094,7 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                             let _ = send.send(Some(self::pulls(&ahead, &query, Some(&next)).await));
                         });
                     }
-                    json(StatusCode::OK, &PullRequestsResponse { pulls, next })
+                    json(StatusCode::OK, &PullRequestsResponse { forge, pulls, next })
                 }
                 Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
             }

@@ -468,7 +468,7 @@ function createReviewState() {
         recorded?.length === files.length
           ? files.map((file, at) => withRecordedPaths(file, recorded[at]!))
           : files;
-      // Only Patch's own diffs are known to give three lines of context; a pull request's patch is GitHub's.
+      // Only Patch's own diffs are known to give three lines of context; a pull request's patch is its forge's.
       const parsed = review.scope.kind === "pr" ? named : named.map(completeWhole);
       console.debug(`patch: parsed ${parsed.length} files in ${(performance.now() - started).toFixed(1)}ms`);
       const target = composer();
@@ -666,7 +666,7 @@ function createReviewState() {
   /** Names the commits or pull request a comment was written against; working-tree views need none. */
   const scopeNote = () => {
     const scope = store.review?.scope;
-    if (scope?.kind === "pr") return `PR #${scope.number}`;
+    if (scope?.kind === "pr") return `${store.review?.forge === "gitlab" ? "MR !" : "PR #"}${scope.number}`;
     if (scope?.kind === "commits")
       return scope.from === scope.to
         ? `commit ${scope.to.slice(0, 7)}`

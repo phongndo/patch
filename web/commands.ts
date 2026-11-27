@@ -117,7 +117,12 @@ export const actions = {
   reviewStaged: { label: "Review staged changes", group: "Scope", icon: "plus", words: "index" },
   chooseBase: { label: "Compare against a branch…", group: "Scope", icon: "branch", words: "base" },
   chooseCommit: { label: "Review a commit…", group: "Scope", icon: "commit", words: "sha history" },
-  choosePull: { label: "Review a pull request…", group: "Scope", icon: "brandGithub", words: "pr github" },
+  choosePull: {
+    label: "Review a pull request…",
+    group: "Scope",
+    icon: "brandGithub",
+    words: "pr github merge request mr gitlab",
+  },
 
   foldFile: {
     label: "Collapse or expand the file",

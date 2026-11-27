@@ -30,6 +30,7 @@ import { search as fuzzy, type Searchable } from "./search.ts";
 import { preferences } from "./settings.ts";
 import { state } from "./state.ts";
 import {
+  requests,
   scopeOpen as open,
   scopeTab,
   setScopeOpen as setOpen,
@@ -37,11 +38,14 @@ import {
   type ScopeTab as Tab,
 } from "./ui.ts";
 
+const capital = (text: string) => `${text[0]!.toUpperCase()}${text.slice(1)}`;
+/** The tabs, in the words of the repository's tools: GitLab's are merge requests. */
 const tabs = [
-  { value: "changes", label: "Changes", find: "Search views and branches" },
-  { value: "commits", label: "Commits", find: "Search commits" },
-  { value: "prs", label: "Pull requests", find: "Search open pull requests" },
+  { value: "changes", label: () => "Changes", find: () => "Search views and branches" },
+  { value: "commits", label: () => "Commits", find: () => "Search commits" },
+  { value: "prs", label: () => capital(requests().many), find: () => `Search open ${requests().many}` },
 ] as const;
+const tabOf = (value: Tab) => tabs.find((shown) => shown.value === value)!;
 
 const views: Array<{ kind: Mode; action: Action; label: string; hint: string }> = [
   {
@@ -266,8 +270,8 @@ export function ScopePicker() {
     return pulls.items.map((pull): Row => ({
       id: `pull:${pull.number}`,
       label: pull.title,
-      icon: "brandGithub",
-      detail: `${pull.draft ? "Draft · " : ""}${pull.state === "open" ? "" : `${pull.state[0]!.toUpperCase()}${pull.state.slice(1)} · `}#${pull.number} · ${pull.author}`,
+      icon: requests().icon,
+      detail: `${pull.draft ? "Draft · " : ""}${pull.state === "open" ? "" : `${capital(pull.state)} · `}${requests().mark}${pull.number} · ${pull.author}`,
       words: `${pull.number} ${pull.author} ${pull.head}`,
       hint: `${pull.title}\n${pull.head} → ${pull.base}`,
       checked: current?.kind === "pr" && current.number === pull.number,
@@ -304,7 +308,7 @@ export function ScopePicker() {
     if (error()) return "";
     if (loading()) return query().trim() ? "Searching…" : "Loading…";
     if (query().trim()) return "Nothing matches.";
-    return tab() === "prs" ? "No open pull requests." : "No commits yet.";
+    return tab() === "prs" ? `No open ${requests().many}.` : "No commits yet.";
   };
   /** Below a list of pages: more on the way, more to load, or the end. */
   const more = () => {
@@ -313,7 +317,7 @@ export function ScopePicker() {
     if (shown.status === "loading") return "Loading more…";
     if (shown.hasMore) return "more";
     return tab() === "prs"
-      ? "No more pull requests."
+      ? `No more ${requests().many}.`
       : query().trim()
         ? "No more commits match."
         : "The first commit.";
@@ -372,7 +376,7 @@ export function ScopePicker() {
         title={preferences.hint(`${state.store.review?.repository ?? ""} · choose what to review`, "scope")}
       >
         <Icon
-          name={scope()?.kind === "pr" ? "brandGithub" : scope()?.kind === "commits" ? "commit" : "branch"}
+          name={scope()?.kind === "pr" ? requests().icon : scope()?.kind === "commits" ? "commit" : "branch"}
         />
         <span class="scope-label">{state.store.review?.label ?? "Loading"}</span>
         <Icon name="chevronSm" />
@@ -391,7 +395,7 @@ export function ScopePicker() {
             <For each={tabs}>
               {({ value, label }) => (
                 <TabsTab class="segmented-item" value={value}>
-                  {label}
+                  {label()}
                 </TabsTab>
               )}
             </For>
@@ -412,8 +416,8 @@ export function ScopePicker() {
                 class="palette-input"
                 data-autofocus
                 onKeyDown={onKeyDown}
-                aria-label={tabs.find(({ value }) => value === tab())!.find}
-                placeholder={tabs.find(({ value }) => value === tab())!.find}
+                aria-label={tabOf(tab()).find()}
+                placeholder={tabOf(tab()).find()}
               />
             </div>
             {/* The field has focus, and moves through the list. */}
@@ -432,7 +436,7 @@ export function ScopePicker() {
                 <p class="menu-error">{error()}</p>
               </Show>
               <CommandEmpty class="menu-empty">{empty()}</CommandEmpty>
-              <CommandList aria-label={tabs.find(({ value }) => value === tab())!.label}>
+              <CommandList aria-label={tabOf(tab()).label()}>
                 <For each={sections()} keyed={(section) => section.label}>
                   {(section) => (
                     <CommandGroup class="palette-group">

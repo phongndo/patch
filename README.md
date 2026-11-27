@@ -49,7 +49,8 @@ uncommitted or staged changes, a range of commits, or an open pull request.
 
 Patch reads Git and [Jujutsu](https://jj-vcs.github.io/jj/) repositories,
 colocated or not. In a Jujutsu one, "uncommitted" is the working copy, and there
-is no staging area.
+is no staging area. Pull requests come from GitHub through `gh`, and merge
+requests from GitLab through `glab`.
 
 ## Supported agents
 
