@@ -225,8 +225,6 @@ function createSettings() {
       set("--ui-weight", String(current.uiWeight));
       set("--code-weight", String(current.codeWeight));
       set("--diffs-font-features", current.ligatures ? "normal" : '"liga" 0, "calt" 0');
-      set("--sidebar", `${current.sidebarWidth}px`);
-      set("--comments", `${current.commentsWidth}px`);
     },
   );
 

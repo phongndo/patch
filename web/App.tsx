@@ -83,18 +83,22 @@ export function App() {
     setOwnFiles(shown);
     if (shown && narrow()) setOwnComments(false);
   };
-  const minWidth = 180;
-  const [maxWidth, setMaxWidth] = createSignal(Math.round(innerWidth / 2));
-  // Follows a drag on its own; the setting, and every effect on it, waits for the end.
-  const [sidebarWidth, setSidebarWidth] = createSignal(() => settings.sidebarWidth);
-  createEffect(sidebarWidth, (width) =>
-    document.documentElement.style.setProperty("--sidebar", `${width}px`),
-  );
-  const [commentsWidth, setCommentsWidth] = createSignal(() => settings.commentsWidth);
-  createEffect(commentsWidth, (width) =>
-    document.documentElement.style.setProperty("--comments", `${width}px`),
-  );
   const commentsShown = () => (keepsOwnView() ? ownComments() : settings.commentsOpen);
+  const minWidth = 180;
+  const [viewportWidth, setViewportWidth] = createSignal(innerWidth);
+  // A drag updates the panel immediately. Only its final width is shared with other windows.
+  const [sidebarWanted, setSidebarWidth] = createSignal(() => settings.sidebarWidth);
+  const [commentsWanted, setCommentsWidth] = createSignal(() => settings.commentsWidth);
+  // A panel takes at most half the window and, with both open, leaves the diff 320px beside the
+  // other as it is. The sidebar is fitted first, so a window too narrow for both takes from the comments.
+  const fit = (width: number, max: number) => Math.max(minWidth, Math.min(width, max));
+  const half = () => Math.floor(viewportWidth() / 2);
+  const room = (other: number) =>
+    sidebar() && commentsShown() ? viewportWidth() - 320 - other : Number.POSITIVE_INFINITY;
+  const sidebarWidth = createMemo(() => fit(sidebarWanted(), Math.min(half(), room(minWidth))));
+  const commentsWidth = createMemo(() => fit(commentsWanted(), Math.min(half(), room(sidebarWidth()))));
+  const sidebarMax = () => fit(half(), room(commentsWidth()));
+  const commentsMax = () => fit(half(), room(sidebarWidth()));
   const setComments = (shown: boolean) => {
     if (!keepsOwnView()) return preferences.update({ commentsOpen: shown });
     setOwnComments(shown);
@@ -423,7 +427,7 @@ export function App() {
       if (state.hasUnsent()) event.preventDefault();
     };
     addEventListener("beforeunload", onBeforeUnload);
-    const onResize = () => setMaxWidth(Math.round(innerWidth / 2));
+    const onResize = () => setViewportWidth(innerWidth);
     addEventListener("resize", onResize);
     void state.load();
     return () => {
@@ -824,6 +828,7 @@ export function App() {
         "no-comments": !commentsShown(),
         "sidebar-right": settings.sidebarSide === "right",
       }}
+      style={{ "--sidebar": `${sidebarWidth()}px`, "--comments": `${commentsWidth()}px` }}
     >
       <header
         class="bar"
@@ -965,7 +970,7 @@ export function App() {
         title="Drag to resize · double-click to reset"
         side={settings.sidebarSide}
         min={minWidth}
-        max={maxWidth()}
+        max={sidebarMax()}
         value={sidebarWidth()}
         onValueChange={setSidebarWidth}
         onValueCommit={(width) => preferences.update({ sidebarWidth: width })}
@@ -981,7 +986,7 @@ export function App() {
         title="Drag to resize · double-click to reset"
         side={settings.sidebarSide === "left" ? "right" : "left"}
         min={minWidth}
-        max={maxWidth()}
+        max={commentsMax()}
         value={commentsWidth()}
         onValueChange={setCommentsWidth}
         onValueCommit={(width) => preferences.update({ commentsWidth: width })}

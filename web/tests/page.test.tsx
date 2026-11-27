@@ -442,6 +442,37 @@ const loaded = async () => {
   await settle();
 };
 
+test("panels of different widths keep them while the diff has room", async () => {
+  const sidebar = named("separator", "Resize the sidebar");
+  const comments = named("separator", "Resize the comments");
+  try {
+    const free = innerWidth - 320;
+    preferences.update({ sidebarWidth: free - 230, commentsWidth: 200 });
+    await settle();
+    expect(Number(sidebar.getAttribute("aria-valuenow"))).toBe(free - 230);
+    expect(Number(comments.getAttribute("aria-valuenow"))).toBe(200);
+    expect(Number(sidebar.getAttribute("aria-valuemax"))).toBe(free - 200);
+    expect(Number(comments.getAttribute("aria-valuemax"))).toBe(230);
+  } finally {
+    preferences.reset();
+    await settle();
+  }
+});
+
+test("both panels leave space for the diff when resized", async () => {
+  const sidebar = named("separator", "Resize the sidebar");
+  const comments = named("separator", "Resize the comments");
+  try {
+    await press(sidebar, "End");
+    await press(comments, "End");
+    const panelWidth = (element: HTMLElement) => Number(element.getAttribute("aria-valuenow"));
+    expect(innerWidth - panelWidth(sidebar) - panelWidth(comments)).toBeGreaterThanOrEqual(320);
+  } finally {
+    preferences.reset();
+    await settle();
+  }
+});
+
 test("changing the saved layout updates the active review", async () => {
   try {
     preferences.update({ layout: "split" });
