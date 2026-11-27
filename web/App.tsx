@@ -143,6 +143,7 @@ export function App() {
   const reviewFolds = new Map<string, boolean>();
   let scroller: HTMLElement | undefined;
   let diff: DiffView | undefined;
+  let disconnect: (() => void) | undefined;
 
   // Lines added and removed per kind of file, and in all.
   const breakdown = createMemo(() => {
@@ -411,7 +412,7 @@ export function App() {
         // Copying leaves the comments here, so the offer stays.
         onDismiss: (details) => details.reason === "action" && details.cancel(),
       });
-    const disconnect = stayConnected({
+    disconnect = stayConnected({
       lost() {
         if (!store.submitted) showStopped("Patch stopped.");
       },
@@ -438,7 +439,7 @@ export function App() {
     return () => {
       removeEventListener("resize", onResize);
       removeEventListener("beforeunload", onBeforeUnload);
-      disconnect();
+      disconnect?.();
       diff?.destroy();
     };
   });
@@ -656,6 +657,7 @@ export function App() {
     try {
       await state.finish();
       if (!store.submitted) return;
+      disconnect?.();
       toast.dismiss("disconnected");
       toast.dismiss("unsent");
       toast.dismiss("deleted");

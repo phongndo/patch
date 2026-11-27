@@ -787,6 +787,7 @@ test("the tab keeps a run's comments over a reload, asks before losing them, and
   expect(asks()).toBe(true);
   expect(JSON.parse(sessionStorage.getItem("patch:run1")!).comments[0].body).toBe("hello");
 
+  const stream = vi.spyOn(EventSource.prototype, "close");
   vi.spyOn(window, "close").mockImplementation(() => {});
   state.compose(globalTarget);
   state.setComposerText("and one more thing");
@@ -794,6 +795,7 @@ test("the tab keeps a run's comments over a reload, asks before losing them, and
   await key("Enter", mod);
   await settle();
   expect(window.close).toHaveBeenCalledOnce();
+  expect(stream).toHaveBeenCalledOnce();
   expect(submitted).toHaveLength(1);
   expect(submitted[0]).toMatchObject({
     comments: [{ body: "hello" }, { body: "and one more thing" }],
