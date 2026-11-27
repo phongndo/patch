@@ -29,7 +29,7 @@ use tokio::task::JoinHandle;
 use crate::git::{self, Ref, Review};
 use crate::github;
 use crate::paths::review_paths;
-use crate::protocol::{GrepMatch, Mode, ReviewResponse, Scope, ScopesResponse, Submission};
+use crate::protocol::{ChangedPaths, GrepMatch, Mode, ReviewResponse, Scope, ScopesResponse, Submission};
 use crate::tailnet::{self, Account};
 
 /// One file of the page as a release build embeds it: compressed where Vite left
@@ -370,7 +370,8 @@ fn trusted(hosts: &[String], method: &Method, headers: &HeaderMap) -> bool {
     {
         return false;
     }
-    if method != Method::GET {
+    // A write (anything but GET or HEAD, which only read) must be JSON.
+    if method != Method::GET && method != Method::HEAD {
         let json = headers
             .get(header::CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
@@ -415,6 +416,12 @@ async fn review(app: &App, scope: &Scope) -> Result<Review, String> {
     };
     let pr = github::read_pull_request(root, *number).await?;
     let (_, branch) = git::current_branch(root).await;
+    // GitHub's names for each file, taken only when they are one for one with the patch's files;
+    // otherwise none are, and its images are not served.
+    let in_patch = pr.patch.lines().filter(|line| line.starts_with("diff --git ")).count();
+    let side = |path: Option<String>| path.map(|path| git::Side { path, mode: String::new(), oid: String::new() });
+    let changes = (pr.files.len() == in_patch)
+        .then(|| pr.files.into_iter().map(|(old, new)| git::Change { old: side(old), new: side(new) }).collect());
     Ok(Review {
         repository: git::repository_name(root),
         branch,
@@ -424,6 +431,7 @@ async fn review(app: &App, scope: &Scope) -> Result<Review, String> {
         old: Ref::Commit(pr.base_sha),
         new: Ref::Commit(pr.head_sha),
         patch: pr.patch,
+        changes,
     })
 }
 
@@ -436,6 +444,10 @@ struct Loaded {
     new: Ref,
     files: HashSet<String>,
     changed: HashSet<String>,
+    /// Each changed file's sides, as Git recorded them with the patch; none for a pull request.
+    changes: Option<Vec<git::Change>>,
+    /// Names the patch, so a read that finds the same keeps the same number.
+    digest: [u8; 32],
     read: u64,
 }
 
@@ -478,6 +490,11 @@ async fn unchanged(app: &App, key: &str) -> Result<Arc<Catalog>, String> {
         app.unchanged.lock().unwrap().insert(key.to_string(), catalog.clone());
     }
     Ok(catalog)
+}
+
+/// Text that need not be UTF-8, with its bad bytes as U+FFFD.
+fn lossy(bytes: Vec<u8>) -> String {
+    String::from_utf8(bytes).unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
 }
 
 fn text(compress: bool, headers: &HeaderMap, text: String) -> Response {
@@ -578,6 +595,119 @@ fn content_type(path: &str) -> &'static str {
         Some("txt") => "text/plain; charset=utf-8",
         _ => "application/octet-stream",
     }
+}
+
+/// The images the page previews, which every browser draws itself. `web/media.ts` has the same list.
+fn image_type(path: &str) -> Option<&'static str> {
+    let (_, ext) = path.rsplit_once('.')?;
+    Some(match ext.to_ascii_lowercase().as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "svg" => "image/svg+xml",
+        _ => return None,
+    })
+}
+
+/// `/api/media`: one side of a changed image, as it is. Only a side the diff gives the file is
+/// read, from the read of the review the page drew (`read`): a later one may differ. A local
+/// review's side is read as Git recorded it (git::read_change); a pull request's by its path at
+/// its commit. An SVG opened on its own runs nothing and loads nothing (the CSP), and the page
+/// draws it only in an `<img>`, which never does. HEAD answers the same without the bytes, so the
+/// page can say why an image did not draw.
+async fn media(app: &App, params: &HashMap<String, String>, headers: &HeaderMap, compress: bool) -> Response {
+    let unknown = || error(StatusCode::NOT_FOUND, "Unknown file.");
+    let key = params.get("key").map(String::as_str).unwrap_or_default();
+    let path = params.get("path").map(String::as_str).unwrap_or_default();
+    let Some(kind) = image_type(path) else { return unknown() };
+    let Some(current) = app.reviews.lock().unwrap().get(key).cloned() else { return unknown() };
+    if params.get("read").and_then(|read| read.parse::<u64>().ok()) != Some(current.read) {
+        return error(StatusCode::CONFLICT, "The review was read again since. Refresh to see it.");
+    }
+    let old = match params.get("side").map(String::as_str) {
+        Some("old") => true,
+        Some("new") => false,
+        _ => return unknown(),
+    };
+    let reference = if old { &current.old } else { &current.new };
+    let root = &app.options.root;
+    // Only a side Git (or, for a pull request, GitHub) recorded for the change is read.
+    let Some(changes) = &current.changes else { return unknown() };
+    let side = changes.iter().filter_map(|change| if old { change.old.as_ref() } else { change.new.as_ref() });
+    let Some(side) = side.into_iter().find(|side| side.path == path) else { return unknown() };
+    let read = match (&current.scope, reference) {
+        // A pull request's side, by its path at its commit: here if the commit is, else from GitHub.
+        (Scope::Pr { .. }, Ref::Commit(sha)) => {
+            let read = if git::has_commit(root, sha).await {
+                git::read_at_commit(root, sha, path, git::MEDIA_LIMIT).await
+            } else {
+                github::read_remote_bytes(root, sha, path, git::MEDIA_LIMIT).await
+            };
+            read.map(|bytes| {
+                use sha2::{Digest, Sha256};
+                let digest: String = Sha256::digest(&bytes).iter().take(16).map(|byte| format!("{byte:02x}")).collect();
+                (bytes, digest)
+            })
+        }
+        _ => {
+            // A side read by its id is the same for good: one the browser has needs no reading.
+            if !matches!(reference, Ref::Worktree) && has_tag(headers, &side.oid) {
+                return not_modified(&side.oid);
+            }
+            git::read_change(root, reference, side, git::MEDIA_LIMIT).await.map(|bytes| (bytes, side.oid.clone()))
+        }
+    };
+    let (bytes, tag) = match read {
+        Ok(read) => read,
+        Err(message) if message == git::TOO_LARGE => return error(StatusCode::PAYLOAD_TOO_LARGE, &message),
+        Err(message) if message == git::CHANGED => {
+            return error(StatusCode::CONFLICT, "This file changed since the review was read. Refresh to see it.");
+        }
+        Err(_) => return unknown(),
+    };
+    // The URL stays while a working tree file changes, so the browser asks each time, and is told
+    // when it already has it.
+    if has_tag(headers, &tag) {
+        return not_modified(&tag);
+    }
+    let mut response = not_modified(&tag);
+    *response.status_mut() = StatusCode::OK;
+    let out = response.headers_mut();
+    out.insert(header::CONTENT_TYPE, HeaderValue::from_static(kind));
+    out.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    out.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox"),
+    );
+    out.insert("cross-origin-resource-policy", HeaderValue::from_static("same-origin"));
+    // Only an SVG is text; the rest are compressed already.
+    if kind == "image/svg+xml" {
+        out.insert(header::VARY, HeaderValue::from_static("accept-encoding"));
+    }
+    compressed(compress && kind == "image/svg+xml", headers, response, bytes)
+}
+
+/// Whether the browser already has what `tag` names.
+fn has_tag(headers: &HeaderMap, tag: &str) -> bool {
+    let tag = format!("\"{tag}\"");
+    headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.split(',').any(|given| given.trim().trim_start_matches("W/") == tag))
+}
+
+/// 304, named by `tag`, which the browser asks again for each time.
+fn not_modified(tag: &str) -> Response {
+    let mut response = Response::new(Body::empty());
+    *response.status_mut() = StatusCode::NOT_MODIFIED;
+    let out = response.headers_mut();
+    out.insert(header::ETAG, HeaderValue::from_str(&format!("\"{tag}\"")).unwrap());
+    out.insert(header::CACHE_CONTROL, HeaderValue::from_static("private, no-cache"));
+    response
 }
 
 fn compressible(path: &str) -> bool {
@@ -751,22 +881,55 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
             match review(&app, &scope).await {
                 Ok(current) => {
                     let scope_key = serde_json::to_string(&current.scope).unwrap_or_default();
-                    let (files, changed) = review_paths(&current.patch);
-                    let read = app.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let loaded =
-                        Loaded { scope: current.scope.clone(), old: current.old, new: current.new, files, changed, read };
+                    let paths = review_paths(&current.patch);
+                    // A path with a character Git's bytes could not be read as (U+FFFD) may name
+                    // another file than the diff's: nothing is read by it.
+                    let named = |set: HashSet<String>| set.into_iter().filter(|path| !path.contains('\u{FFFD}')).collect();
+                    // A read that finds what the last one did is the same read: what a page drew
+                    // from it (images, asked for by its number) stays good, so another tab, or a
+                    // glance at the review from a script, changes nothing. "The same" is the patch,
+                    // the commits on each side, and every side's path, mode and id: a change of
+                    // mode alone shows no id in its patch.
+                    use sha2::{Digest, Sha256};
+                    let mut hasher = Sha256::new();
+                    hasher.update(current.patch.as_bytes());
+                    hasher.update(format!("{:?}{:?}{:?}", current.old, current.new, current.changes).as_bytes());
+                    let digest: [u8; 32] = hasher.finalize().into();
+                    let files = current.changes.as_ref().map(|changes| {
+                        let path = |side: &Option<git::Side>| side.as_ref().map(|side| side.path.clone());
+                        changes.iter().map(|change| ChangedPaths { old: path(&change.old), new: path(&change.new) }).collect()
+                    });
+                    // Numbered and kept at once, so two reads at the same moment agree.
+                    let read = {
+                        let mut reviews = app.reviews.lock().unwrap();
+                        let same = reviews.get(&scope_key).filter(|last| last.digest == digest).map(|last| last.read);
+                        let read = same.unwrap_or_else(|| app.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+                        let loaded = Loaded {
+                            scope: current.scope.clone(),
+                            old: current.old,
+                            new: current.new,
+                            files: named(paths.texts),
+                            changed: paths.changed,
+                            changes: current.changes,
+                            digest,
+                            read,
+                        };
+                        reviews.insert(scope_key.clone(), Arc::new(loaded));
+                        read
+                    };
+                    app.unchanged.lock().unwrap().remove(&scope_key);
                     let response = ReviewResponse {
                         repository: current.repository,
                         branch: current.branch,
                         scope: current.scope,
-                        scope_key: scope_key.clone(),
+                        scope_key,
                         label: current.label,
                         base: current.base,
                         patch: current.patch,
                         session: app.session.clone(),
+                        read,
+                        files,
                     };
-                    app.unchanged.lock().unwrap().remove(&scope_key);
-                    app.reviews.lock().unwrap().insert(scope_key, Arc::new(loaded));
                     let bytes = serde_json::to_vec(&response).unwrap_or_default();
                     compressed(compress, &headers, json(StatusCode::OK, &()), bytes)
                 }
@@ -812,18 +975,25 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                 return error(StatusCode::NOT_FOUND, "Unknown file.");
             }
             let root = &app.options.root;
-            let read = match (&current.scope, &reference) {
+            let remote = match (&current.scope, &reference) {
                 // A pull request's commits may not be in the local repository; read them from GitHub then.
-                (Scope::Pr { .. }, Ref::Commit(sha)) if !git::has_commit(root, sha).await => {
-                    github::read_remote_file(root, sha, &file).await
-                }
-                _ => git::read_side(root, &reference, &file).await,
+                (Scope::Pr { .. }, Ref::Commit(sha)) if !git::has_commit(root, sha).await => Some(sha.clone()),
+                _ => None,
+            };
+            // `max` bounds the read itself, for a preview that would not use more.
+            let read = match (params.get("max").and_then(|max| max.parse::<u64>().ok()), remote) {
+                (Some(max), Some(sha)) => github::read_remote_bytes(root, &sha, &file, max).await.map(lossy),
+                (Some(max), None) => git::read_side_bytes(root, &reference, &file, max).await.map(lossy),
+                (None, Some(sha)) => github::read_remote_file(root, &sha, &file).await,
+                (None, None) => git::read_side(root, &reference, &file).await,
             };
             match read {
                 Ok(contents) => text(compress, &headers, contents),
+                Err(message) if message == git::TOO_LARGE => error(StatusCode::PAYLOAD_TOO_LARGE, &message),
                 Err(_) => (StatusCode::NOT_FOUND, "").into_response(),
             }
         }
+        (Method::GET | Method::HEAD, "/api/media") => media(&app, &params, &headers, compress).await,
         (Method::GET, "/api/unchanged") => {
             let key = params.get("key").cloned().unwrap_or_default();
             match unchanged(&app, &key).await {

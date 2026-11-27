@@ -89,6 +89,20 @@ pub struct ReviewResponse {
     pub patch: String,
     /// Names this run, so a reloaded tab finds its own comments and no other run's.
     pub session: String,
+    /// Names this read of the review: an image is served only to the read it belongs to.
+    pub read: u64,
+    /// Each changed file's paths as Git recorded them, in the patch's order; none for a pull request.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub files: Option<Vec<ChangedPaths>>,
+}
+
+/// A changed file's paths before and after; one it lacks, or cannot name in UTF-8, is absent.
+#[derive(Debug, Serialize)]
+pub struct ChangedPaths {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub old: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

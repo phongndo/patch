@@ -56,6 +56,16 @@ export interface ReviewResponse {
   patch: string;
   /** Names this run, so a reloaded tab finds its own comments and no other run's. */
   session: string;
+  /** Names this read of the review: an image is served only to the read it belongs to. */
+  read: number;
+  /** Each changed file's paths as Git recorded them, in the patch's order; none for a pull request. */
+  files?: ChangedPaths[];
+}
+
+/** A changed file's paths before and after; one it lacks, or cannot name in UTF-8, is absent. */
+export interface ChangedPaths {
+  old?: string;
+  new?: string;
 }
 
 export interface ScopesResponse {

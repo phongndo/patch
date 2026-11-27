@@ -65,40 +65,62 @@ fn header_lines(patch: &str) -> impl Iterator<Item = &str> {
 /// contains a space with a tab, and quotes unusual ones.
 #[cfg(test)]
 pub fn patch_paths(patch: &str) -> HashSet<String> {
-    review_paths(patch).0
+    review_paths(patch).texts
 }
 
 /// Every path the diff touches.
 #[cfg(test)]
 pub fn changed_paths(patch: &str) -> HashSet<String> {
-    review_paths(patch).1
+    review_paths(patch).changed
 }
 
-/// In one pass: the paths the diff has text for (`patch_paths`), and every
-/// path it touches, also those with no `---` and `+++` lines: a file renamed
-/// unchanged, or a binary one. These have no text to read, so they only say
-/// what is not unchanged.
-pub fn review_paths(patch: &str) -> (HashSet<String>, HashSet<String>) {
-    let mut texts = HashSet::new();
-    let mut paths = HashSet::new();
+/// What a diff names, read in one pass.
+#[derive(Default)]
+pub struct ReviewPaths {
+    /// The paths the diff has text for (`patch_paths`).
+    pub texts: HashSet<String>,
+    /// Every path it touches, also those with no `---` and `+++` lines: a file
+    /// renamed unchanged, or a binary one. These have no text to read, so they
+    /// only say what is not unchanged.
+    pub changed: HashSet<String>,
+    /// The paths each side has, so a side is only ever read at its own paths.
+    pub old: HashSet<String>,
+    pub new: HashSet<String>,
+}
+
+pub fn review_paths(patch: &str) -> ReviewPaths {
+    let mut paths = ReviewPaths::default();
     for line in header_lines(patch) {
-        if let Some(rest) = line.strip_prefix("+++ ").or_else(|| line.strip_prefix("--- ")) {
-            texts.extend(header_path(rest.strip_suffix('\t').unwrap_or(rest), true));
-        } else if let Some(rest) =
-            ["rename from ", "rename to ", "copy from ", "copy to "].iter().find_map(|prefix| line.strip_prefix(prefix))
+        let (old, new) = (line.strip_prefix("--- "), line.strip_prefix("+++ "));
+        if let Some(rest) = old.or(new) {
+            if let Some(path) = header_path(rest.strip_suffix('\t').unwrap_or(rest), true) {
+                if old.is_some() { &mut paths.old } else { &mut paths.new }.insert(path.clone());
+                paths.texts.insert(path);
+            }
+        } else if let Some((path, old)) =
+            [("rename from ", true), ("rename to ", false), ("copy from ", true), ("copy to ", false)]
+                .iter()
+                .find_map(|(prefix, old)| Some((header_path(line.strip_prefix(prefix)?, false)?, *old)))
         {
-            paths.extend(header_path(rest, false));
+            if old { &mut paths.old } else { &mut paths.new }.insert(path.clone());
+            paths.changed.insert(path);
         } else if let Some(rest) = line.strip_prefix("Binary files ").and_then(|rest| rest.strip_suffix(" differ")) {
-            // Unquoted names may hold " and " themselves: take the first split where both sides read as paths.
+            // Unquoted names may hold " and " themselves: every split where both sides read as paths.
             let side = |text: &str| if text == "/dev/null" { Some(None) } else { header_path(text, true).map(Some) };
-            let found = rest.match_indices(" and ").find_map(|(at, _)| Some((side(&rest[..at])?, side(&rest[at + 5..])?)));
-            if let Some((old, new)) = found {
-                paths.extend(old.into_iter().chain(new));
+            let splits: Vec<_> =
+                rest.match_indices(" and ").filter_map(|(at, _)| Some((side(&rest[..at])?, side(&rest[at + 5..])?))).collect();
+            // The first is surely touched; which side has which path is said only when one split reads.
+            if let Some((old, new)) = splits.first() {
+                paths.changed.extend(old.iter().chain(new).cloned());
+            }
+            if let [(old, new)] = splits.as_slice() {
+                paths.old.extend(old.clone());
+                paths.new.extend(new.clone());
             }
         }
     }
-    paths.extend(texts.iter().cloned());
-    (texts, paths)
+    paths.changed.extend(paths.texts.iter().cloned());
+    paths
 }
 
 #[cfg(test)]
@@ -142,6 +164,35 @@ mod tests {
         let mut paths: Vec<_> = changed_paths(&patch).into_iter().collect();
         paths.sort();
         assert_eq!(paths, ["cats and dogs.png", "logo.png", "new.ts", "old name.ts"]);
+    }
+
+    #[test]
+    fn each_side_has_its_own_paths() {
+        let patch = [
+            "diff --git a/old name.ts b/new.ts",
+            "similarity index 100%",
+            "rename from old name.ts",
+            "rename to new.ts",
+            "diff --git a/a.svg b/a.svg",
+            "--- a/a.svg",
+            "+++ b/a.svg",
+            "diff --git a/gone.png b/gone.png",
+            "Binary files a/gone.png and /dev/null differ",
+            "diff --git a/new.png b/new.png",
+            "Binary files /dev/null and b/new.png differ",
+            "diff --git a/x and b/y and z.png b/x and b/y and z.png",
+            "Binary files a/x and b/y and z.png and b/x and b/y and z.png differ",
+        ]
+        .join("\n");
+        let paths = review_paths(&patch);
+        let sorted = |set: &HashSet<String>| {
+            let mut list: Vec<_> = set.iter().cloned().collect();
+            list.sort();
+            list
+        };
+        assert_eq!(sorted(&paths.old), ["a.svg", "gone.png", "old name.ts"]);
+        // A binary line that splits more than one way gives neither side.
+        assert_eq!(sorted(&paths.new), ["a.svg", "new.png", "new.ts"]);
     }
 
     #[test]

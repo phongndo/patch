@@ -27,6 +27,23 @@ pub enum Ref {
     Commit(String),
 }
 
+/// One side of a changed file as the review read it, from Git's raw record of the change: its
+/// path, its mode, and the id of its contents.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Side {
+    pub path: String,
+    pub mode: String,
+    pub oid: String,
+}
+
+/// A changed file: the side it had before, and the side it has after. A side the page cannot name
+/// (a path that is not UTF-8) is left out, so nothing is ever read for it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Change {
+    pub old: Option<Side>,
+    pub new: Option<Side>,
+}
+
 #[derive(Clone, Debug)]
 pub struct Review {
     pub repository: String,
@@ -37,6 +54,8 @@ pub struct Review {
     pub old: Ref,
     pub new: Ref,
     pub patch: String,
+    /// Each changed file's sides, read with the patch; a pull request's come from GitHub and have none.
+    pub changes: Option<Vec<Change>>,
 }
 
 #[derive(Default)]
@@ -46,10 +65,22 @@ pub struct Run<'a> {
     pub stdin: Option<&'a [u8]>,
 }
 
-pub async fn run(program: &str, cwd: &Path, args: &[&str], options: Run<'_>) -> Result<String> {
+/// `program` with `args`, read-only and never asking anything, its output piped.
+fn command(program: &str, cwd: &Path, args: &[&str], options: &Run<'_>) -> Command {
     let mut command = Command::new(program);
     if program == "git" {
-        command.args(["-c", "core.quotepath=false"]);
+        // Paths unquoted, and each diff written alike whatever the user's configuration: a blank
+        // context line keeps its space, and paths keep their a/ and b/.
+        command.args([
+            "-c",
+            "core.quotepath=false",
+            "-c",
+            "diff.suppressBlankEmpty=false",
+            "-c",
+            "diff.noprefix=false",
+            "-c",
+            "diff.mnemonicPrefix=false",
+        ]);
         // A partial clone fetches missing objects into the repository; Patch never does.
         command.env("GIT_OPTIONAL_LOCKS", "0").env("GIT_TERMINAL_PROMPT", "0").env("GIT_NO_LAZY_FETCH", "1").env("LC_ALL", "C");
     } else {
@@ -69,9 +100,17 @@ pub async fn run(program: &str, cwd: &Path, args: &[&str], options: Run<'_>) -> 
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    let mut child = command.spawn().map_err(|error| {
+    command
+}
+
+fn spawn(program: &str, mut command: Command) -> Result<tokio::process::Child> {
+    command.spawn().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound { format!("{program} is not installed.") } else { error.to_string() }
-    })?;
+    })
+}
+
+pub async fn run(program: &str, cwd: &Path, args: &[&str], options: Run<'_>) -> Result<String> {
+    let mut child = spawn(program, command(program, cwd, args, &options))?;
     if let (Some(input), Some(mut pipe)) = (options.stdin, child.stdin.take()) {
         pipe.write_all(input).await.map_err(|error| error.to_string())?;
     }
@@ -81,10 +120,57 @@ pub async fn run(program: &str, cwd: &Path, args: &[&str], options: Run<'_>) -> 
         .map_err(|error| error.to_string())?;
     let code = output.status.code().unwrap_or(-1);
     if code == 0 || (options.allow_exit_1 && code == 1) {
-        return String::from_utf8(output.stdout).map_err(|_| "The diff is not valid UTF-8.".to_string());
+        // A file Git takes for text need not be UTF-8 (Latin-1, or a damaged image without a NUL):
+        // its bad bytes read as U+FFFD, rather than one file failing the whole review.
+        return Ok(
+            String::from_utf8(output.stdout).unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned())
+        );
     }
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     Err(if stderr.is_empty() { format!("{program} {} exited with {code}", args.first().unwrap_or(&"")) } else { stderr })
+}
+
+/// The most of a file the page may preview as an image.
+pub const MEDIA_LIMIT: u64 = 32 * 1024 * 1024;
+pub const TOO_LARGE: &str = "This file is too large to preview.";
+
+/// What `program` writes, as bytes, refused once it is over `limit`: it is
+/// stopped there rather than read to the end.
+pub async fn run_bytes(program: &str, cwd: &Path, args: &[&str], options: Run<'_>, limit: u64) -> Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let mut child = spawn(program, command(program, cwd, args, &options))?;
+    let (Some(stdout), Some(mut stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        return Err(format!("{program} has no output."));
+    };
+    if let (Some(input), Some(mut pipe)) = (options.stdin, child.stdin.take()) {
+        let input = input.to_vec();
+        tokio::spawn(async move {
+            let _ = pipe.write_all(&input).await;
+        });
+    }
+    // On its own, so stdout is never waited on while the child waits to write here. Only its start
+    // is kept; the rest is read and dropped.
+    let said = tokio::spawn(async move {
+        let mut said = Vec::new();
+        let _ = (&mut stderr).take(64 * 1024).read_to_end(&mut said).await;
+        let _ = tokio::io::copy(&mut stderr, &mut tokio::io::sink()).await;
+        said
+    });
+    let read = async {
+        let mut out = Vec::new();
+        stdout.take(limit + 1).read_to_end(&mut out).await.map_err(|error| error.to_string())?;
+        if out.len() as u64 > limit {
+            return Err(TOO_LARGE.to_string()); // Dropping the child stops it.
+        }
+        let status = child.wait().await.map_err(|error| error.to_string())?;
+        if status.success() || (options.allow_exit_1 && status.code() == Some(1)) {
+            return Ok(out);
+        }
+        let said = said.await.unwrap_or_default();
+        let said = String::from_utf8_lossy(&said).trim().to_string();
+        Err(if said.is_empty() { format!("{program} {} failed.", args.first().unwrap_or(&"")) } else { said })
+    };
+    tokio::time::timeout(TIMEOUT, read).await.map_err(|_| format!("{program} {} timed out.", args.first().unwrap_or(&"")))?
 }
 
 pub async fn git(cwd: &Path, args: &[&str]) -> Result<String> {
@@ -182,31 +268,133 @@ impl Scratch {
 async fn worktree_index(root: &Path) -> Result<Scratch> {
     let prepared = Scratch::new(root).await?;
     let scratch = Some(&prepared);
-    let untracked =
-        run("git", root, &["ls-files", "--others", "--exclude-standard", "-z"], Run { scratch, ..Run::default() }).await?;
+    // As bytes, exactly: a path that is not UTF-8 must reach `git add` as Git wrote it.
+    let untracked = run_bytes(
+        "git",
+        root,
+        &["ls-files", "--others", "--exclude-standard", "-z"],
+        Run { scratch, ..Run::default() },
+        LIMIT as u64,
+    )
+    .await?;
     if !untracked.is_empty() {
         run(
             "git",
             root,
             &["add", "--intent-to-add", "--pathspec-from-file=-", "--pathspec-file-nul"],
-            Run { scratch, stdin: Some(untracked.as_bytes()), ..Run::default() },
+            Run { scratch, stdin: Some(&untracked), ..Run::default() },
         )
         .await?;
     }
     Ok(prepared)
 }
 
-/// `git diff <from>` against the working tree, through `worktree_index`.
-async fn diff_worktree(root: &Path, scratch: &Scratch, from: &str) -> Result<String> {
-    let mut args = vec!["diff"];
-    args.extend(DIFF_FLAGS);
-    args.extend([from, "--"]);
-    run("git", root, &args, Run { scratch: Some(scratch), ..Run::default() }).await
+const OVER_LIMIT: &str = "This change is over the 64 MB review limit.";
+
+/// `git diff` with `args` and the flags every review uses, with Git's raw record of each file read
+/// in the same run, so the patch and the sides it names agree.
+async fn diff_with_changes(root: &Path, args: &[&str], scratch: Option<&Scratch>) -> Result<(String, Vec<Change>)> {
+    let mut all = vec!["diff", "--raw", "-z", "--patch", "--no-abbrev", "--full-index"];
+    all.extend(DIFF_FLAGS);
+    all.extend(args);
+    let output = run_bytes("git", root, &all, Run { scratch, ..Run::default() }, LIMIT as u64)
+        .await
+        .map_err(|error| if error == TOO_LARGE { OVER_LIMIT.to_string() } else { error })?;
+    let (records, patch) = raw_records(&output);
+    // A file Git takes for text need not be UTF-8 (Latin-1, or a damaged image without a NUL): its
+    // bad bytes read as U+FFFD, rather than one file failing the whole review.
+    let patch = String::from_utf8(patch.to_vec()).unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned());
+    let changes = changes(&records, &patch);
+    Ok((patch, changes))
+}
+
+/// One of Git's raw records (`--raw -z`): `:old-mode new-mode old-id new-id status`, then its path,
+/// or for a rename or copy its two paths.
+struct Record<'a> {
+    old_mode: &'a str,
+    new_mode: &'a str,
+    old_oid: &'a str,
+    new_oid: &'a str,
+    status: u8,
+    paths: Vec<&'a [u8]>,
+}
+
+/// The raw records at the start of `output`, and the patch after the empty record that ends them.
+fn raw_records(output: &[u8]) -> (Vec<Record<'_>>, &[u8]) {
+    let mut records = Vec::new();
+    let mut rest = output;
+    fn field<'a>(rest: &mut &'a [u8]) -> Option<&'a [u8]> {
+        let end = rest.iter().position(|byte| *byte == 0)?;
+        let (value, after) = rest.split_at(end);
+        *rest = &after[1..];
+        Some(value)
+    }
+    while rest.first() == Some(&b':') {
+        let Some(head) = field(&mut rest) else { break };
+        let head = std::str::from_utf8(&head[1..]).unwrap_or("");
+        let parts: Vec<&str> = head.split(' ').collect();
+        let [old_mode, new_mode, old_oid, new_oid, status, ..] = parts[..] else { break };
+        let status = status.as_bytes().first().copied().unwrap_or(b'?');
+        let count = if matches!(status, b'R' | b'C') { 2 } else { 1 };
+        let paths: Vec<&[u8]> = (0..count).map_while(|_| field(&mut rest)).collect();
+        records.push(Record { old_mode, new_mode, old_oid, new_oid, status, paths });
+    }
+    (records, rest.strip_prefix(b"\0").unwrap_or(rest))
+}
+
+/// Each record as a change's sides. A side Git did not hash (the working tree's) takes its id from
+/// the patch's `index` line for the same file; without one, its contents did not change, so they
+/// are the old side's. With records and patch out of step, a working tree side has no id and is
+/// never read.
+fn changes(records: &[Record<'_>], patch: &str) -> Vec<Change> {
+    let indexes = index_lines(patch);
+    let in_step = indexes.len() == records.len();
+    let side = |path: Option<&&[u8]>, mode: &str, oid: Option<&str>| {
+        Some(Side { path: std::str::from_utf8(path?).ok()?.to_string(), mode: mode.to_string(), oid: oid?.to_string() })
+    };
+    let hashed = |oid: &str| !oid.bytes().all(|byte| byte == b'0');
+    records
+        .iter()
+        .enumerate()
+        .map(|(at, record)| {
+            let new_oid = if hashed(record.new_oid) {
+                Some(record.new_oid)
+            } else if in_step {
+                Some(indexes[at].unwrap_or(record.old_oid)).filter(|oid| hashed(oid))
+            } else {
+                None
+            };
+            Change {
+                old: if record.status == b'A' { None } else { side(record.paths.first(), record.old_mode, Some(record.old_oid)) },
+                new: if record.status == b'D' { None } else { side(record.paths.last(), record.new_mode, new_oid) },
+            }
+        })
+        .collect()
+}
+
+/// For each file of a patch, in order, the new side's id from its `index` line, if it has one.
+fn index_lines(patch: &str) -> Vec<Option<&str>> {
+    let mut found = Vec::new();
+    let mut in_header = false;
+    for line in patch.lines() {
+        if line.starts_with("diff --git ") {
+            found.push(None);
+            in_header = true;
+        } else if line.starts_with("@@") {
+            in_header = false;
+        } else if in_header
+            && let Some(rest) = line.strip_prefix("index ")
+            && let Some(last) = found.last_mut()
+        {
+            *last = rest.split(' ').next().and_then(|ids| ids.split_once("..")).map(|(_, new)| new);
+        }
+    }
+    found
 }
 
 fn checked(patch: String) -> Result<String> {
     if patch.len() > LIMIT {
-        return Err("This change is over the 64 MB review limit.".into());
+        return Err(OVER_LIMIT.into());
     }
     Ok(patch)
 }
@@ -249,10 +437,8 @@ pub async fn read_review(root: &Path, scope: &Scope) -> Result<Review> {
         let parent = try_git(root, &["rev-parse", "--verify", "--quiet", &format!("{first}^")])
             .await
             .unwrap_or_else(|| EMPTY_TREE.to_string());
-        let mut args = vec!["diff"];
-        args.extend(DIFF_FLAGS);
-        args.extend([parent.as_str(), to.as_str(), "--"]);
-        let patch = checked(git(root, &args).await?)?;
+        let (patch, changes) = diff_with_changes(root, &[parent.as_str(), to.as_str(), "--"], None).await?;
+        let patch = checked(patch)?;
         let label = if first == to { format!("Commit {}", &to[..7]) } else { format!("Commits {}–{}", &first[..7], &to[..7]) };
         return Ok(Review {
             repository,
@@ -263,6 +449,7 @@ pub async fn read_review(root: &Path, scope: &Scope) -> Result<Review> {
             old: Ref::Commit(parent),
             new: Ref::Commit(to),
             patch,
+            changes: Some(changes),
         });
     }
 
@@ -296,14 +483,9 @@ pub async fn read_review(root: &Path, scope: &Scope) -> Result<Review> {
     let index = async { if staged { Ok(None) } else { worktree_index(root).await.map(Some) } };
     let (start, index) = tokio::join!(start, index);
     let (branch, base, from) = start?;
-    let patch = match index? {
-        Some(scratch) => diff_worktree(root, &scratch, &from).await?,
-        None => {
-            let mut args = vec!["diff"];
-            args.extend(DIFF_FLAGS);
-            args.extend(["--cached", from.as_str(), "--"]);
-            git(root, &args).await?
-        }
+    let (patch, changes) = match index? {
+        Some(scratch) => diff_with_changes(root, &[from.as_str(), "--"], Some(&scratch)).await?,
+        None => diff_with_changes(root, &["--cached", from.as_str(), "--"], None).await?,
     };
     let label = if all {
         match &base {
@@ -325,6 +507,7 @@ pub async fn read_review(root: &Path, scope: &Scope) -> Result<Review> {
         old: Ref::Commit(from),
         new: if staged { Ref::Index } else { Ref::Worktree },
         patch: checked(patch)?,
+        changes: Some(changes),
     })
 }
 
@@ -388,36 +571,169 @@ pub fn safe_path(path: &str) -> bool {
     !path.is_empty() && !path.starts_with('/') && !path.split(['/', '\\']).any(|part| part == "..")
 }
 
-/// One side of a file, for expanding context around hunks.
+pub const NOT_FILE: &str = "Not a file in the repository.";
+pub const CHANGED: &str = "This file changed since the review was read.";
+
+/// One side of a file, for expanding context around hunks. The index is read at stage 0, so a
+/// path like `2:a.ts` is never taken for a stage.
 pub async fn read_side(root: &Path, reference: &Ref, path: &str) -> Result<String> {
     if !safe_path(path) {
         return Err("Bad path.".into());
     }
     match reference {
         Ref::Worktree => read_worktree(root, path).await,
-        Ref::Index => git(root, &["show", &format!(":{path}")]).await,
+        Ref::Index => git(root, &["show", &format!(":0:{path}")]).await,
         Ref::Commit(sha) => git(root, &["show", &format!("{sha}:{path}")]).await,
     }
 }
 
-/// A file of the working tree as Git sees it: a link's text is where it points,
-/// never what it points at, and nothing is read from outside the repository,
-/// through a linked folder either.
-async fn read_worktree(root: &Path, path: &str) -> Result<String> {
-    let full = root.join(path);
-    let meta = tokio::fs::symlink_metadata(&full).await.map_err(|error| error.to_string())?;
-    if meta.file_type().is_symlink() {
-        let target = tokio::fs::read_link(&full).await.map_err(|error| error.to_string())?;
-        return Ok(target.to_string_lossy().into_owned());
+/// One side of a file as bytes, up to `limit`: a link is no image or document, so it is refused.
+pub async fn read_side_bytes(root: &Path, reference: &Ref, path: &str, limit: u64) -> Result<Vec<u8>> {
+    if !safe_path(path) {
+        return Err("Bad path.".into());
     }
-    let inside = match (tokio::fs::canonicalize(&full).await, tokio::fs::canonicalize(root).await) {
-        (Ok(real), Ok(root)) => real.starts_with(root),
-        _ => false,
+    let object = match reference {
+        Ref::Worktree => return read_worktree_file(root, path, limit).await,
+        Ref::Index => format!(":0:{path}"),
+        Ref::Commit(sha) => format!("{sha}:{path}"),
     };
-    if !inside || !meta.is_file() {
-        return Err("Not a file in the repository.".into());
+    // `cat-file blob` is the bytes as stored: no textconv, no filters.
+    run_bytes("git", root, &["cat-file", "blob", &object], Run::default(), limit).await
+}
+
+/// A regular file at a commit by its path, up to `limit`: a link or a submodule is refused.
+pub async fn read_at_commit(root: &Path, sha: &str, path: &str, limit: u64) -> Result<Vec<u8>> {
+    if !safe_path(path) {
+        return Err("Bad path.".into());
     }
-    tokio::fs::read_to_string(&full).await.map_err(|error| error.to_string())
+    let literal = format!(":(literal){path}");
+    let listed =
+        run_bytes("git", root, &["ls-tree", "-z", "--full-tree", sha, "--", &literal], Run::default(), 64 * 1024).await?;
+    // `mode type id<TAB>path`, for the one path asked for.
+    let listed = String::from_utf8_lossy(&listed);
+    let (meta, listed_path) = listed.trim_end_matches('\0').split_once('\t').ok_or_else(|| NOT_FILE.to_string())?;
+    let mut meta = meta.split(' ');
+    let (Some(mode), Some("blob"), Some(oid)) = (meta.next(), meta.next(), meta.next()) else { return Err(NOT_FILE.into()) };
+    if listed_path != path || !matches!(mode, "100644" | "100755") {
+        return Err(NOT_FILE.into());
+    }
+    run_bytes("git", root, &["cat-file", "blob", oid], Run::default(), limit).await
+}
+
+/// A changed file's side exactly as the review read it, up to `limit`: by its id, or from the
+/// working tree, which is read again and must still hash to that id.
+pub async fn read_change(root: &Path, reference: &Ref, side: &Side, limit: u64) -> Result<Vec<u8>> {
+    // A link or a submodule has no contents of its own to show.
+    if !matches!(side.mode.as_str(), "100644" | "100755") {
+        return Err(NOT_FILE.into());
+    }
+    let Ref::Worktree = reference else {
+        return run_bytes("git", root, &["cat-file", "blob", &side.oid], Run::default(), limit).await;
+    };
+    let bytes = read_worktree_file(root, &side.path, limit).await?;
+    // Hashed as Git hashed it for the diff, through the path's filters.
+    let path = format!("--path={}", side.path);
+    let now = run("git", root, &["hash-object", &path, "--stdin"], Run { stdin: Some(&bytes), ..Run::default() }).await?;
+    if now.trim() != side.oid {
+        return Err(CHANGED.into());
+    }
+    Ok(bytes)
+}
+
+/// A file of the working tree as Git sees it: a link's text is where it points, never what it
+/// points at, and nothing is read from outside the repository.
+async fn read_worktree(root: &Path, path: &str) -> Result<String> {
+    let (root, path) = (root.to_path_buf(), path.to_string());
+    let bytes = tokio::task::spawn_blocking(move || worktree_text(&root, &path)).await.map_err(|error| error.to_string())??;
+    Ok(String::from_utf8(bytes).unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()))
+}
+
+/// A regular file of the working tree, up to `limit` bytes.
+async fn read_worktree_file(root: &Path, path: &str, limit: u64) -> Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt;
+    let (owned_root, owned_path) = (root.to_path_buf(), path.to_string());
+    let file = tokio::task::spawn_blocking(move || open_in_repo(&owned_root, &owned_path))
+        .await
+        .map_err(|error| error.to_string())??;
+    if file.metadata().map(|meta| meta.len()).unwrap_or(0) > limit {
+        return Err(TOO_LARGE.into());
+    }
+    let mut bytes = Vec::new();
+    // It may grow after it was measured.
+    tokio::fs::File::from_std(file).take(limit + 1).read_to_end(&mut bytes).await.map_err(|error| error.to_string())?;
+    if bytes.len() as u64 > limit {
+        return Err(TOO_LARGE.into());
+    }
+    Ok(bytes)
+}
+
+/// The folder a path is in, opened by walking from the repository's own one name at a time without
+/// following a link anywhere on the way, and the path's last name. Nothing outside the repository
+/// can be reached, even through a folder swapped for a link while the walk is under way.
+#[cfg(unix)]
+fn walk_in_repo<'a>(root: &Path, path: &'a str) -> Result<(rustix::fd::OwnedFd, &'a str)> {
+    use rustix::fs::{Mode, OFlags};
+    let (folders, name) = path.rsplit_once('/').unwrap_or(("", path));
+    let not_file = |_| NOT_FILE.to_string();
+    let mut folder =
+        rustix::fs::open(root, OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC, Mode::empty()).map_err(not_file)?;
+    for part in folders.split('/').filter(|part| !part.is_empty()) {
+        if part == "." || part == ".." {
+            return Err(NOT_FILE.into());
+        }
+        let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        folder = rustix::fs::openat(&folder, part, flags, Mode::empty()).map_err(not_file)?;
+    }
+    if name.is_empty() || name == "." || name == ".." {
+        return Err(NOT_FILE.into());
+    }
+    Ok((folder, name))
+}
+
+/// A regular file of the working tree, opened: not a link, and not a pipe or a device, which could
+/// hold a read forever (it is opened without waiting, and checked once open).
+#[cfg(unix)]
+fn open_in_repo(root: &Path, path: &str) -> Result<std::fs::File> {
+    use rustix::fs::{FileType, Mode, OFlags};
+    let (folder, name) = walk_in_repo(root, path)?;
+    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
+    let file = rustix::fs::openat(&folder, name, flags, Mode::empty()).map_err(|_| NOT_FILE.to_string())?;
+    let stat = rustix::fs::fstat(&file).map_err(|error| error.to_string())?;
+    if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile {
+        return Err(NOT_FILE.into());
+    }
+    Ok(std::fs::File::from(file))
+}
+
+/// A working tree path's contents as Git sees it: a link's target, or a regular file's bytes.
+#[cfg(unix)]
+fn worktree_text(root: &Path, path: &str) -> Result<Vec<u8>> {
+    use rustix::fs::{AtFlags, FileType};
+    use std::io::Read;
+    let (folder, name) = walk_in_repo(root, path)?;
+    let stat = rustix::fs::statat(&folder, name, AtFlags::SYMLINK_NOFOLLOW).map_err(|_| NOT_FILE.to_string())?;
+    if FileType::from_raw_mode(stat.st_mode) == FileType::Symlink {
+        let target = rustix::fs::readlinkat(&folder, name, Vec::new()).map_err(|error| error.to_string())?;
+        return Ok(target.into_bytes());
+    }
+    let mut bytes = Vec::new();
+    open_in_repo(root, path)?.take(LIMIT as u64 + 1).read_to_end(&mut bytes).map_err(|error| error.to_string())?;
+    if bytes.len() > LIMIT {
+        return Err(TOO_LARGE.into());
+    }
+    Ok(bytes)
+}
+
+/// Patch is built for macOS and Linux. Elsewhere a path checked and then opened could be swapped
+/// between the two, so the working tree is not read at all.
+#[cfg(not(unix))]
+fn open_in_repo(_root: &Path, _path: &str) -> Result<std::fs::File> {
+    Err("Reading the working tree needs macOS or Linux.".into())
+}
+
+#[cfg(not(unix))]
+fn worktree_text(root: &Path, path: &str) -> Result<Vec<u8>> {
+    open_in_repo(root, path).map(|_| Vec::new())
 }
 
 /// The largest file the page may open whole; bigger ones are left out.
@@ -580,6 +896,64 @@ mod tests {
         assert_eq!(read("plain.txt").await.unwrap(), "hello");
         assert_eq!(read("link").await.unwrap(), outside.0.join("secret").to_string_lossy());
         assert!(read("folder/secret").await.is_err());
+    }
+
+    #[test]
+    fn raw_records_name_each_side_with_its_id() {
+        let mut output = b":100644 100755 aaaa 0000 M\0m.png\0:100644 100644 bbbb bbbb R100\0r.txt\0moved.txt\0".to_vec();
+        output.extend(b":000000 100644 0000 cccc A\0n.txt\0:100644 100644 dddd 0000 M\0t.txt\0");
+        output.extend(b":100644 100644 eeee 0000 M\0bad\xff.png\0:100644 000000 1111 0000 D\0gone.txt\0\0");
+        let patch = [
+            "diff --git a/m.png b/m.png\nold mode 100644\nnew mode 100755",
+            "diff --git a/r.txt b/moved.txt\nsimilarity index 100%\nrename from r.txt\nrename to moved.txt",
+            "diff --git a/n.txt b/n.txt\nnew file mode 100644\nindex 0000..cccc\n--- /dev/null\n+++ b/n.txt\n@@ -0,0 +1 @@\n+index 1..2",
+            "diff --git a/t.txt b/t.txt\nindex dddd..ffff 100644\n--- a/t.txt\n+++ b/t.txt\n@@ -1 +1 @@\n-a\n+b",
+            "diff --git a/bad.png b/bad.png\nindex eeee..9999 100644\nBinary files a/bad.png and b/bad.png differ",
+            "diff --git a/gone.txt b/gone.txt\ndeleted file mode 100644\nindex 1111..0000",
+        ]
+        .join("\n");
+        output.extend(patch.as_bytes());
+        let (records, rest) = raw_records(&output);
+        assert_eq!(rest, patch.as_bytes());
+        let side = |path: &str, mode: &str, oid: &str| Some(Side { path: path.into(), mode: mode.into(), oid: oid.into() });
+        assert_eq!(
+            changes(&records, &patch),
+            [
+                // Only its mode changed: its contents are the old side's.
+                Change { old: side("m.png", "100644", "aaaa"), new: side("m.png", "100755", "aaaa") },
+                Change { old: side("r.txt", "100644", "bbbb"), new: side("moved.txt", "100644", "bbbb") },
+                Change { old: None, new: side("n.txt", "100644", "cccc") },
+                // The working tree's side: its id from the patch.
+                Change { old: side("t.txt", "100644", "dddd"), new: side("t.txt", "100644", "ffff") },
+                // Not UTF-8: the page cannot name it, so nothing is read for it.
+                Change { old: None, new: None },
+                Change { old: side("gone.txt", "100644", "1111"), new: None },
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_working_tree_file_is_read_only_through_folders_that_are_no_links() {
+        let outside = TempDir::new("patch-outside-").unwrap();
+        let root = TempDir::new("patch-root-").unwrap();
+        std::fs::write(outside.0.join("secret.png"), "hidden").unwrap();
+        std::fs::create_dir(root.0.join("images")).unwrap();
+        std::fs::write(root.0.join("images/logo.png"), "logo").unwrap();
+        std::os::unix::fs::symlink(&outside.0, root.0.join("linked")).unwrap();
+        std::os::unix::fs::symlink(outside.0.join("secret.png"), root.0.join("images/link.png")).unwrap();
+        let fifo = std::process::Command::new("mkfifo").arg(root.0.join("pipe.png")).status().unwrap();
+        assert!(fifo.success());
+        let read = |path: &str| {
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut open_in_repo(&root.0, path)?, &mut bytes).map_err(|error| error.to_string())?;
+            Ok::<_, String>(bytes)
+        };
+        assert_eq!(read("images/logo.png").unwrap(), b"logo");
+        // Through a linked folder, a linked file, or a pipe, which would hold the read forever.
+        for path in ["linked/secret.png", "images/link.png", "pipe.png", "images/../images/logo.png"] {
+            assert!(read(path).is_err(), "{path} was read");
+        }
     }
 
     #[test]

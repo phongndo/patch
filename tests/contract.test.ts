@@ -4,7 +4,7 @@
 // "bun src/cli.ts" (default).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
@@ -51,11 +51,14 @@ afterAll(async () => {
   await rm(state, { recursive: true, force: true });
 });
 
-async function start(...args: string[]) {
+const start = (...args: string[]) => startWith({}, ...args);
+
+async function startWith(env: Record<string, string>, ...args: string[]) {
   const child = Bun.spawn([...command, "review", "--no-open", ...local, ...args], {
     cwd: repo,
     env: {
       ...process.env,
+      ...env,
       PATCH_BROWSER: "none",
       PATCH_PORT: "0",
       PATCH_TEST_HURRY: "1",
@@ -363,6 +366,362 @@ describe("patchr review", () => {
       }
     } finally {
       await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  test("a changed image is served as it is, one side at a time, and nothing else is", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "patch-media-"));
+    try {
+      const run = (...args: string[]) =>
+        Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: dir });
+      // Not UTF-8, with a NUL: read as text, these would not survive.
+      const bytes = (...values: number[]) => new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, ...values]);
+      const [before, staged, now] = [bytes(1), bytes(2), bytes(3)];
+      await Bun.write(join(dir, "logo.png"), before);
+      await Bun.write(
+        join(dir, "icon.svg"),
+        '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>\n',
+      );
+      await Bun.write(join(dir, "secret.png"), bytes(9)); // Unchanged: never served.
+      await Bun.write(join(dir, "mode.png"), bytes(4)); // Only made executable.
+      await mkdir(join(dir, "x and b"), { recursive: true });
+      await Bun.write(join(dir, "x and b/y.png"), bytes(5)); // Its binary line splits two ways.
+      await Bun.write(
+        join(dir, "doc.md"),
+        `# Doc\n\n${"Long enough to be over a tiny budget. ".repeat(10)}\n`,
+      );
+      run("init", "-q", "-b", "main");
+      run("add", ".");
+      run("commit", "-qm", "init");
+      await Bun.write(join(dir, "logo.png"), staged);
+      run("add", "logo.png");
+      await Bun.write(join(dir, "logo.png"), now);
+      await Bun.write(join(dir, "icon.svg"), '<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>\n');
+      await chmod(join(dir, "mode.png"), 0o755);
+      await Bun.write(join(dir, "x and b/y.png"), bytes(6));
+      await Bun.write(
+        join(dir, "doc.md"),
+        `# Doc, changed\n\n${"Long enough to be over a tiny budget. ".repeat(10)}\n`,
+      );
+      // Staged under a name Git could take for an index stage (":2:logo.png").
+      await Bun.write(join(dir, "2:logo.png"), bytes(7));
+      await Bun.write(join(dir, "2:note.txt"), "staged note\n");
+      run("add", "2:logo.png", "2:note.txt");
+      // Over the limit: refused without being read whole.
+      await Bun.write(join(dir, "huge.png"), new Uint8Array(32 * 1024 * 1024 + 1));
+
+      // Asked for by the read of the review the page drew.
+      let reading = 0;
+      const read = async (origin: string, key: string, side: string, path: string, headers = {}) =>
+        fetch(`${origin}/api/media?${new URLSearchParams({ key, side, path, read: String(reading) })}`, {
+          headers,
+        });
+      const review = async (origin: string, query = "") => {
+        const body = await (await fetch(`${origin}/api/review${query}`)).json();
+        reading = body.read;
+        return body as { scopeKey: string; read: number; patch: string };
+      };
+      const bytesOf = async (response: Response) => new Uint8Array(await response.arrayBuffer());
+
+      const worktree = await start(dir, "--uncommitted");
+      try {
+        const { origin } = worktree;
+        const { scopeKey: key } = await review(origin);
+        const old = await read(origin, key, "old", "logo.png");
+        expect(old.headers.get("content-type")).toBe("image/png");
+        expect(await bytesOf(old)).toEqual(before);
+        expect(await bytesOf(await read(origin, key, "new", "logo.png"))).toEqual(now);
+        expect((await read(origin, key, "new", "huge.png")).status).toBe(413);
+        expect((await read(origin, key, "old", "huge.png")).status).toBe(404); // Not on that side.
+        for (const path of ["secret.png", "../logo.png", "nope.png"])
+          expect((await read(origin, key, "new", path)).status).toBe(404);
+        expect((await read(origin, key, "both", "logo.png")).status).toBe(404);
+        expect((await read(origin, "nope", "new", "logo.png")).status).toBe(404);
+
+        // An SVG opened on its own runs nothing; the browser is told when it has it already.
+        const svg = await read(origin, key, "new", "icon.svg");
+        expect(svg.headers.get("content-type")).toBe("image/svg+xml");
+        expect(svg.headers.get("x-content-type-options")).toBe("nosniff");
+        expect(svg.headers.get("content-security-policy")).toContain("sandbox");
+        expect(svg.headers.get("content-security-policy")).toContain("default-src 'none'");
+        expect(await svg.text()).toContain("<rect/>");
+        const tag = svg.headers.get("etag")!;
+        expect((await read(origin, key, "new", "icon.svg", { "if-none-match": tag })).status).toBe(304);
+
+        // Git's own record of each file's paths, which the page names files by.
+        // Read again with nothing changed: the same read, so what the page drew stays good.
+        const first = reading;
+        const { files } = (await review(origin)) as unknown as { files: unknown[] };
+        expect(reading).toBe(first);
+        expect(files).toContainEqual({ old: "x and b/y.png", new: "x and b/y.png" });
+        expect(files).toContainEqual({ new: "huge.png" });
+        // A file whose mode alone changed, and one whose name its binary line cannot be split by.
+        expect(await bytesOf(await read(origin, key, "old", "mode.png"))).toEqual(bytes(4));
+        expect(await bytesOf(await read(origin, key, "new", "mode.png"))).toEqual(bytes(4));
+        expect(await bytesOf(await read(origin, key, "old", "x and b/y.png"))).toEqual(bytes(5));
+        expect(await bytesOf(await read(origin, key, "new", "x and b/y.png"))).toEqual(bytes(6));
+        // HEAD says the same without the bytes.
+        const head = await fetch(
+          `${origin}/api/media?${new URLSearchParams({ key, side: "new", path: "huge.png", read: String(reading) })}`,
+          { method: "HEAD" },
+        );
+        expect(head.status).toBe(413);
+
+        // Markdown is read only up to what its preview would render.
+        const doc = (max: number) =>
+          fetch(
+            `${origin}/api/file?${new URLSearchParams({ key, side: "new", path: "doc.md", max: String(max) })}`,
+          );
+        expect((await doc(64)).status).toBe(413);
+        expect(await (await doc(1024 * 1024)).text()).toStartWith("# Doc, changed");
+
+        // Changed since the review was read: refused, not drawn as if the diff had it.
+        await Bun.write(join(dir, "logo.png"), bytes(8));
+        expect((await read(origin, key, "new", "logo.png")).status).toBe(409);
+        // From an older read of the review: refused too.
+        const stale = reading;
+        await review(origin);
+        reading = stale;
+        expect((await read(origin, key, "old", "logo.png")).status).toBe(409);
+      } finally {
+        worktree.child.kill();
+      }
+
+      // Staged, the new side is the index.
+      const index = await start(dir, "--staged");
+      try {
+        const { scopeKey: key } = await review(index.origin);
+        expect(await bytesOf(await read(index.origin, key, "new", "logo.png"))).toEqual(staged);
+        // Read at index stage 0, not taken for stage 2 of "logo.png".
+        expect(await bytesOf(await read(index.origin, key, "new", "2:logo.png"))).toEqual(bytes(7));
+        const note = await fetch(
+          `${index.origin}/api/file?${new URLSearchParams({ key, side: "new", path: "2:note.txt" })}`,
+        );
+        expect(await note.text()).toBe("staged note\n");
+        expect((await read(index.origin, key, "new", "icon.svg")).status).toBe(404); // Not staged.
+      } finally {
+        index.child.kill();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  test("a file that is not UTF-8 does not fail the review", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "patch-latin1-"));
+    try {
+      const run = (...args: string[]) =>
+        Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: dir });
+      await Bun.write(join(dir, "kept.txt"), "kept\n");
+      run("init", "-q", "-b", "main");
+      run("add", ".");
+      run("commit", "-qm", "init");
+      // Latin-1 "café", and a damaged image with no NUL, which Git diffs as text.
+      await Bun.write(join(dir, "latin1.txt"), new Uint8Array([0x63, 0x61, 0x66, 0xe9, 0x0a]));
+      await Bun.write(
+        join(dir, "broken.png"),
+        new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x41]),
+      );
+      const review = await start(dir, "--uncommitted");
+      try {
+        const response = await fetch(`${review.origin}/api/review`);
+        expect(response.status).toBe(200);
+        const { patch, scopeKey } = (await response.json()) as { patch: string; scopeKey: string };
+        expect(patch).toContain("+caf\uFFFD");
+        const side = await fetch(
+          `${review.origin}/api/file?${new URLSearchParams({ key: scopeKey, side: "new", path: "latin1.txt" })}`,
+        );
+        expect(await side.text()).toBe("caf\uFFFD\n");
+      } finally {
+        review.child.kill();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a pull request is read as one snapshot, from where it branched off, and never through a link", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "patch-pr-"));
+    const bin = await mkdtemp(join(tmpdir(), "patch-bin-"));
+    try {
+      Bun.spawnSync(["git", "init", "-q", "-b", "main"], { cwd: dir });
+      // The commits: where it branched off, the base's tip since (moved on), and its head.
+      const [branched, tip, head] = ["a", "b", "c"].map((digit) => digit.repeat(40));
+      const id = (name: string) => name.padEnd(40, "0");
+      // Each commit's trees, as GitHub's Git API lists them: a folder at a time.
+      const trees: Record<string, object[]> = {
+        [id("rootold")]: [
+          { path: "logo.png", mode: "100644", type: "blob", sha: id("1"), size: 3 },
+          { path: "link.png", mode: "120000", type: "blob", sha: id("9"), size: 12 },
+          { path: "mode.png", mode: "100644", type: "blob", sha: id("5"), size: 4 },
+          { path: "x and b", mode: "040000", type: "tree", sha: id("folderold") },
+        ],
+        [id("rootnew")]: [
+          { path: "logo.png", mode: "100644", type: "blob", sha: id("3"), size: 3 },
+          { path: "link.png", mode: "120000", type: "blob", sha: id("8"), size: 12 },
+          { path: "mode.png", mode: "100755", type: "blob", sha: id("5"), size: 4 },
+          { path: "x and b", mode: "040000", type: "tree", sha: id("foldernew") },
+        ],
+        [id("folderold")]: [{ path: "y.png", mode: "100644", type: "blob", sha: id("6"), size: 3 }],
+        [id("foldernew")]: [{ path: "y.png", mode: "100644", type: "blob", sha: id("7"), size: 3 }],
+      };
+      for (const [tree, entries] of Object.entries(trees))
+        await writeFile(join(bin, `tree-${tree}`), JSON.stringify({ tree: entries, truncated: false }));
+      await writeFile(join(bin, `commit-${branched}`), id("rootold"));
+      await writeFile(join(bin, `commit-${head}`), id("rootnew"));
+      const blobs = { "1": "OLD", "2": "TIP", "3": "NEW", "5": "MODE", "6": "Y-OLD", "7": "Y-NEW" };
+      for (const [digit, text] of Object.entries(blobs))
+        await writeFile(join(bin, `blob-${id(digit)}`), text);
+      const files = [
+        { filename: "link.png", previous_filename: null, status: "modified" },
+        { filename: "logo.png", previous_filename: null, status: "modified" },
+        { filename: "mode.png", previous_filename: null, status: "changed" },
+        // A binary file its patch's header line cannot name: "a/x and b/y.png and b/x and b/y.png".
+        { filename: "x and b/y.png", previous_filename: null, status: "modified" },
+      ];
+      await writeFile(join(bin, "compared"), JSON.stringify({ base: branched, files }));
+      await writeFile(
+        join(bin, "view.json"),
+        JSON.stringify({ number: 7, title: "Logo", url: "u", baseRefOid: tip, headRefOid: head }),
+      );
+      await writeFile(
+        join(bin, "patch"),
+        [
+          "diff --git a/link.png b/link.png",
+          "index 9999999..8888888 120000",
+          "Binary files a/link.png and b/link.png differ",
+          "diff --git a/logo.png b/logo.png",
+          "index 1000000..3000000 100644",
+          "Binary files a/logo.png and b/logo.png differ",
+          "diff --git a/mode.png b/mode.png",
+          "old mode 100644",
+          "new mode 100755",
+          "diff --git a/x and b/y.png b/x and b/y.png",
+          "index 6000000..7000000 100644",
+          "Binary files a/x and b/y.png and b/x and b/y.png differ",
+          "",
+        ].join("\n"),
+      );
+      await writeFile(
+        join(bin, "gh"),
+        [
+          "#!/bin/sh",
+          'args="$*"',
+          `echo "$args" >> "${bin}/calls"`,
+          'case "$args" in',
+          `  "pr view"*) cat "${bin}/view.json" ;;`,
+          `  *merge_base_commit*) cat "${bin}/compared" ;;`,
+          `  *vnd.github.diff*) cat "${bin}/patch" ;;`,
+          `  */git/blobs/*) cat "${bin}/blob-\${args##*/}" ;;`,
+          `  */git/commits/*) sha="\${args##*/git/commits/}"; cat "${bin}/commit-\${sha%% *}" ;;`,
+          `  */git/trees/*) cat "${bin}/tree-\${args##*/}" ;;`,
+          "  *) exit 1 ;;",
+          "esac",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const review = await startWith({ PATH: `${bin}:${process.env.PATH}` }, dir);
+      try {
+        const body = await (await fetch(`${review.origin}/api/review?scope=pr&pr=7`)).json();
+        expect(body.label).toBe("PR #7 Logo");
+        // The page names files as GitHub compared them, not as their header lines split.
+        expect(body.files).toContainEqual({ old: "x and b/y.png", new: "x and b/y.png" });
+        const media = async (side: string, path: string) => {
+          const query = new URLSearchParams({ key: body.scopeKey, side, path, read: String(body.read) });
+          const response = await fetch(`${review.origin}/api/media?${query}`);
+          return response.ok ? response.text() : response.status;
+        };
+        // Its old side is where it branched off ("OLD"), never the base's tip since ("TIP").
+        expect(await media("old", "logo.png")).toBe("OLD");
+        expect(await media("new", "logo.png")).toBe("NEW");
+        expect(await media("old", "x and b/y.png")).toBe("Y-OLD");
+        expect(await media("new", "x and b/y.png")).toBe("Y-NEW");
+        expect(await media("old", "mode.png")).toBe("MODE");
+        expect(await media("new", "mode.png")).toBe("MODE");
+        // A link has no image of its own, whatever it points at.
+        for (const side of ["old", "new"]) expect(await media(side, "link.png")).toBe(404);
+        const calls = await Bun.file(join(bin, "calls")).text();
+        // The diff, where it branched off and its files' names, all for the commits read first;
+        // never `gh pr diff`, which gives whatever the pull request is by then.
+        expect(calls).toContain(`compare/${tip}...${head}`);
+        expect(calls).not.toContain("pr diff");
+        expect(calls).not.toContain("/contents");
+      } finally {
+        review.child.kill();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+      await rm(bin, { recursive: true, force: true });
+    }
+  });
+
+  test("a read that finds what the last did is the same read; one that does not, is not", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "patch-reads-"));
+    try {
+      const run = (...args: string[]) =>
+        Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: dir });
+      await Bun.write(join(dir, "m.png"), new Uint8Array([0x89, 0, 1]));
+      run("init", "-q", "-b", "main");
+      run("add", ".");
+      run("commit", "-qm", "one");
+      await chmod(join(dir, "m.png"), 0o755); // Its mode alone changes: no id in the patch.
+      const review = await start(dir, "--uncommitted");
+      try {
+        const read = async () =>
+          (await (await fetch(`${review.origin}/api/review`)).json()) as {
+            read: number;
+            patch: string;
+            scopeKey: string;
+          };
+        // Read at once from two tabs: one read.
+        const [first, second] = await Promise.all([read(), read()]);
+        expect(second.read).toBe(first.read);
+        expect((await read()).read).toBe(first.read);
+        // The same patch, over other bytes: the image changed on both sides, its mode change kept.
+        await chmod(join(dir, "m.png"), 0o644);
+        await Bun.write(join(dir, "m.png"), new Uint8Array([0x89, 0, 2]));
+        run("commit", "-qam", "two");
+        await chmod(join(dir, "m.png"), 0o755);
+        const third = await read();
+        expect(third.patch).toBe(first.patch);
+        expect(third.read).not.toBe(first.read);
+        const old = await fetch(
+          `${review.origin}/api/media?${new URLSearchParams({ key: third.scopeKey, side: "old", path: "m.png", read: String(third.read) })}`,
+        );
+        expect(new Uint8Array(await old.arrayBuffer())).toEqual(new Uint8Array([0x89, 0, 2]));
+        const stale = await fetch(
+          `${review.origin}/api/media?${new URLSearchParams({ key: third.scopeKey, side: "old", path: "m.png", read: String(first.read) })}`,
+        );
+        expect(stale.status).toBe(409);
+      } finally {
+        review.child.kill();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a blank context line keeps its space, whatever the user's Git configuration", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "patch-blank-"));
+    try {
+      const run = (...args: string[]) =>
+        Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: dir });
+      await Bun.write(join(dir, "a.txt"), "one\n\n\n\n");
+      run("init", "-q", "-b", "main");
+      run("config", "diff.suppressBlankEmpty", "true");
+      run("add", ".");
+      run("commit", "-qm", "init");
+      await Bun.write(join(dir, "a.txt"), "ONE\n\n\n\n");
+      const review = await start(dir, "--uncommitted");
+      try {
+        const { patch } = (await (await fetch(`${review.origin}/api/review`)).json()) as { patch: string };
+        // Without it, the page would take the hunk for the whole file.
+        expect(patch).toContain("+ONE\n \n \n \n");
+      } finally {
+        review.child.kill();
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
   });
 
