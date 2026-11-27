@@ -140,6 +140,7 @@ export function App() {
     if (far >= PULL) openPalette();
   };
   const [collapsed, setCollapsed] = createStore<Record<string, boolean>>({});
+  const reviewFolds = new Map<string, boolean>();
   let scroller: HTMLElement | undefined;
   let diff: DiffView | undefined;
 
@@ -219,10 +220,15 @@ export function App() {
     if (state.lineOf(target) === 0 && currentFile() === target.file) diff?.scrollToFile(target.file);
   }
 
-  function setFileCollapsed(file: string, value: boolean) {
+  function rememberFold(file: string, value: boolean) {
+    if (!state.isBrowsing()) reviewFolds.set(file, value);
     setCollapsed((s) => {
       s[file] = value;
     });
+  }
+
+  function setFileCollapsed(file: string, value: boolean) {
+    rememberFold(file, value);
     diff?.setCollapsed(file, value);
   }
 
@@ -254,6 +260,8 @@ export function App() {
     if (!state.fileByName(file)) return false; // An unchanged file has nothing to view.
     const viewed = state.toggleViewed(file);
     setFileCollapsed(file, viewed);
+    // A fold caused by a Viewed mark expires with the mark when the file changes.
+    if (viewed) reviewFolds.delete(file);
     return viewed;
   }
 
@@ -388,10 +396,7 @@ export function App() {
       previewed: state.isPreviewed,
       renderHeader: (name) => <FileHeader name={name} />,
       onComment: openComposer,
-      onCollapsedChange: (file, value) =>
-        setCollapsed((s) => {
-          s[file] = value;
-        }),
+      onCollapsedChange: rememberFold,
       scopeKey: () => store.review?.scopeKey ?? "",
       onEdge: (edge) => state.extendBrowsing(edge),
     });
@@ -467,7 +472,7 @@ export function App() {
     for (const item of items)
       next[item.name] = browsing
         ? had.has(item.name) && (collapsed[item.name] ?? false)
-        : (collapsed[item.name] ??
+        : (reviewFolds.get(item.name) ??
           (state.isViewed(item.name) || ("hunks" in item && opensCollapsed(item, settings.foldGenerated))));
     setCollapsed((s) => void Object.assign(s, next));
     diff?.setExpanded(browsing || settings.wholeFiles);
