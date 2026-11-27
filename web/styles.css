@@ -1102,6 +1102,8 @@ a.media-frame:hover img {
 
 /* The editor is the card, so opening one moves nothing; its edge says it is open. */
 .composer {
+  /* Scrolled to clear the file's sticky header. */
+  scroll-margin-block: 52px 16px;
   border-color: var(--muted);
   border-left-color: var(--info);
 }
@@ -1176,10 +1178,25 @@ a.media-frame:hover img {
     --left: 0px;
     --right: 0px;
   }
-  .sidebar,
   .resizer,
   .summary {
     display: none;
+  }
+  /* The files are a drawer too, from their own edge. */
+  .sidebar,
+  .app.sidebar-right .sidebar {
+    position: fixed;
+    top: var(--bar);
+    bottom: 0;
+    left: 0;
+    right: auto;
+    z-index: 20;
+    width: min(320px, 88vw);
+    box-shadow: var(--shadow);
+  }
+  .app.sidebar-right .sidebar {
+    left: auto;
+    right: 0;
   }
   /* The comments are a drawer over the diff, from the edge they sit at. */
   .comments-side {
@@ -2524,4 +2541,290 @@ kbd {
   border-top: 1px solid var(--line);
   color: var(--muted);
   font-size: var(--text-meta);
+}
+
+/* Touch screens and phones. Last, so they win over the rules above. */
+
+/* iOS zooms into a field whose text is under 16px, and stays zoomed after. */
+@media (hover: none) {
+  input,
+  textarea,
+  select {
+    font-size: max(16px, 1em) !important; /* over every field's own size, as iOS reads it */
+  }
+}
+
+/* A finger needs 44px where a pointer needs 28. */
+@media (hover: none) {
+  :root {
+    --control: 44px;
+    --bar: 56px;
+  }
+  /* A button looks as it does with a mouse and takes a finger's 44px above and below. */
+  .button {
+    position: relative;
+    height: 34px;
+  }
+  .button::after {
+    content: "";
+    position: absolute;
+    inset: calc((100% - 44px) / 2) 0;
+  }
+  .file-head .icon-button.file-action {
+    width: auto !important;
+    min-width: var(--control);
+  }
+  .file-head .icon-button,
+  .note .icon-button,
+  .search-clear {
+    width: var(--control) !important;
+    height: var(--control) !important;
+  }
+  .note header,
+  .note-body,
+  .comment-about,
+  .palette-item,
+  .pill,
+  .stepper,
+  .key-chip {
+    min-height: var(--control);
+  }
+  .palette-item {
+    height: auto;
+  }
+  /* Tabs fill a 44px row inside the control's inset, where its highlight is measured. */
+  .segmented {
+    height: calc(var(--control) + 4px);
+  }
+}
+
+/* What the palette does too, out of a phone's bar to make room for the rest; what stays is one
+   evenly spaced row. */
+@media (hover: none) and (max-width: 860px) {
+  .bar {
+    gap: 0;
+    padding: 0 6px;
+  }
+  .bar :is(.where, .end, .actions) {
+    display: contents;
+  }
+
+  .wide-only {
+    display: none;
+  }
+}
+
+/* On a phone, Settings is the whole screen: its pages a row of tabs, each setting's control
+   under its words. */
+@media (max-width: 640px) {
+  .settings-dialog {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    width: 100vw;
+    height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+  .settings-side {
+    gap: 8px;
+    padding: 8px 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .settings-search {
+    height: 44px;
+  }
+  .settings-nav {
+    grid-auto-flow: column;
+    grid-auto-columns: auto;
+    justify-content: space-between;
+  }
+  .settings-nav-item {
+    height: 44px;
+    padding: 0 8px;
+  }
+  .settings-nav-item .icon {
+    display: none;
+  }
+  .settings-head {
+    padding: 0 4px 0 16px;
+  }
+  .settings-head .icon-button {
+    width: 44px;
+    height: 44px;
+  }
+  .settings-body {
+    padding: 0 12px 32px;
+  }
+  .setting {
+    flex-wrap: wrap;
+  }
+  .setting-text {
+    flex: 1 1 100%;
+  }
+}
+
+@media (hover: none) {
+  .kind-head {
+    height: var(--control);
+  }
+  .scope-search {
+    height: 48px;
+  }
+  .settings-search input {
+    align-self: stretch;
+  }
+  .settings-restore {
+    min-height: var(--control);
+  }
+  .segmented-item {
+    min-width: var(--control);
+  }
+  /* Small marks keep their look and take a finger's touch around them. */
+  .reset,
+  .switch {
+    position: relative;
+  }
+  .reset::after,
+  .switch::after {
+    content: "";
+    position: absolute;
+    inset: calc((100% - 44px) / 2);
+  }
+  .settings-card > .setting {
+    padding-block: 12px;
+  }
+}
+
+@media (hover: none) {
+  /* Keys a touch screen has none of. */
+  .palette-foot {
+    display: none;
+  }
+  .stepper {
+    height: var(--control);
+  }
+  .stepper-arrows {
+    flex-direction: row;
+  }
+  .stepper-arrows button {
+    width: var(--control);
+    height: var(--control);
+  }
+}
+
+.palette-search input {
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 640px) {
+  /* Beside Close it is one slip from resetting every device; the palette still has it. */
+  .settings-restore {
+    display: none;
+  }
+}
+
+/* The palette's mark, pulled down from the bar (App.tsx). */
+.pull-hint {
+  position: fixed;
+  top: calc(var(--bar) - 20px);
+  left: 50%;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  color: var(--muted);
+  transition:
+    color 120ms ease,
+    background 120ms ease;
+}
+
+.pull-hint.ready {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+@media (hover: none) {
+  /* The bar does not scroll: a finger dragging on it is pulling for the palette. */
+  .bar {
+    touch-action: none;
+  }
+}
+
+/* On a touch screen or a narrow window a panel says what it is, with its actions beside its
+   name and its search under them, the whole width. */
+@media (hover: none), (max-width: 860px) {
+  .side-head {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 8px 8px 12px 16px;
+    gap: 4px;
+  }
+  .side-title {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    font-size: 17px;
+    font-weight: 600;
+  }
+  .side-count {
+    padding: 0 8px;
+    border-radius: 10px;
+    background: var(--hover);
+    color: var(--muted);
+    font-size: var(--text-meta);
+    font-weight: 500;
+    line-height: 20px;
+  }
+  .side-head .search-field {
+    order: 1;
+    flex-basis: 100%;
+    margin: 4px 8px 0 0;
+  }
+  .side-head .search-field::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 12px;
+    width: 16px;
+    height: 16px;
+    translate: 0 -50%;
+    background: var(--muted);
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='7' cy='7' r='5' fill='none' stroke='black' stroke-width='1.6'/%3E%3Cpath d='M11 11l3.5 3.5' stroke='black' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+    pointer-events: none;
+  }
+  .side-head .side-search {
+    margin: 0;
+    padding-left: 36px;
+    border-radius: 10px;
+  }
+  .comment-card .note-delete {
+    top: 2px;
+    right: 2px;
+  }
+  .comment-about {
+    min-height: 24px;
+    padding-right: 40px;
+  }
+}
+
+@media (max-width: 860px) {
+  .narrow-only {
+    display: inline-grid;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Comments take the phone's width: a sliver of diff beside them is too small to use. */
+  .comments-side {
+    width: 100vw !important;
+  }
 }

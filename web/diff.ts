@@ -57,6 +57,14 @@ await Promise.all([useTheme(startup.lightTheme), useTheme(startup.darkTheme)]);
 const preloaded = new Set(["pierre-light", "pierre-dark"]);
 if (preloaded.has(startup.lightTheme) && preloaded.has(startup.darkTheme))
   await resolveThemes([startup.lightTheme, startup.darkTheme], "highlights").catch(() => {});
+const touchScreen = matchMedia("(hover: none)").matches;
+/** Gap rows are as tall as a finger needs on a touch screen (unsafeCSS, below). */
+const metrics = (lineHeight: number) => ({
+  lineHeight,
+  diffHeaderHeight: 44,
+  paddingBottom: 0,
+  ...(touchScreen && { hunkSeparatorHeight: 44 }),
+});
 const themesOf = (settings: Settings) => ({ dark: settings.darkTheme, light: settings.lightTheme });
 // What the highlighter workers were last told, so they are re-told only on a change.
 let workers = { ...themesOf(startup), wordDiff: startup.wordDiff };
@@ -122,6 +130,7 @@ const findBar = `
   [data-search-nav] [data-search-icon]:first-child::before{mask:${chevron("up")}}
   [data-search-close]{position:static;transform:none;background:none;box-shadow:none;color:var(--muted)}
   [data-search-close]:not(:disabled):hover{background:var(--hover);color:var(--fg)}
+  @media (hover:none){[data-input-box] input{font-size:16px}}
 `;
 
 /** Mounts Solid content into a plain element once, and disposes it when dropped. */
@@ -295,7 +304,7 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
   const options = {
     theme: themesOf(startup),
     themeType: startup.colorScheme,
-    itemMetrics: { lineHeight: startup.lineHeight, diffHeaderHeight: 44, paddingBottom: 0 },
+    itemMetrics: metrics(startup.lineHeight),
     preferredHighlighter: "highlights",
     diffStyle: "split",
     diffIndicators: startup.indicators,
@@ -364,6 +373,11 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
       "[data-diff-type=split]:not(:has([data-line])) [data-line-annotation]{position:relative;--patch-pane-anchor:static}",
       "[data-diff-type=split]:not(:has([data-line])) [data-annotation-content]{position:static}",
       "[data-line],[data-no-newline],[data-gutter-buffer],[data-column-number]{--mix-dark:var(--patch-line-dark,82%);--mix-light:var(--patch-line-light,90%)}",
+      // A finger slides along the numbers to pick lines (pierre's own touch-action); the comment
+      // opens as it lets go, so the gutter's button, too small to hit, is not needed.
+      "@media (hover:none){[data-gutter-utility-slot]{display:none!important}}",
+      // A gap's row is as tall as a finger needs (itemMetrics says so to the layout).
+      "@media (hover:none){[data-separator=line-info-basic]{height:44px}[data-separator=line-info-basic] [data-expand-button]{min-height:44px}}",
     ].join("\n"),
     async loadDiffFiles(fileDiff) {
       const key = hooks.scopeKey();
@@ -671,7 +685,7 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
         diffIndicators: settings.indicators,
         lineDiffType,
         overflow: settings.wrap ? "wrap" : "scroll",
-        itemMetrics: { lineHeight: settings.lineHeight, diffHeaderHeight: 44, paddingBottom: 0 },
+        itemMetrics: metrics(settings.lineHeight),
       });
       if (workersChanged) void pool.setRenderOptions({ theme, lineDiffType });
       view.setOptions({ ...options });

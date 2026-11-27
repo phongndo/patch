@@ -1,6 +1,7 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { FileTree, type GitStatus, type GitStatusEntry } from "@pierre/trees";
 import { createEffect } from "solid-js";
+import { narrow } from "./ui.ts";
 
 /**
  * How rows give way when they are narrower than their names. A run of folders shown as one row
@@ -130,10 +131,16 @@ export function Tree(props: {
           ${FITTING}`,
         initialExpansion: expansion,
         flattenEmptyDirectories: true,
-        density: "compact",
+        // A finger needs a taller row than a pointer.
+        ...(matchMedia("(hover: none)").matches
+          ? { density: "relaxed", itemHeight: 44 }
+          : { density: "compact" }),
         onSelectionChange(selected) {
           const path = selected.at(-1);
-          if (path && known.has(path)) props.onOpen(path);
+          if (!path || !known.has(path)) return;
+          props.onOpen(path);
+          // In a drawer, which closes on a choice, the same file is chosen again the next time.
+          if (narrow()) queueMicrotask(() => tree?.getItem(path)?.deselect());
         },
       });
       // A tree among others is as tall as its rows, which change as folders open and close.

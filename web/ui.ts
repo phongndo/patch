@@ -1,10 +1,43 @@
 //! What is open on the page. Commands open these from anywhere, so they live
 //! outside the components that show them.
 
-import { createSignal } from "solid-js";
+import { createRoot, createSignal } from "solid-js";
 import type { Forge } from "../src/protocol.ts";
 import type { Action } from "./commands.ts";
 import type { IconName } from "./icons.gen.ts";
+import { preferences } from "./settings.ts";
+
+/**
+ * A touch screen, or a window too narrow for two columns, keeps its own view of which panels are
+ * open, and a touch screen its own layout: they start from the settings and are never written
+ * back, since every device of the reviewer reads the same settings.
+ */
+const narrowQuery = matchMedia("(max-width: 860px)");
+const touchQuery = matchMedia("(hover: none)");
+const wideQuery = matchMedia("(min-width: 1200px)");
+export const [narrow, setNarrow] = createSignal(narrowQuery.matches);
+export const [touchOnly, setTouchOnly] = createSignal(touchQuery.matches);
+const [wide, setWide] = createSignal(wideQuery.matches);
+narrowQuery.addEventListener("change", (event) => setNarrow(event.matches));
+touchQuery.addEventListener("change", (event) => setTouchOnly(event.matches));
+wideQuery.addEventListener("change", (event) => setWide(event.matches));
+export const keepsOwnView = () => narrow() || touchOnly();
+
+type Layout = "split" | "unified";
+/** A touch screen's layout; "auto" follows the window, as the setting's Automatic does. */
+export const [ownLayoutChoice, setOwnLayout] = createSignal<"auto" | Layout>("auto");
+export const ownLayout = (): Layout => {
+  const choice = ownLayoutChoice();
+  if (choice !== "auto") return choice;
+  return wide() ? "split" : "unified";
+};
+// On a narrow window the files and the comments are drawers over the diff, closed until asked for.
+export const [ownFiles, setOwnFiles] = createRoot(() =>
+  createSignal(() => !narrow() && preferences.settings.sidebarOpen),
+);
+export const [ownComments, setOwnComments] = createRoot(() =>
+  createSignal(() => !narrow() && preferences.settings.commentsOpen),
+);
 
 export const [scopeOpen, setScopeOpen] = createSignal(false);
 /** The tab the scope picker opens on, when a command asks for one. */

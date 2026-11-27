@@ -38,7 +38,14 @@ import {
 } from "./settings.ts";
 import { defaultDark, defaultLight } from "./themes.defaults.gen.ts";
 import { themes, type Theme } from "./themes.gen.ts";
-import { setSettingsPage, settingsPage, type SettingsPage } from "./ui.ts";
+import {
+  ownLayoutChoice,
+  setOwnLayout,
+  setSettingsPage,
+  settingsPage,
+  touchOnly,
+  type SettingsPage,
+} from "./ui.ts";
 
 const { settings, update } = preferences;
 
@@ -643,18 +650,45 @@ function GeneralPage() {
           </Row>
           <Row
             label="Diff layout"
-            description="Side by side, one column, or split on wide windows only."
-            keys={["layout"]}
+            description={
+              touchOnly()
+                ? "Side by side, one column, or split on wide windows only. For this device alone."
+                : "Side by side, one column, or split on wide windows only."
+            }
+            keys={touchOnly() ? [] : ["layout"]}
           >
-            <Choose
-              name="layout"
-              label="Diff layout"
-              options={[
-                { value: "auto", label: "Auto" },
-                { value: "split", label: "Split" },
-                { value: "unified", label: "Unified" },
-              ]}
-            />
+            <Show
+              when={touchOnly()}
+              fallback={
+                <Choose
+                  name="layout"
+                  label="Diff layout"
+                  options={[
+                    { value: "auto", label: "Auto" },
+                    { value: "split", label: "Split" },
+                    { value: "unified", label: "Unified" },
+                  ]}
+                />
+              }
+            >
+              <SegmentedControl
+                class="segmented"
+                aria-label="Diff layout on this device"
+                value={ownLayoutChoice()}
+                onValueChange={(value) => setOwnLayout(value as "auto" | "split" | "unified")}
+              >
+                <SegmentedControlIndicator class="segmented-indicator" />
+                <SegmentedControlItem class="segmented-item" value="auto">
+                  Auto
+                </SegmentedControlItem>
+                <SegmentedControlItem class="segmented-item" value="split">
+                  Split
+                </SegmentedControlItem>
+                <SegmentedControlItem class="segmented-item" value="unified">
+                  Unified
+                </SegmentedControlItem>
+              </SegmentedControl>
+            </Show>
           </Row>
           <Row
             label="Wrap long lines"

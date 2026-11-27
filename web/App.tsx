@@ -45,6 +45,15 @@ import { Sidebar } from "./Sidebar.tsx";
 import { Splitter } from "./splitter.ts";
 import {
   filterOpen,
+  keepsOwnView,
+  narrow,
+  ownComments,
+  ownFiles,
+  ownLayout,
+  setOwnComments,
+  setOwnFiles,
+  setOwnLayout,
+  touchOnly,
   palette,
   scopeOpen,
   setScopeOpen,
@@ -69,9 +78,15 @@ const initialLayout: Layout =
 export function App() {
   const { store } = state;
   const [layout, setLayout] = createSignal<Layout>(initialLayout);
-  const sidebar = () => settings.sidebarOpen;
-  const setSidebar = (toggle: (shown: boolean) => boolean) =>
-    preferences.update({ sidebarOpen: toggle(settings.sidebarOpen) });
+  // A device that keeps its own view opens its panels for itself (ui.ts); on a narrow window
+  // they are drawers, so one opening closes the other.
+  const sidebar = () => (keepsOwnView() ? ownFiles() : settings.sidebarOpen);
+  const setSidebar = (toggle: (shown: boolean) => boolean) => {
+    if (!keepsOwnView()) return preferences.update({ sidebarOpen: toggle(settings.sidebarOpen) });
+    const shown = toggle(ownFiles());
+    setOwnFiles(shown);
+    if (shown && narrow()) setOwnComments(false);
+  };
   const minWidth = 180;
   const [maxWidth, setMaxWidth] = createSignal(Math.round(innerWidth / 2));
   // Follows a drag on its own; the setting, and every effect on it, waits for the end.
@@ -83,15 +98,48 @@ export function App() {
   createEffect(commentsWidth, (width) =>
     document.documentElement.style.setProperty("--comments", `${width}px`),
   );
-  // On a narrow window the comments are a drawer over the diff, closed until asked for; the
-  // setting is for wide ones, where they sit beside it.
-  const narrowQuery = matchMedia("(max-width: 860px)");
-  const [narrow, setNarrow] = createSignal(narrowQuery.matches);
-  narrowQuery.addEventListener("change", (event) => setNarrow(event.matches));
-  const [drawer, setDrawer] = createSignal(false);
-  const commentsShown = () => (narrow() ? drawer() : settings.commentsOpen);
-  const setComments = (shown: boolean) =>
-    narrow() ? setDrawer(shown) : preferences.update({ commentsOpen: shown });
+  const shownLayout = () => (touchOnly() ? ownLayout() : layout());
+  const commentsShown = () => (keepsOwnView() ? ownComments() : settings.commentsOpen);
+  const setComments = (shown: boolean) => {
+    if (!keepsOwnView()) return preferences.update({ commentsOpen: shown });
+    setOwnComments(shown);
+    if (shown && narrow()) setOwnFiles(false);
+  };
+  // A finger pulling down from the bar opens the palette, as pulling down refreshes elsewhere: a
+  // touch screen has no ⌘K. `pull` is how far, past PULL it opens on letting go.
+  const PULL = 64;
+  const [pull, setPull] = createSignal(0);
+  // How far, read as the pull ends: the signal draws the mark, and updates only once flushed.
+  let pulled = 0;
+  let pullFrom: number | undefined;
+  let barElement: HTMLElement | undefined;
+  const pullStart = (event: TouchEvent) => {
+    // Only from the bar itself: a menu it opened passes its touches to it too.
+    const onBar = barElement?.contains(event.target as Node);
+    pullFrom = onBar && event.touches.length === 1 ? event.touches[0]!.clientY : undefined;
+  };
+  const pullMove = (event: TouchEvent) => {
+    if (pullFrom === undefined) return;
+    pulled = Math.max(0, event.touches[0]!.clientY - pullFrom);
+    setPull(pulled);
+  };
+  const pullEnd = () => {
+    const far = pulled;
+    pulled = 0;
+    pullFrom = undefined;
+    setPull(0);
+    if (far < 10) return;
+    // A pull that began on a button is not a tap on it: only the click the pull itself ends with,
+    // at once and on the bar, is let go.
+    const until = performance.now() + 100;
+    const swallow = (event: Event) => {
+      if (performance.now() < until && (event.target as Element | null)?.closest?.("header.bar"))
+        event.stopPropagation();
+    };
+    addEventListener("click", swallow, { capture: true, once: true });
+    setTimeout(() => removeEventListener("click", swallow, { capture: true }), 100);
+    if (far >= PULL) openPalette();
+  };
   const [collapsed, setCollapsed] = createStore<Record<string, boolean>>({});
   let scroller: HTMLElement | undefined;
   let diff: DiffView | undefined;
@@ -347,7 +395,7 @@ export function App() {
       scopeKey: () => store.review?.scopeKey ?? "",
       onEdge: (edge) => state.extendBrowsing(edge),
     });
-    diff.setLayout(layout());
+    diff.setLayout(shownLayout());
     /** The page can't send its comments any more: it says why, and offers them to copy. */
     const showStopped = (why: string) =>
       toast.warning(`${why} Your comments are still here, but can only be copied.`, {
@@ -450,7 +498,7 @@ export function App() {
     { defer: true },
   );
 
-  createEffect(layout, (value) => diff?.setLayout(value));
+  createEffect(shownLayout, (value) => diff?.setLayout(value));
   // Whole files, or folded to their changes; browsing always reads them whole.
   createEffect(
     () => settings.wholeFiles || state.isBrowsing(),
@@ -459,6 +507,7 @@ export function App() {
   );
   // Remember a layout chosen with the toggle; "auto" stays auto until then.
   const chooseLayout = (value: Layout) => {
+    if (touchOnly()) return setOwnLayout(value);
     setLayout(value);
     preferences.update({ layout: value });
   };
@@ -475,7 +524,8 @@ export function App() {
     const names = shown().items.map((file) => file.name);
     const index = names.indexOf(currentFile() ?? "");
     const next = names[Math.max(0, Math.min(names.length - 1, index + direction))];
-    if (next) diff?.scrollToFile(next);
+    if (!next) return;
+    diff?.scrollToFile(next);
   };
 
   /** Goes to a file: a changed one in the review, any other by browsing it. */
@@ -536,6 +586,7 @@ export function App() {
 
   /** Shows a comment in the diff, or opens it where it can be read. */
   function openComment(comment: Comment) {
+    if (narrow()) setOwnComments(false); // The drawer would cover it.
     const unchanged = comment.file !== "" && !state.fileByName(comment.file);
     // One on a file the change leaves alone is read by browsing it.
     if (unchanged && !state.openedByName(comment.file))
@@ -707,9 +758,10 @@ export function App() {
 
     foldFile: { run: withCurrentFile((file) => setFileCollapsed(file, !collapsed[file])) },
     foldAll: { run: toggleAll },
-    layout: { run: () => chooseLayout(layout() === "split" ? "unified" : "split") },
+    layout: { run: () => chooseLayout(shownLayout() === "split" ? "unified" : "split") },
     layoutAuto: {
       run: () => {
+        if (touchOnly()) return setOwnLayout("auto");
         setLayout(innerWidth >= 1200 ? "split" : "unified");
         preferences.update({ layout: "auto" });
       },
@@ -784,7 +836,18 @@ export function App() {
         "sidebar-right": settings.sidebarSide === "right",
       }}
     >
-      <header class="bar">
+      <header
+        class="bar"
+        ref={(element) => (barElement = element)}
+        onTouchStart={pullStart}
+        onTouchMove={pullMove}
+        onTouchEnd={pullEnd}
+        onTouchCancel={() => {
+          pulled = 0;
+          pullFrom = undefined;
+          setPull(0);
+        }}
+      >
         <div class="where">
           <button
             class="icon-button"
@@ -854,15 +917,15 @@ export function App() {
               <Icon name={allCollapsed() ? "chevrons" : "chevronsClose"} />
             </button>
             <button
-              class="icon-button"
+              class="icon-button wide-only"
               title={preferences.hint(
-                layout() === "split" ? "Split · switch to unified" : "Unified · switch to split",
+                shownLayout() === "split" ? "Split · switch to unified" : "Unified · switch to split",
                 "layout",
               )}
-              aria-label={layout() === "split" ? "Switch to unified" : "Switch to split"}
-              onClick={() => chooseLayout(layout() === "split" ? "unified" : "split")}
+              aria-label={shownLayout() === "split" ? "Switch to unified" : "Switch to split"}
+              onClick={() => chooseLayout(shownLayout() === "split" ? "unified" : "split")}
             >
-              <Icon name={layout() === "split" ? "diffSplit" : "diffUnified"} />
+              <Icon name={shownLayout() === "split" ? "diffSplit" : "diffUnified"} />
             </button>
             <button
               class={{ "icon-button": true, active: commentsShown() }}
@@ -951,6 +1014,16 @@ export function App() {
       />
 
       <main class="diff" ref={(element) => (scroller = element)} />
+
+      <Show when={pull() > 0}>
+        <output
+          class={{ "pull-hint": true, ready: pull() >= PULL }}
+          aria-label="Command palette"
+          style={{ translate: `-50% ${Math.min(pull(), PULL * 1.5) * 0.6}px` }}
+        >
+          <Icon name="command" />
+        </output>
+      </Show>
 
       <Show when={store.loading && !state.files().length}>
         <div class="overlay quiet">Reading changes…</div>

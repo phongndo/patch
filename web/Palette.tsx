@@ -46,7 +46,17 @@ import {
   type Status,
 } from "./state.ts";
 import type { Theme } from "./themes.gen.ts";
-import { palette, requests, setPalette } from "./ui.ts";
+import {
+  keepsOwnView,
+  ownComments,
+  ownFiles,
+  ownLayout,
+  ownLayoutChoice,
+  palette,
+  requests,
+  setPalette,
+  touchOnly,
+} from "./ui.ts";
 
 const { settings, update } = preferences;
 
@@ -137,7 +147,12 @@ const shortSize = (value: number) => `${value}px`;
 
 /** What a command's setting is now. */
 const details: Partial<Record<Action, () => string>> = {
-  layout: () => (settings.layout === "auto" ? "Automatic" : title(settings.layout)),
+  layout: () =>
+    touchOnly()
+      ? `${ownLayoutChoice() === "auto" ? "Automatic" : title(ownLayout())} on this device`
+      : settings.layout === "auto"
+        ? "Automatic"
+        : title(settings.layout),
   wrap: () => onOff(settings.wrap),
   wordDiff: () => onOff(settings.wordDiff),
   indicators: () => (settings.indicators === "bars" ? "Bars" : "+ and −"),
@@ -147,8 +162,8 @@ const details: Partial<Record<Action, () => string>> = {
   previewMarkdown: () => onOff(settings.previewMarkdown),
   wholeFiles: () => onOff(settings.wholeFiles),
   groupByKind: () => onOff(settings.groupByKind),
-  sidebar: () => (settings.sidebarOpen ? "Shown" : "Hidden"),
-  showComments: () => (settings.commentsOpen ? "Shown" : "Hidden"),
+  sidebar: () => ((keepsOwnView() ? ownFiles() : settings.sidebarOpen) ? "Shown" : "Hidden"),
+  showComments: () => ((keepsOwnView() ? ownComments() : settings.commentsOpen) ? "Shown" : "Hidden"),
   showUnchanged: () => onOff(state.showUnchanged()),
   sidebarSide: () => `Files on the ${settings.sidebarSide}`,
   ligatures: () => onOff(settings.ligatures),
