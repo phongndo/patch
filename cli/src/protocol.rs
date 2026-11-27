@@ -120,14 +120,29 @@ pub struct Commit {
 pub struct ScopesResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
-    /// The ref the listed commits are counted from; absent when they are just recent history.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub since: Option<String>,
     pub branches: Vec<String>,
-    pub commits: Vec<Commit>,
 }
 
+/// `/api/commits`: a page of the history of HEAD, newest first, or of the commits a search
+/// finds in it, and where the next page starts.
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitsResponse {
+    pub commits: Vec<Commit>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+}
+
+/// `/api/prs`: a page of pull requests, and where the next page starts.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestsResponse {
+    pub pulls: Vec<PullRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PullRequest {
     pub number: u64,
@@ -137,6 +152,8 @@ pub struct PullRequest {
     pub base: String,
     pub updated: String,
     pub draft: bool,
+    /// "open", "closed" or "merged".
+    pub state: String,
 }
 
 // `/api/unchanged` answers `UnchangedFiles`, a plain list of paths (server.rs).
@@ -155,4 +172,7 @@ pub struct GrepMatch {
 #[serde(rename_all = "camelCase")]
 pub struct Submission {
     pub comments: Vec<Comment>,
+    /// The run of Patch the page drew its review from; another run refuses it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
 }

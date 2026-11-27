@@ -20,8 +20,8 @@ import {
 } from "@ui-sdk/solid/command";
 import { Dialog, DialogBackdrop, DialogContent, DialogTitle } from "@ui-sdk/solid/dialog";
 import { createEffect, createMemo, createSignal, For, Show, untrack } from "solid-js";
-import type { Comment, GrepMatch, PullRequest, Scope, ScopesResponse, Side } from "../src/protocol.ts";
-import { loadGrep, loadPullRequests, loadScopes } from "./api.ts";
+import type { Comment, GrepMatch, Scope, ScopesResponse, Side } from "../src/protocol.ts";
+import { loadGrep, loadScopes } from "./api.ts";
 import { hitLimit, matcher, searchDiff, type Hit } from "./grep.ts";
 import { actionGroups, actionNames, definitionOf, type Action } from "./commands.ts";
 import { listMotions } from "./hotkeys.ts";
@@ -196,7 +196,6 @@ export function Palette(props: {
   onRestoreDefaults: () => void;
 }) {
   const [scopes, setScopes] = createSignal<ScopesResponse>();
-  const [pulls, setPulls] = createSignal<PullRequest[]>();
   const [themes, setThemes] = createSignal<readonly Theme[]>();
   const [problem, setProblem] = createSignal("");
   // The files the change leaves alone are read the first time the palette opens on a review.
@@ -221,13 +220,10 @@ export function Palette(props: {
   createEffect(page, (current) => {
     setProblem("");
     const failed = (error: unknown) => setProblem(error instanceof Error ? error.message : String(error));
-    if (current === "chooseBase" || current === "chooseCommit") {
+    if (current === "chooseBase") {
       setScopes(undefined);
       const base = state.store.review?.base;
       loadScopes(base).then(setScopes, failed);
-    } else if (current === "choosePull") {
-      setPulls(undefined);
-      loadPullRequests("").then(setPulls, failed);
     } else if (current === "lightTheme" || current === "darkTheme")
       void import("./themes.gen.ts").then((catalog) => setThemes(catalog.themes), failed);
   });
@@ -365,32 +361,6 @@ export function Palette(props: {
           icon: "branch",
           checked: branch === scopes()?.base,
           run: review({ kind: "all", base: branch }),
-        })),
-    },
-    chooseCommit: {
-      placeholder: "Review a commit",
-      empty: "No commits match.",
-      entries: () =>
-        (scopes()?.commits ?? []).map((commit) => ({
-          id: `commit:${commit.sha}`,
-          label: commit.subject,
-          icon: "commit",
-          detail: `${commit.short} · ${commit.when}`,
-          words: `${commit.sha} ${commit.author}`,
-          run: review({ kind: "commits", from: commit.sha, to: commit.sha }),
-        })),
-    },
-    choosePull: {
-      placeholder: "Review a pull request",
-      empty: "No open pull requests match.",
-      entries: () =>
-        (pulls() ?? []).map((pull) => ({
-          id: `pull:${pull.number}`,
-          label: pull.title,
-          icon: "brandGithub",
-          detail: `#${pull.number} · ${pull.author}`,
-          words: `${pull.number} ${pull.author} ${pull.head}`,
-          run: review({ kind: "pr", number: pull.number }),
         })),
     },
     filterFiles: {
@@ -801,8 +771,7 @@ export function Palette(props: {
   const loading = () =>
     !problem() &&
     (searching() ||
-      (page() === "choosePull" && !pulls()) ||
-      ((page() === "chooseBase" || page() === "chooseCommit") && !scopes()) ||
+      (page() === "chooseBase" && !scopes()) ||
       ((page() === "lightTheme" || page() === "darkTheme") && !themes()));
 
   // Highlights the best match again after each letter; otherwise the list keeps whichever row

@@ -48,9 +48,11 @@ import {
   palette,
   scopeOpen,
   setScopeOpen,
+  setScopeTab,
   setSettingsOpen,
   setSettingsPage,
   settingsOpen,
+  type ScopeTab,
   type SettingsPage,
 } from "./ui.ts";
 
@@ -345,20 +347,30 @@ export function App() {
       onEdge: (edge) => state.extendBrowsing(edge),
     });
     diff.setLayout(layout());
+    /** The page can't send its comments any more: it says why, and offers them to copy. */
+    const showStopped = (why: string) =>
+      toast.warning(`${why} Your comments are still here, but can only be copied.`, {
+        id: "disconnected",
+        duration: Infinity,
+        dismissible: false,
+        action: { label: "Copy feedback", onAction: () => void copyFeedback() },
+        // Copying leaves the comments here, so the offer stays.
+        onDismiss: (details) => details.reason === "action" && details.cancel(),
+      });
     const disconnect = stayConnected({
       lost() {
-        if (store.submitted) return;
-        toast.warning("Patch stopped. Your comments are still here, but can only be copied.", {
-          id: "disconnected",
-          duration: Infinity,
-          dismissible: false,
-          action: { label: "Copy feedback", onAction: () => void copyFeedback() },
-          // Copying leaves the comments here, so the offer stays.
-          onDismiss: (details) => details.reason === "action" && details.cancel(),
-        });
+        if (!store.submitted) showStopped("Patch stopped.");
       },
       back: () => toast.dismiss("disconnected"),
       changed: () => setStale(true),
+      // Another run of Patch on this port knows nothing of what this page drew. With nothing written
+      // it is read again there; comments are about the review they were written on, so then the
+      // page keeps them to copy and the new run never gets them.
+      session: (session) => {
+        if (!store.review || store.review.session === session || store.submitted) return;
+        if (state.hasUnsent()) showStopped("Patch restarted for another review.");
+        else void refresh();
+      },
       unsent: state.hasUnsent,
     });
     // Nothing outlives the review, so closing it with comments unsent asks first.
@@ -614,6 +626,11 @@ export function App() {
   };
 
   const running = () => !store.submitted && palette() === undefined;
+  /** Opens the scope picker on `tab`, wherever it was asked from. */
+  const openScope = (tab: ScopeTab) => {
+    setScopeTab(tab);
+    setScopeOpen(true);
+  };
   const idle = () => running() && !settingsOpen() && !scopeOpen() && !filterOpen();
   const flip = (
     name:
@@ -672,8 +689,9 @@ export function App() {
     reviewUncommitted: { run: () => void state.load({ kind: "uncommitted" }) },
     reviewStaged: { run: () => void state.load({ kind: "staged" }) },
     chooseBase: page("chooseBase"),
-    chooseCommit: page("chooseCommit"),
-    choosePull: page("choosePull"),
+    // Commits and pull requests are many: the picker pages and searches them.
+    chooseCommit: { run: () => openScope("commits") },
+    choosePull: { run: () => openScope("prs") },
 
     foldFile: { run: withCurrentFile((file) => setFileCollapsed(file, !collapsed[file])) },
     foldAll: { run: toggleAll },

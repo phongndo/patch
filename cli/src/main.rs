@@ -7,6 +7,7 @@ mod feedback;
 mod git;
 mod github;
 mod harness;
+mod history;
 mod install;
 mod paths;
 mod protocol;
@@ -354,7 +355,13 @@ fn main() -> ExitCode {
             let review_args = if command == "review" { rest } else { args.clone() };
             let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build();
             match runtime {
-                Ok(runtime) => runtime.block_on(review(&review_args)),
+                Ok(runtime) => {
+                    let result = runtime.block_on(review(&review_args));
+                    // Work still running, such as reading a long history for a search, ends with
+                    // the process rather than keeping it up once the review is over.
+                    runtime.shutdown_background();
+                    result
+                }
                 Err(error) => Err(error.to_string()),
             }
         }

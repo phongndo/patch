@@ -1494,6 +1494,13 @@ a.media-frame:hover img {
   margin: 0;
 }
 
+/* Below a list that comes a page at a time: more on the way, a button for it, or the end. */
+.menu-more {
+  margin: 6px 8px 4px;
+  color: var(--muted);
+  font-size: var(--text-meta);
+}
+
 .scope-panel .menu-item {
   user-select: none;
 }

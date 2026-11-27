@@ -10,10 +10,12 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
-use crate::protocol::{Commit, Scope};
+use crate::protocol::Scope;
 
 pub const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const LIMIT: usize = 64 * 1024 * 1024;
+/// The most of one file read as text.
+pub const TEXT_LIMIT: u64 = LIMIT as u64;
 const DIFF_FLAGS: [&str; 5] = ["--no-ext-diff", "--no-textconv", "--no-color", "--find-renames", "--unified=3"];
 /// A hung git (a network filesystem, a credential prompt) must not hang the review.
 const TIMEOUT: Duration = Duration::from_secs(60);
@@ -56,6 +58,9 @@ pub struct Review {
     pub patch: String,
     /// Each changed file's sides, read with the patch; a pull request's come from GitHub and have none.
     pub changes: Option<Vec<Change>>,
+    /// Read from GitHub (a pull request, or commits this partial clone lacks the contents of):
+    /// a file the repository can't give is asked of GitHub too.
+    pub remote: bool,
 }
 
 #[derive(Default)]
@@ -392,7 +397,47 @@ fn index_lines(patch: &str) -> Vec<Option<&str>> {
     found
 }
 
-fn checked(patch: String) -> Result<String> {
+/// How many of the files' contents on either side of `from`..`to` the repository lacks. A partial
+/// clone may: Patch fetches nothing, and Git, told not to, looks through every object it has
+/// before saying one is missing, minutes in a large repository. Asking first takes milliseconds.
+async fn missing_blobs(root: &Path, from: &str, to: &str) -> Result<usize> {
+    let raw = run_bytes("git", root, &["diff-tree", "-r", "-z", "--no-renames", from, to], Run::default(), LIMIT as u64)
+        .await
+        .map_err(|error| if error == TOO_LARGE { OVER_LIMIT.to_string() } else { error })?;
+    let (records, _) = raw_records(&raw);
+    // Files and links have contents; a submodule's commit is not in this repository anyway.
+    let wanted = |mode: &str, oid: &str| (mode.starts_with("10") || mode == "120000") && oid.bytes().any(|byte| byte != b'0');
+    let mut ids = String::new();
+    for record in &records {
+        for (mode, oid) in [(record.old_mode, record.old_oid), (record.new_mode, record.new_oid)] {
+            if wanted(mode, oid) {
+                ids.push_str(oid);
+                ids.push('\n');
+            }
+        }
+    }
+    Ok(missing(root, &ids).await?.len())
+}
+
+/// Which of `ids`, one a line, the repository lacks: a partial clone's, which Patch never fetches.
+pub async fn missing(root: &Path, ids: &str) -> Result<HashSet<String>> {
+    if ids.is_empty() {
+        return Ok(HashSet::new());
+    }
+    // Fed while its answers are read: written whole first, a large change fills both pipes.
+    let run = Run { stdin: Some(ids.as_bytes()), ..Run::default() };
+    let found = run_bytes("git", root, &["cat-file", "--batch-check=%(objectname)"], run, LIMIT as u64).await?;
+    let found = String::from_utf8_lossy(&found);
+    Ok(found.lines().filter_map(|line| line.strip_suffix(" missing")).map(String::from).collect())
+}
+
+/// Whether the repository is a partial clone, which may lack any object, trees too.
+async fn is_partial(root: &Path) -> bool {
+    let promisors = git(root, &["config", "--get-regexp", r"^remote\..*\.promisor$"]).await.unwrap_or_default();
+    promisors.lines().any(|line| line.ends_with(" true"))
+}
+
+pub fn checked(patch: String) -> Result<String> {
     if patch.len() > LIMIT {
         return Err(OVER_LIMIT.into());
     }
@@ -426,31 +471,78 @@ pub async fn current_branch(root: &Path) -> (Option<String>, String) {
     (head, branch)
 }
 
+/// A run of commits to review, from the first to the last, diffed from the first one's parent.
+pub struct Commits {
+    pub first: String,
+    pub parent: String,
+    pub to: String,
+    /// Whether this partial clone lacks contents the diff needs, which Patch never downloads.
+    pub lacking: bool,
+}
+
+impl Commits {
+    pub fn label(&self) -> String {
+        let (first, to) = (&self.first[..7], &self.to[..7]);
+        if first == to { format!("Commit {to}") } else { format!("Commits {first}–{to}") }
+    }
+
+    /// Why they can't be read here, and how to make them readable.
+    pub fn lacking_message(&self) -> String {
+        // The empty tree is named in full: it is no commit, so Git can't find it by a prefix.
+        let from = if self.parent == EMPTY_TREE { &self.parent[..] } else { &self.parent[..12] };
+        format!(
+            "This partial clone lacks some of the files these commits change, and Patch never downloads into the repository. \
+             `git diff {from} {} >/dev/null` downloads them; then try again.",
+            &self.to[..12]
+        )
+    }
+}
+
+pub async fn commits(root: &Path, from: &str, to: &str) -> Result<Commits> {
+    let (mut to, mut first) = (resolve_commit(root, to).await?, resolve_commit(root, from).await?);
+    // The page may name the ends either way round: the older one is where the run starts.
+    if first != to && git(root, &["merge-base", "--is-ancestor", &to, &first]).await.is_ok() {
+        std::mem::swap(&mut first, &mut to);
+    }
+    // The range starts at the first chosen commit, so diff from its parent.
+    let parent = try_git(root, &["rev-parse", "--verify", "--quiet", &format!("{first}^")])
+        .await
+        .unwrap_or_else(|| EMPTY_TREE.to_string());
+    let lacking = match missing_blobs(root, &parent, &to).await {
+        Ok(missing) => missing > 0,
+        // A partial clone without trees can't even list the files: they are not here either.
+        Err(_) if is_partial(root).await => true,
+        Err(error) => return Err(error),
+    };
+    Ok(Commits { first, parent, to, lacking })
+}
+
+/// The commits' diff, read here: their contents must all be in the repository.
+pub async fn read_commits(root: &Path, scope: &Scope, commits: &Commits) -> Result<Review> {
+    if commits.lacking {
+        return Err(commits.lacking_message());
+    }
+    let (_, branch) = current_branch(root).await;
+    let (patch, changes) = diff_with_changes(root, &[commits.parent.as_str(), commits.to.as_str(), "--"], None).await?;
+    Ok(Review {
+        repository: repository_name(root),
+        branch,
+        scope: scope.clone(),
+        label: commits.label(),
+        base: None,
+        old: Ref::Commit(commits.parent.clone()),
+        new: Ref::Commit(commits.to.clone()),
+        patch: checked(patch)?,
+        changes: Some(changes),
+        remote: false,
+    })
+}
+
 pub async fn read_review(root: &Path, scope: &Scope) -> Result<Review> {
     let repository = repository_name(root);
 
     if let Scope::Commits { from, to } = scope {
-        let (_, branch) = current_branch(root).await;
-        let to = resolve_commit(root, to).await?;
-        let first = resolve_commit(root, from).await?;
-        // The range starts at the first chosen commit, so diff from its parent.
-        let parent = try_git(root, &["rev-parse", "--verify", "--quiet", &format!("{first}^")])
-            .await
-            .unwrap_or_else(|| EMPTY_TREE.to_string());
-        let (patch, changes) = diff_with_changes(root, &[parent.as_str(), to.as_str(), "--"], None).await?;
-        let patch = checked(patch)?;
-        let label = if first == to { format!("Commit {}", &to[..7]) } else { format!("Commits {}–{}", &first[..7], &to[..7]) };
-        return Ok(Review {
-            repository,
-            branch,
-            scope: scope.clone(),
-            label,
-            base: None,
-            old: Ref::Commit(parent),
-            new: Ref::Commit(to),
-            patch,
-            changes: Some(changes),
-        });
+        return read_commits(root, scope, &commits(root, from, to).await?).await;
     }
 
     let (requested, staged, all) = match scope {
@@ -508,6 +600,7 @@ pub async fn read_review(root: &Path, scope: &Scope) -> Result<Review> {
         new: if staged { Ref::Index } else { Ref::Worktree },
         patch: checked(patch)?,
         changes: Some(changes),
+        remote: false,
     })
 }
 
@@ -519,34 +612,6 @@ pub async fn list_branches(root: &Path) -> Result<Vec<String>> {
     )
     .await?;
     Ok(out.lines().filter(|r| !r.is_empty() && !r.ends_with("/HEAD") && *r != "origin").map(String::from).collect())
-}
-
-async fn log(root: &Path, range: &[&str]) -> Vec<Commit> {
-    let mut args = vec!["log", "--max-count=300", "--format=%H%x00%h%x00%s%x00%an%x00%cr"];
-    args.extend(range);
-    args.push("--");
-    let out = try_git(root, &args).await.unwrap_or_default();
-    out.lines()
-        .filter(|line| !line.is_empty())
-        .map(|line| {
-            let mut parts = line.split('\0').map(String::from);
-            let mut next = || parts.next().unwrap_or_default();
-            Commit { sha: next(), short: next(), subject: next(), author: next(), when: next() }
-        })
-        .collect()
-}
-
-/// The branch's own commits since `base`, newest first, and the ref they are
-/// counted from. On the base branch itself, or a branch with nothing of its
-/// own, that list is empty, so it falls back to the last 50 commits and no ref.
-pub async fn list_commits(root: &Path, base: Option<&str>) -> (Vec<Commit>, Option<String>) {
-    if let Some(base) = base {
-        let own = log(root, &[&format!("{base}..HEAD")]).await;
-        if !own.is_empty() {
-            return (own, Some(base.to_string()));
-        }
-    }
-    (log(root, &["-n", "50", "HEAD"]).await, None)
 }
 
 /// A cheap summary of the working tree: HEAD, the status of every changed
@@ -739,27 +804,39 @@ fn worktree_text(root: &Path, path: &str) -> Result<Vec<u8>> {
 /// The largest file the page may open whole; bigger ones are left out.
 const OPEN_LIMIT: u64 = 4 * 1024 * 1024;
 
-/// The regular files in a commit's tree, by path, each with its blob, except
-/// those in `changed`. Read from Git, never the working tree, where an ignored
-/// file or a link out of the repository could be reached.
-pub async fn unchanged_files(root: &Path, tree: &str, changed: &HashSet<String>) -> Result<HashMap<String, String>> {
-    let out = git(root, &["ls-tree", "-r", "-z", "-l", "--end-of-options", tree]).await?;
-    let mut files = HashMap::new();
+/// The regular files in a commit's tree, by path, each with its blob, except those in `changed`,
+/// and whether the repository has every file's contents (a partial clone may not). Read from Git,
+/// never the working tree, where an ignored file or a link out of the repository could be reached.
+pub async fn unchanged_files(root: &Path, tree: &str, changed: &HashSet<String>) -> Result<(HashMap<String, String>, bool)> {
+    // Without sizes: looking one up for contents a partial clone lacks searches every object.
+    let out = git(root, &["ls-tree", "-r", "-z", "--end-of-options", tree]).await?;
+    let mut listed: Vec<(&str, &str)> = Vec::new();
     for entry in out.split('\0') {
         let Some((meta, path)) = entry.split_once('\t') else { continue };
         let mut parts = meta.split_whitespace();
-        let (Some(mode), Some("blob"), Some(id), Some(size)) = (parts.next(), parts.next(), parts.next(), parts.next()) else {
-            continue;
-        };
+        let (Some(mode), Some("blob"), Some(id)) = (parts.next(), parts.next(), parts.next()) else { continue };
         // Links and submodules have no text of their own.
-        if !matches!(mode, "100644" | "100755") || changed.contains(path) {
-            continue;
-        }
-        if size.parse::<u64>().is_ok_and(|size| size <= OPEN_LIMIT) {
-            files.insert(path.to_string(), id.to_string());
+        if matches!(mode, "100644" | "100755") && !changed.contains(path) {
+            listed.push((path, id));
         }
     }
-    Ok(files)
+    // Each one's size, or that it is missing, asked all at once.
+    let ids: String = listed.iter().flat_map(|(_, id)| [*id, "\n"]).collect();
+    let run = Run { stdin: Some(ids.as_bytes()), ..Run::default() };
+    let sizes = run_bytes("git", root, &["cat-file", "--batch-check=%(objectname) %(objectsize)"], run, LIMIT as u64).await?;
+    let sizes = String::from_utf8_lossy(&sizes);
+    let mut complete = true;
+    let mut files = HashMap::new();
+    for ((path, id), answer) in listed.iter().zip(sizes.lines()) {
+        match answer.split_once(' ') {
+            Some((_, "missing")) => complete = false,
+            Some((_, size)) if size.parse::<u64>().is_ok_and(|size| size <= OPEN_LIMIT) => {
+                files.insert(path.to_string(), id.to_string());
+            }
+            _ => {}
+        }
+    }
+    Ok((files, complete))
 }
 
 /// The most lines a search returns, and how much of each.

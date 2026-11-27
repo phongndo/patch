@@ -178,17 +178,25 @@ describe("patchr review", () => {
       const page = await fetch(`${origin}/some/route`);
       expect(page.headers.get("content-type")).toContain("text/html");
 
-      // Scopes: branches, the branch's commits, and one commit on its own.
+      // Scopes: branches; then the history, and one commit on its own.
       const scopes = await (await fetch(`${origin}/api/scopes`)).json();
       expect(scopes.base).toBe("main");
-      expect(scopes.since).toBe("main");
       expect(scopes.branches).toEqual(expect.arrayContaining(["main", "feature"]));
-      expect(scopes.commits.map((c: { subject: string }) => c.subject)).toEqual(["change two"]);
-      const sha = scopes.commits[0].sha;
+      const listed = await (await fetch(`${origin}/api/commits`)).json();
+      expect(listed.commits.map((c: { subject: string }) => c.subject)).toEqual(["change two", "init"]);
+      expect(listed.next).toBeUndefined();
+      const sha = listed.commits[0].sha;
       const commit = await (await fetch(`${origin}/api/review?scope=commits&from=${sha}&to=${sha}`)).json();
       expect(commit.label).toBe(`Commit ${sha.slice(0, 7)}`);
       expect(commit.patch).toContain("+TWO");
       expect(commit.patch).not.toContain("+four");
+      // A run named newest first is the same run.
+      const [newest, oldest] = listed.commits.map((c: { sha: string }) => c.sha);
+      const backwards = await (
+        await fetch(`${origin}/api/review?scope=commits&from=${newest}&to=${oldest}`)
+      ).json();
+      expect(backwards.label).toBe(`Commits ${oldest.slice(0, 7)}–${newest.slice(0, 7)}`);
+      expect(backwards.patch).toContain("+TWO");
       expect((await fetch(`${origin}/api/review?scope=commits&from=--output%3Dx&to=HEAD`)).status).toBe(422);
 
       // Every view of one run is the same session; the server keeps no comments.
@@ -230,7 +238,11 @@ describe("patchr review", () => {
           excerpt: [],
         },
       ];
-      expect((await post(`${origin}/api/submit`, { comments })).ok).toBe(true);
+      // Comments written on a page another run drew are refused, and the review goes on.
+      const elsewhere = await post(`${origin}/api/submit`, { comments, session: "another run" });
+      expect(elsewhere.status).toBe(409);
+      expect((await elsewhere.json()).error).toBe("These comments are about another review.");
+      expect((await post(`${origin}/api/submit`, { comments, session: review.session })).ok).toBe(true);
       const out = await stdout;
       expect(await child.exited).toBe(0);
       expect(out).toContain("# Review feedback (patch-contract-");
@@ -1096,9 +1108,9 @@ describe("patchr review", () => {
       try {
         const scopes = await (await fetch(`${origin}/api/scopes`)).json();
         expect(scopes.base).toBe("main");
-        expect(scopes.since).toBeUndefined();
-        expect(scopes.commits.map((c: { subject: string }) => c.subject)).toEqual(["second", "first"]);
-        const sha = scopes.commits[1].sha;
+        const listed = await (await fetch(`${origin}/api/commits`)).json();
+        expect(listed.commits.map((c: { subject: string }) => c.subject)).toEqual(["second", "first"]);
+        const sha = listed.commits[1].sha;
         const root = await (await fetch(`${origin}/api/review?scope=commits&from=${sha}&to=${sha}`)).json();
         expect(root.patch).toContain("+1"); // The first commit diffs against the empty tree.
       } finally {
@@ -1106,6 +1118,355 @@ describe("patchr review", () => {
       }
     } finally {
       await rm(repo, { recursive: true, force: true });
+      repo = saved;
+    }
+  });
+
+  test("the history comes a page at a time from the HEAD the first pinned, and a search finds it all", async () => {
+    const saved = repo;
+    repo = await mkdtemp(join(tmpdir(), "patch-contract-history-"));
+    try {
+      git("init", "-q", "-b", "main");
+      // 250 commits at once: odd ones by Ann about Loops, even ones by Bob.
+      const stream = Array.from({ length: 250 }, (_, at) => {
+        const n = at + 1;
+        const [who, what] = n % 2 ? ["Ann", "Fix Loops"] : ["Bob", "tidy"];
+        const message = `${what} ${n}`;
+        return [
+          "commit refs/heads/main",
+          `committer ${who} <${who.toLowerCase()}@t> ${1_700_000_000 + n} +0000`,
+          `data ${message.length}`,
+          message,
+          "",
+        ].join("\n");
+      }).join("");
+      Bun.spawnSync(["git", "fast-import", "--quiet"], { cwd: repo, stdin: Buffer.from(stream) });
+      git("reset", "-q", "--hard", "main");
+      const { child, origin } = await start();
+      try {
+        const page = async (query = "", after?: string) => {
+          const params = new URLSearchParams({ q: query, ...(after ? { after } : {}) });
+          return (await (await fetch(`${origin}/api/commits?${params}`)).json()) as {
+            commits: { sha: string; subject: string; author: string; short: string; when: string }[];
+            next?: string;
+          };
+        };
+        // Browsing: newest first, a hundred at a time, with no commit twice and none left out.
+        const first = await page();
+        expect(first.commits).toHaveLength(100);
+        expect(first.commits[0]!.subject).toBe("tidy 250");
+        expect(first.commits[0]!.author).toBe("Bob");
+        expect(first.commits[0]!.short).toBe(first.commits[0]!.sha.slice(0, 7));
+        // A commit made now does not move the pages after the first.
+        git("commit", "-q", "--allow-empty", "-m", "made meanwhile");
+        const second = await page("", first.next);
+        const third = await page("", second.next);
+        expect(third.next).toBeUndefined();
+        const subjects = [...first.commits, ...second.commits, ...third.commits].map(
+          (commit) => commit.subject,
+        );
+        expect(subjects).toHaveLength(250);
+        expect(new Set(subjects).size).toBe(250);
+        expect(subjects.at(-1)).toBe("Fix Loops 1");
+        // Searching: every word, in any order; capitals match only capitals; pages resume.
+        const found = await page("loops ann");
+        expect(found.commits.map((commit) => commit.subject).slice(0, 2)).toEqual([
+          "Fix Loops 249",
+          "Fix Loops 247",
+        ]);
+        expect(found.commits).toHaveLength(100);
+        const rest = await page("loops ann", found.next);
+        expect(rest.commits).toHaveLength(25);
+        expect(rest.next).toBeUndefined();
+        expect((await page("LOOPS")).commits).toHaveLength(0);
+        expect((await page("Loops 13")).commits.map((commit) => commit.subject)).toEqual(
+          [213, 139, 137, 135, 133, 131, 113, 13].map((n) => `Fix Loops ${n}`),
+        );
+        // An id finds its commit first, wherever it is.
+        const oldest = third.commits.at(-1)!;
+        expect((await page(oldest.sha.slice(0, 10))).commits[0]!.subject).toBe("Fix Loops 1");
+        // A commit made since is found too: the history read is built on, not read again.
+        git("commit", "-q", "--allow-empty", "-m", "Loops made later");
+        expect((await page("later")).commits.map((commit) => commit.subject)).toEqual(["Loops made later"]);
+        expect((await page("loops ann", found.next)).commits).toHaveLength(25);
+        // Hex digits that name a tag, not a commit's id, are searched for like any other words.
+        git("tag", "abcdef1", oldest.sha);
+        expect((await page("abcdef1")).commits).toEqual([]);
+        // A cursor is the server's own.
+        expect((await fetch(`${origin}/api/commits?after=HEAD:0`)).status).toBe(422);
+      } finally {
+        child.kill();
+      }
+      // A shallow clone deepened while it is reviewed: its searches find the history it gained.
+      const source = repo;
+      repo = join(source, "shallow");
+      Bun.spawnSync(["git", "clone", "-q", "--depth=2", `file://${source}`, repo]);
+      const shallow = await start();
+      try {
+        const found = async () =>
+          ((await (await fetch(`${shallow.origin}/api/commits?q=loops`)).json()) as { commits: unknown[] })
+            .commits;
+        expect(await found()).toHaveLength(1);
+        git("fetch", "-q", "--deepen=10");
+        expect(await found()).toHaveLength(6);
+      } finally {
+        shallow.child.kill();
+      }
+      repo = source;
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+      repo = saved;
+    }
+  });
+
+  test("pull requests come a page at a time by GitHub's cursor, and a number finds a merged one", async () => {
+    const bin = await mkdtemp(join(tmpdir(), "patch-bin-"));
+    try {
+      const pull = (number: number, state = "OPEN") => ({
+        number,
+        title: `Change ${number}`,
+        state,
+        isDraft: false,
+        updatedAt: "2026-01-01T00:00:00Z",
+        headRefName: `b${number}`,
+        baseRefName: "main",
+        author: number === 3 ? null : { login: "ann" },
+      });
+      const page = (numbers: number[], after: string | null) =>
+        JSON.stringify({
+          nodes: numbers.map((n) => pull(n)),
+          pageInfo: { hasNextPage: after !== null, endCursor: after },
+        });
+      await writeFile(join(bin, "first"), page([9, 8], "C1"));
+      await writeFile(join(bin, "second"), page([3], null));
+      // A search's hits that are issues come back empty.
+      await writeFile(
+        join(bin, "found"),
+        JSON.stringify({ nodes: [pull(8), {}], pageInfo: { hasNextPage: false, endCursor: null } }),
+      );
+      await writeFile(join(bin, "merged"), JSON.stringify(pull(1, "MERGED")));
+      await writeFile(
+        join(bin, "gh"),
+        [
+          "#!/bin/sh",
+          'args="$*"',
+          `echo "$args" >> "${bin}/calls"`,
+          'case "$args" in',
+          '  *nameWithOwner*) echo "acme/widgets" ;;',
+          '  "repo view"*) echo "https://ghe.example/acme/widgets" ;;',
+          `  *"pullRequest(number"*) cat "${bin}/merged" ;;`,
+          `  *"after=C1"*) cat "${bin}/second" ;;`,
+          `  *pullRequests*) cat "${bin}/first" ;;`,
+          `  *search*) cat "${bin}/found" ;;`,
+          "  *) exit 1 ;;",
+          "esac",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      // The repository is on GitHub Enterprise: every request goes there, which `gh` names.
+      git("remote", "add", "work", "https://GHE.example/acme/widgets.git");
+      const review = await startWith({ PATH: `${bin}:${process.env.PATH}` });
+      try {
+        const page = async (query = "", after?: string) => {
+          const params = new URLSearchParams({ q: query, ...(after ? { after } : {}) });
+          return (await (await fetch(`${review.origin}/api/prs?${params}`)).json()) as {
+            pulls: { number: number; author: string; state: string }[];
+            next?: string;
+          };
+        };
+        const first = await page();
+        expect(first.pulls.map((pull) => pull.number)).toEqual([9, 8]);
+        expect(first.next).toBe("C1");
+        const second = await page("", first.next);
+        expect(second.pulls).toEqual([
+          expect.objectContaining({ number: 3, author: "ghost", state: "open" }),
+        ]);
+        expect(second.next).toBeUndefined();
+        // A number is also that pull request, first, merged or not; a search spells the repository out.
+        const found = await page("#1");
+        expect(found.pulls.map((pull) => [pull.number, pull.state])).toEqual([
+          [1, "merged"],
+          [8, "open"],
+        ]);
+        const calls = await Bun.file(join(bin, "calls")).text();
+        expect(calls).toContain("q=repo:acme/widgets is:pr is:open #1 sort:updated-desc");
+        // A date only a merged one has chooses merged ones: not only the open.
+        await page("merged:>=2025-01-01 fix");
+        expect(await Bun.file(join(bin, "calls")).text()).toContain(
+          "q=repo:acme/widgets is:pr merged:>=2025-01-01 fix sort:",
+        );
+        // Typed state and order are the user's.
+        await page("is:merged sort:created-asc fix");
+        expect(await Bun.file(join(bin, "calls")).text()).toContain(
+          "q=repo:acme/widgets is:pr is:merged sort:created-asc fix --jq",
+        );
+        const made = (await Bun.file(join(bin, "calls")).text()).split("\n");
+        expect(made.filter((call) => call.startsWith("repo view"))).toHaveLength(1);
+        const api = made.filter((call) => call.startsWith("api "));
+        expect(api.filter((call) => !call.startsWith("api --hostname ghe.example "))).toEqual([]);
+      } finally {
+        review.child.kill();
+      }
+    } finally {
+      git("remote", "remove", "work");
+      await rm(bin, { recursive: true, force: true });
+    }
+  });
+
+  test("a commit whose files a partial clone lacks is read from GitHub, or refused at once; what is here stays usable", async () => {
+    const saved = repo;
+    const source = await mkdtemp(join(tmpdir(), "patch-contract-source-"));
+    const bin = await mkdtemp(join(tmpdir(), "patch-bin-"));
+    repo = source;
+    try {
+      git("init", "-q", "-b", "main");
+      git("config", "uploadpack.allowFilter", "true");
+      await writeFile(join(repo, "a.txt"), "1\n");
+      await writeFile(join(repo, "b.txt"), "kept\n");
+      await writeFile(join(repo, "c.txt"), "gone\n");
+      git("add", ".");
+      git("commit", "-qm", "first");
+      await writeFile(join(repo, "a.txt"), "2\n");
+      git("commit", "-qam", "second");
+      await writeFile(join(repo, "a.txt"), "3\n");
+      git("rm", "-q", "c.txt");
+      git("commit", "-qam", "third");
+      const clone = (filter: string, into: string) =>
+        Bun.spawnSync(["git", "clone", "-q", `--filter=${filter}`, `file://${source}`, join(source, into)]);
+      clone("tree:0", "trees");
+      repo = join(source, "clone");
+      clone("blob:none", "clone");
+      // Only the checked-out commit's contents came: "1", "2" and c.txt are left behind.
+      const [, second, first] = git("log", "--format=%H").trim().split("\n");
+      const parent = git("rev-parse", `${second}^`).trim();
+      const id = (name: string) => name.padEnd(40, "0");
+      await writeFile(
+        join(bin, `tree-${id("a")}`),
+        JSON.stringify({ tree: [{ path: "a.txt", mode: "100644", type: "blob", sha: id("1"), size: 2 }] }),
+      );
+      await writeFile(
+        join(bin, `tree-${id("b")}`),
+        JSON.stringify({ tree: [{ path: "a.txt", mode: "100644", type: "blob", sha: id("2"), size: 2 }] }),
+      );
+      await writeFile(join(bin, `commit-${parent}`), id("a"));
+      await writeFile(join(bin, `commit-${second}`), id("b"));
+      await writeFile(join(bin, `blob-${id("1")}`), "1\n");
+      await writeFile(join(bin, `blob-${id("2")}`), "2\n");
+      const files = [{ filename: "a.txt", previous_filename: null, status: "modified" }];
+      await writeFile(join(bin, "compared"), JSON.stringify({ base: parent, files }));
+      await writeFile(
+        join(bin, "patch"),
+        "diff --git a/a.txt b/a.txt\nindex 1000000..2000000 100644\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-1\n+2\n",
+      );
+      // GitHub, as `gh` answers it: first for a repository without a GitHub remote, then with one.
+      const gh = (answers: string[]) =>
+        writeFile(
+          join(bin, "gh"),
+          [
+            "#!/bin/sh",
+            'args="$*"',
+            `echo "$args" >> "${bin}/calls"`,
+            'case "$args" in',
+            ...answers,
+            "esac",
+          ].join("\n"),
+          { mode: 0o755 },
+        );
+      await gh([
+        '  *) echo "none of the git remotes configured for this repository point to a known GitHub host." >&2; exit 1 ;;',
+      ]);
+      const path = { PATH: `${bin}:${process.env.PATH}` };
+      const ask = (origin: string) => fetch(`${origin}/api/review?scope=commits&from=${second}&to=${second}`);
+      const offline = await startWith(path);
+      try {
+        const started = performance.now();
+        const answer = await ask(offline.origin);
+        expect(answer.status).toBe(422);
+        const { error } = await answer.json();
+        expect(error).toContain("partial clone lacks some of the files");
+        expect(error).toContain(`git diff ${parent.slice(0, 12)} ${second!.slice(0, 12)}`);
+        expect(error).toContain("This repository has no GitHub remote.");
+        expect(performance.now() - started).toBeLessThan(5000);
+        // Its pull requests say the same, not what `gh` said.
+        expect((await (await fetch(`${offline.origin}/api/prs`)).json()).error).toBe(
+          "This repository has no GitHub remote.",
+        );
+      } finally {
+        offline.child.kill();
+      }
+      // The first commit alone, by GitHub's diff of one commit: there is nothing to compare it with.
+      const added = (name: string) => ({ filename: name, previous_filename: null, status: "added" });
+      await writeFile(join(bin, "root"), JSON.stringify(["a.txt", "b.txt", "c.txt"].map(added)));
+      await writeFile(
+        join(bin, "rootpatch"),
+        ["a.txt", "b.txt", "c.txt"]
+          .map(
+            (name) =>
+              `diff --git a/${name} b/${name}\nnew file mode 100644\n--- /dev/null\n+++ b/${name}\n@@ -0,0 +1 @@\n+${name}\n`,
+          )
+          .join(""),
+      );
+      await gh([
+        `  *"{repo}/commits/${first} --jq"*) cat "${bin}/root" ;;`,
+        `  *"vnd.github.diff repos/{owner}/{repo}/commits/"*) cat "${bin}/rootpatch" ;;`,
+        `  *merge_base_commit*) cat "${bin}/compared" ;;`,
+        `  *vnd.github.diff*) cat "${bin}/patch" ;;`,
+        `  */git/blobs/*) cat "${bin}/blob-\${args##*/}" ;;`,
+        `  */git/commits/*) sha="\${args##*/git/commits/}"; cat "${bin}/commit-\${sha%% *}" ;;`,
+        `  */git/trees/*) cat "${bin}/tree-\${args##*/}" ;;`,
+        "  *) exit 1 ;;",
+      ]);
+      const online = await startWith(path);
+      try {
+        const body = await (await ask(online.origin)).json();
+        expect(body.label).toBe(`Commit ${second!.slice(0, 7)}`);
+        expect(body.patch).toContain("+2");
+        expect(body.files).toEqual([{ old: "a.txt", new: "a.txt" }]);
+        expect(await Bun.file(join(bin, "calls")).text()).toContain(`compare/${parent}...${second}`);
+        // Neither side's contents are here: both come from GitHub, by the commits reviewed.
+        const side = async (name: string) => {
+          const query = new URLSearchParams({ key: body.scopeKey, side: name, path: "a.txt" });
+          return (await fetch(`${online.origin}/api/file?${query}`)).text();
+        };
+        expect(await side("old")).toBe("1\n");
+        expect(await side("new")).toBe("2\n");
+        // Of the files it leaves alone, those here can be opened; a search, which needs them
+        // all, is refused rather than left to wait on Git.
+        const key = new URLSearchParams({ key: body.scopeKey });
+        expect(await (await fetch(`${online.origin}/api/unchanged?${key}`)).json()).toEqual(["b.txt"]);
+        const kept = await fetch(`${online.origin}/api/unchanged/file?${key}&path=b.txt`);
+        expect(await kept.text()).toBe("kept\n");
+        const grep = await fetch(`${online.origin}/api/grep?${key}&q=kept`);
+        expect((await grep.json()).error).toBe("This partial clone lacks some of the files to search.");
+        // The first commit alone, from GitHub.
+        const root = await (
+          await fetch(`${online.origin}/api/review?scope=commits&from=${first}&to=${first}`)
+        ).json();
+        expect(root.label).toBe(`Commit ${first!.slice(0, 7)}`);
+        expect(root.files).toHaveLength(3);
+        expect(root.patch).toContain("+b.txt");
+        // Every request goes to the repository's host.
+        const calls = (await Bun.file(join(bin, "calls")).text())
+          .split("\n")
+          .filter((call) => call.startsWith("api "));
+        expect(calls.length).toBeGreaterThan(0);
+        expect(calls.filter((call) => !call.startsWith("api --hostname github.com "))).toEqual([]);
+      } finally {
+        online.child.kill();
+      }
+      // A clone without trees can't list the commit's files either: GitHub has them.
+      repo = join(source, "trees");
+      const treeless = await startWith(path);
+      try {
+        const body = await (await ask(treeless.origin)).json();
+        expect(body.label).toBe(`Commit ${second!.slice(0, 7)}`);
+        expect(body.patch).toContain("+2");
+      } finally {
+        treeless.child.kill();
+      }
+    } finally {
+      await rm(source, { recursive: true, force: true });
+      await rm(bin, { recursive: true, force: true });
       repo = saved;
     }
   });

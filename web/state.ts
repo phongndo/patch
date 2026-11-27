@@ -800,7 +800,7 @@ function createReviewState() {
     sending = true;
     try {
       keepWriting();
-      await submit({ comments: snapshot(store).comments });
+      await submit({ comments: snapshot(store).comments, session: store.review.session });
       sessionStorage.removeItem(savedKey(store.review.session));
       setStore((s) => {
         s.submitted = true;

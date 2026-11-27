@@ -25,6 +25,7 @@ export interface PullRequest {
   base: string;
   updated: string;
   draft: boolean;
+  state: "open" | "closed" | "merged";
 }
 
 export type Side = "additions" | "deletions";
@@ -70,10 +71,20 @@ export interface ChangedPaths {
 
 export interface ScopesResponse {
   base?: string;
-  /** The ref the listed commits are counted from; absent when they are just recent history. */
-  since?: string;
   branches: string[];
+}
+
+/** `/api/commits`: a page of the history of HEAD, newest first, or of what a search finds in it. */
+export interface CommitsResponse {
   commits: Commit[];
+  /** Where the next page starts; absent on the last. */
+  next?: string;
+}
+
+/** `/api/prs`: a page of pull requests. */
+export interface PullRequestsResponse {
+  pulls: PullRequest[];
+  next?: string;
 }
 
 /** `/api/unchanged`: the files a review leaves alone, which can be opened whole for context. */
@@ -89,4 +100,6 @@ export interface GrepMatch {
 /** A finished review; with no comments, it passed. */
 export interface Submission {
   comments: Comment[];
+  /** The run of Patch the page drew its review from; another run refuses it. */
+  session?: string;
 }

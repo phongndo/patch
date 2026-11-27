@@ -15,7 +15,15 @@ const { preferences } = await import("../settings.ts");
 const { setScopeOpen } = await import("../ui.ts");
 const { toast } = await import("@ui-sdk/solid/toast");
 
-const pull = { number: 7, title: "Fix it", author: "ann", head: "fix", base: "main", draft: false };
+const pull = {
+  number: 7,
+  title: "Fix it",
+  author: "ann",
+  head: "fix",
+  base: "main",
+  draft: false,
+  state: "open",
+};
 const commits = [
   { sha: "c3", short: "c3", subject: "third", author: "ann", when: "now" },
   { sha: "c2", short: "c2", subject: "second", author: "ann", when: "now" },
@@ -23,21 +31,40 @@ const commits = [
 ];
 const asked: string[] = [];
 let reviewed: Partial<ReviewResponse> | undefined;
+/** The history `/api/commits` pages through, and how many commits a page holds. */
+let history = commits;
+let pageSize = 100;
+
+/** A page of the history, or of what a search finds in it, as the server answers. */
+function commitPage(url: string) {
+  const params = new URL(url, "http://patch").searchParams;
+  const at = Number(params.get("after") ?? 0);
+  const query = (params.get("q") ?? "").toLowerCase();
+  const list = history.filter((commit) =>
+    `${commit.sha} ${commit.subject} ${commit.author}`.toLowerCase().includes(query),
+  );
+  const next = at + pageSize < list.length ? String(at + pageSize) : undefined;
+  return { commits: list.slice(at, at + pageSize), ...(next ? { next } : {}) };
+}
 
 beforeEach(async () => {
   asked.length = 0;
   reviewed = undefined;
+  history = commits;
+  pageSize = 100;
   setScopeOpen(false);
   toast.dismiss();
   vi.stubGlobal("fetch", async (url: string) => {
     asked.push(url);
     const body = url.startsWith("/api/scopes")
-      ? { branches: ["main", "dev", "feature"], base: "main", since: "main", commits }
-      : url.startsWith("/api/prs")
-        ? [pull]
-        : reviewed && url.startsWith("/api/review")
-          ? { repository: "demo", branch: "feature", scopeKey: "k", patch: "", session: "run", ...reviewed }
-          : { error: "none" };
+      ? { branches: ["main", "dev", "feature"], base: "main" }
+      : url.startsWith("/api/commits")
+        ? commitPage(url)
+        : url.startsWith("/api/prs")
+          ? { pulls: [pull] }
+          : reviewed && url.startsWith("/api/review")
+            ? { repository: "demo", branch: "feature", scopeKey: "k", patch: "", session: "run", ...reviewed }
+            : { error: "none" };
     return new Response(JSON.stringify(body), { status: "error" in body ? 500 : 200 });
   });
   mount(() => <App />);
@@ -173,6 +200,7 @@ test("it opens on the tab of what is under review, and Shift-click extends from 
   await picker();
   expect(shownTab()).toBe("Commits");
   expect(checked()).toEqual(["third"]);
+  expect(highlighted()).toBe("third");
   rows()[1]!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, shiftKey: true }));
   await settle();
   expect(asked).toContain("/api/review?scope=commits&from=c2&to=c3");
@@ -206,6 +234,113 @@ test("its key opens and closes it, also while typing, and a view's own key works
   await press($(".scope-menu input"), "s", { code: "KeyS", altKey: true });
   expect(asked).toContain("/api/review?scope=staged");
   preferences.bind("reviewStaged", undefined);
+});
+
+test("commits come a page at a time: arrowing to the last asks for the next, until the first commit", async () => {
+  pageSize = 2;
+  const search = await picker();
+  await press(search, "ArrowRight");
+  expect(labels()).toEqual(["third", "second"]);
+  expect(named("button", "Load more")).toBeTruthy();
+  await press(search, "ArrowDown");
+  await settle();
+  expect(labels()).toEqual(["third", "second", "first"]);
+  expect(asked).toContain("/api/commits?q=&after=2");
+  expect($(".scope-menu .menu-more").textContent).toBe("The first commit.");
+});
+
+test("the commit under review is highlighted once its page arrives, not the newest", async () => {
+  reviewed = { scope: { kind: "commits", from: "c2", to: "c2" }, label: "Commit c2" };
+  await state.load();
+  await picker();
+  expect(checked()).toEqual(["second"]);
+  expect(highlighted()).toBe("second");
+  await press($(".scope-menu input"), "Escape");
+  // The tests after it start on the branch.
+  reviewed = { scope: { kind: "all" }, label: "feature" };
+  await state.load();
+  await settle();
+});
+
+test("each opening lists commits afresh, also on a tab shown in an earlier one", async () => {
+  const search = await picker();
+  await press(search, "ArrowRight");
+  expect(labels()).toEqual(["third", "second", "first"]);
+  await press(search, "Escape");
+  expect(isOpen()).toBe(false);
+  history = [{ sha: "c4", short: "c4", subject: "fourth", author: "ann", when: "now" }, ...commits];
+  asked.length = 0;
+  await press(await picker(), "ArrowRight");
+  expect(asked).toContain("/api/commits?q=");
+  expect(labels()).toEqual(["fourth", "third", "second", "first"]);
+});
+
+test("a run whose first end a search no longer lists is still reviewed, by both its ends", async () => {
+  const search = await picker();
+  await press(search, "ArrowRight");
+  await press(search, "Enter", { shiftKey: true });
+  expect(checked()).toEqual(["third"]);
+  await type(search, "first");
+  await settle(260);
+  expect(labels()).toEqual(["first"]);
+  await press(search, "Enter");
+  expect(asked).toContain("/api/review?scope=commits&from=c3&to=c1");
+  expect(isOpen()).toBe(false);
+});
+
+test("scrolling the list to its end asks for the next page, once", async () => {
+  pageSize = 2;
+  const search = await picker();
+  await press(search, "ArrowRight");
+  expect(labels()).toEqual(["third", "second"]);
+  asked.length = 0;
+  // The panel scrolls, not the list in it. Nothing is laid out here, so it is always at its end.
+  const panel = $(".scope-panel");
+  panel.dispatchEvent(new Event("scroll"));
+  panel.dispatchEvent(new Event("scroll"));
+  await settle();
+  expect(asked.filter((url) => url.startsWith("/api/commits"))).toEqual(["/api/commits?q=&after=2"]);
+  expect(labels()).toEqual(["third", "second", "first"]);
+});
+
+test("the button loads more too, and a run of commits can span the pages", async () => {
+  pageSize = 2;
+  const search = await picker();
+  await press(search, "ArrowRight");
+  expect(labels()).toEqual(["third", "second"]);
+  await click(named("button", "Load more"));
+  await settle();
+  expect(labels()).toEqual(["third", "second", "first"]);
+  await press(search, "Enter", { shiftKey: true });
+  await press(search, "ArrowDown");
+  await press(search, "ArrowDown");
+  await press(search, "Enter");
+  expect(asked).toContain("/api/review?scope=commits&from=c1&to=c3");
+});
+
+test("a search of commits is the server's: all it finds, in its order, even what the label lacks", async () => {
+  history = [...commits, { sha: "beef", short: "beef", subject: "fourth", author: "bob", when: "then" }];
+  pageSize = 3;
+  const search = await picker();
+  await press(search, "ArrowRight");
+  await type(search, "bob");
+  // Until the server answers, nothing the last list had is offered for it.
+  expect(labels()).toEqual([]);
+  await settle(260);
+  expect(asked).toContain("/api/commits?q=bob");
+  expect(labels()).toEqual(["fourth"]);
+  expect($(".scope-menu .menu-label").textContent).toBe("Found in the history of feature");
+});
+
+test("the palette's commit and pull request commands open the picker on their tab", async () => {
+  await press(document.body, "k", { code: "KeyK", ctrlKey: true });
+  await type(named("combobox", "Search commands") as HTMLInputElement, "review a commit");
+  await press(named("combobox", "Search commands"), "Enter");
+  await settle();
+  expect(isOpen()).toBe(true);
+  expect(shownTab()).toBe("Commits");
+  expect(labels()).toEqual(["third", "second", "first"]);
+  await press($(".scope-menu input"), "Escape");
 });
 
 test("pull requests load when shown, and one can be chosen", async () => {
@@ -244,6 +379,18 @@ test("losing the connection shows one toast that Escape can't dismiss", async ()
   expect(toasts[0]!.textContent).toContain("Copy feedback");
   await press(toasts[0]!, "Escape");
   expect(document.querySelectorAll('[data-slot="toast"]')).toHaveLength(1);
+});
+
+test("when Patch can't be reached, choosing what to review says so, not the browser's error", async () => {
+  vi.stubGlobal("fetch", async () => {
+    throw new TypeError("Failed to fetch");
+  });
+  await picker();
+  await settle();
+  expect($(".scope-menu .menu-error").textContent).toBe(
+    "Can't reach this Patch review. Check the connection, or start a new review.",
+  );
+  await press(document.activeElement!, "Escape");
 });
 
 test("a page that goes for good says which it is, and whether anything is unsent", async () => {
@@ -324,6 +471,32 @@ test("comments are searched by their text and file, apart from the files", async
   expect($(".comments-panel .empty").textContent).toContain("line number");
 });
 
+test("a page with comments reached by another run keeps them to copy, and never reads the other review", async () => {
+  await loaded();
+  await write("about this review");
+  const source = (globalThis.EventSource as unknown as { last: EventTarget }).last;
+  asked.length = 0;
+  source.dispatchEvent(new MessageEvent("session", { data: "another run" }));
+  await settle();
+  expect(asked.some((url) => url.startsWith("/api/review"))).toBe(false);
+  expect($('[data-slot="toast"]').textContent).toContain("Patch restarted for another review.");
+  expect(state.store.comments.map((comment) => comment.body)).toEqual(["about this review"]);
+  await clear();
+});
+
+test("a page reached by another run of Patch reads its review again, and only then", async () => {
+  await loaded();
+  const source = (globalThis.EventSource as unknown as { last: EventTarget }).last;
+  const hello = (session: string) => source.dispatchEvent(new MessageEvent("session", { data: session }));
+  asked.length = 0;
+  hello("run");
+  await settle();
+  expect(asked.some((url) => url.startsWith("/api/review"))).toBe(false);
+  hello("another run");
+  await settle();
+  expect(asked.some((url) => url.startsWith("/api/review"))).toBe(true);
+});
+
 test("a search never hides what is being written, and Enter opens the first found", async () => {
   await clear();
   await write("Rename this");
@@ -367,7 +540,8 @@ test("one press finishes a review without comments, and closes", async () => {
   });
   await click(finish());
   await settle();
-  expect(sent).toEqual([{ comments: [] }]);
+  // Named by the run it was drawn from, which alone takes it.
+  expect(sent).toEqual([{ comments: [], session: "run" }]);
   expect(close).toHaveBeenCalledOnce();
   expect(finish().disabled).toBe(true);
 });

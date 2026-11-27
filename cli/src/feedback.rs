@@ -114,13 +114,13 @@ mod tests {
         let mut blank = comment("additions", 2, 2, &[]);
         blank.body = " ".into();
         for comments in [vec![], vec![blank]] {
-            assert_eq!(format(&Submission { comments }, "demo", "/repo"), PASSED);
+            assert_eq!(format(&Submission { comments, session: None }, "demo", "/repo"), PASSED);
         }
     }
 
     #[test]
     fn comments_carry_location_lines_and_a_safe_fence() {
-        let s = Submission { comments: vec![comment("additions", 2, 3, &["const x = 1;", "```"])] };
+        let s = Submission { session: None, comments: vec![comment("additions", 2, 3, &["const x = 1;", "```"])] };
         let text = format(&s, "demo", "/repo");
         assert!(text.contains("### 1. src/a.ts:2-3"));
         assert!(text.contains("````ts\nconst x = 1;\n```\n````"));
@@ -130,7 +130,7 @@ mod tests {
     fn old_side_and_scope_are_named() {
         let mut c = comment("deletions", 4, 4, &[]);
         c.scope = Some("PR #1".into());
-        let s = Submission { comments: vec![c] };
+        let s = Submission { session: None, comments: vec![c] };
         assert!(format(&s, "demo", "/repo").contains("src/a.ts:4 (old side, removed lines) (in PR #1)"));
     }
 
@@ -141,7 +141,7 @@ mod tests {
         first.body = "Split this PR.".into();
         let mut second = first.clone();
         second.body = "Add tests.\nFor both paths.".into();
-        let s = Submission { comments: vec![comment("additions", 2, 2, &[]), first, second] };
+        let s = Submission { session: None, comments: vec![comment("additions", 2, 2, &[]), first, second] };
         let text = format(&s, "demo", "/repo");
         assert!(
             text.contains(
@@ -152,7 +152,7 @@ mod tests {
 
     #[test]
     fn a_comment_on_a_whole_file_comes_before_its_lines() {
-        let s = Submission { comments: vec![comment("additions", 2, 2, &[]), comment("deletions", 0, 0, &[])] };
+        let s = Submission { session: None, comments: vec![comment("additions", 2, 2, &[]), comment("deletions", 0, 0, &[])] };
         let text = format(&s, "demo", "/repo");
         assert!(text.contains("### 1. src/a.ts (the whole file)\n\nRename this.\n\n### 2. src/a.ts:2\n"));
     }

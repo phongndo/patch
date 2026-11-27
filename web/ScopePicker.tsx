@@ -1,8 +1,9 @@
 //! Chooses what to review: a view of the working tree against any base
-//! branch, one commit or a run of them, or an open pull request. Every tab is
-//! one list under one search field, and the field keeps focus throughout. Each
-//! row is one thing to review, so at most one is checked, save in a run of
-//! commits.
+//! branch, one commit or a run of them, or a pull request. Every tab is one
+//! list under one search field, and the field keeps focus throughout. Each row
+//! is one thing to review, so at most one is checked, save in a run of commits.
+//! Commits and pull requests come a page at a time, the next as the list is
+//! scrolled or arrowed to its end, and the server searches them all.
 
 import {
   Command,
@@ -15,26 +16,32 @@ import {
   createCommandController,
 } from "@ui-sdk/solid/command";
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from "@ui-sdk/solid/popover";
+import { useAsyncOptions } from "@ui-sdk/solid/async-options";
 import { Tabs, TabsIndicator, TabsList, TabsPanel, TabsTab } from "@ui-sdk/solid/tabs";
 import { createEffect, createMemo, createSignal, For, Show, untrack } from "solid-js";
-import type { Commit, Mode, PullRequest, Scope, ScopesResponse } from "../src/protocol.ts";
-import { loadPullRequests, loadScopes } from "./api.ts";
+import type { Commit, Mode, Scope, ScopesResponse } from "../src/protocol.ts";
+import { loadCommits, loadPullRequests, loadScopes } from "./api.ts";
 import { definitionOf, type Action } from "./commands.ts";
 import { isPressed, listMotions } from "./hotkeys.ts";
 import { Icon } from "./Icon.tsx";
 import type { IconName } from "./icons.gen.ts";
 import { Marked } from "./Marked.tsx";
-import { search, type Searchable } from "./search.ts";
+import { search as fuzzy, type Searchable } from "./search.ts";
 import { preferences } from "./settings.ts";
 import { state } from "./state.ts";
-import { scopeOpen as open, setScopeOpen as setOpen } from "./ui.ts";
+import {
+  scopeOpen as open,
+  scopeTab,
+  setScopeOpen as setOpen,
+  setScopeTab,
+  type ScopeTab as Tab,
+} from "./ui.ts";
 
 const tabs = [
   { value: "changes", label: "Changes", find: "Search views and branches" },
   { value: "commits", label: "Commits", find: "Search commits" },
   { value: "prs", label: "Pull requests", find: "Search open pull requests" },
 ] as const;
-type Tab = (typeof tabs)[number]["value"];
 
 const views: Array<{ kind: Mode; action: Action; label: string; hint: string }> = [
   {
@@ -72,14 +79,48 @@ interface Row extends Searchable {
 
 const message = (failure: unknown) => (failure instanceof Error ? failure.message : String(failure));
 
+/**
+ * What a search finds a page at a time, through the cursor each page ends with, and the text the
+ * shown pages were last found for.
+ */
+function usePages<Item>(
+  load: (
+    query: string,
+    after: string | undefined,
+    signal: AbortSignal,
+  ) => Promise<{ items: Item[]; next?: string }>,
+) {
+  const cursors = new Map<string, string | undefined>();
+  const [found, setFound] = createSignal<string>();
+  const pages = useAsyncOptions<Item>(
+    async (query, { signal, page }) => {
+      const key = (at: number) => `${at}\n${query}`;
+      if (page === 0) cursors.clear();
+      const { items, next } = await load(query.trim(), cursors.get(key(page)), signal);
+      // A search typed since replaced this one: what it found is for nothing now.
+      if (signal.aborted) throw signal.reason;
+      cursors.set(key(page + 1), next);
+      setFound(query);
+      return { items, hasMore: next !== undefined };
+    },
+    { debounce: 200 },
+  );
+  return Object.assign(pages, { found });
+}
+
 export function ScopePicker() {
   const [tab, setTab] = createSignal<Tab>("changes");
   const [query, setQuery] = createSignal("");
   const [scopes, setScopes] = createSignal<ScopesResponse>();
   const [scopesError, setScopesError] = createSignal("");
-  const [pulls, setPulls] = createSignal<PullRequest[]>();
-  const [pullsError, setPullsError] = createSignal("");
-  const [searching, setSearching] = createSignal(false);
+  const history = usePages((query, after, signal) =>
+    loadCommits(query, after, signal).then(({ commits, next }) => ({ items: commits, next })),
+  );
+  const pulls = usePages((query, after, signal) =>
+    loadPullRequests(query, after, signal).then(({ pulls, next }) => ({ items: pulls, next })),
+  );
+  /** The pages a tab lists; the changes are listed here, whole. */
+  const pagesOf = (shown: Tab) => (shown === "commits" ? history : shown === "prs" ? pulls : undefined);
   const [highlighted, setHighlighted] = createSignal<string | null>(null);
   // One end of a run of commits, while the other is being chosen.
   const [mark, setMark] = createSignal<string>();
@@ -96,46 +137,35 @@ export function ScopePicker() {
   };
   const chooseView = (kind: Mode) => choose({ kind, base: kind === "all" ? base() : undefined });
 
-  // The command opens it as well as the button.
+  /** The tabs shown since the picker opened: each lists afresh the first time. */
+  let shownSince = new Set<Tab>();
+
+  // The command opens it as well as the button. What it lists is read afresh each time.
   createEffect(open, (shown) => {
     if (!shown) return;
     const kind = untrack(scope)?.kind;
-    setTab(kind === "commits" ? "commits" : kind === "pr" ? "prs" : "changes");
+    const first: Tab =
+      untrack(scopeTab) ?? (kind === "commits" ? "commits" : kind === "pr" ? "prs" : "changes");
+    setScopeTab(undefined);
+    setTab(first);
     setQuery("");
     setMark(undefined);
     setScopesError("");
     loadScopes(untrack(base)).then(setScopes, (failure) => setScopesError(message(failure)));
+    shownSince = new Set([first]);
+    const pages = pagesOf(first);
+    pages?.setQuery("");
+    pages?.reload();
   });
 
-  const pullQuery = createMemo(() => (open() && tab() === "prs" ? query().trim() : undefined));
-  createEffect(pullQuery, (text) => {
-    if (text === undefined) return;
-    let wanted = true;
-    setSearching(true);
-    const timer = setTimeout(
-      async () => {
-        let found: PullRequest[] = [];
-        let problem = "";
-        try {
-          found = await loadPullRequests(text);
-        } catch (failure) {
-          problem = message(failure);
-        }
-        if (!wanted) return;
-        setPulls(found);
-        setPullsError(problem);
-        setSearching(false);
-      },
-      text ? 250 : 0,
-    );
-    return () => {
-      wanted = false;
-      clearTimeout(timer);
-    };
-  });
+  /** Typing searches the tab shown, once it pauses. */
+  function search(text: string) {
+    setQuery(text);
+    pagesOf(tab())?.setQuery(text);
+  }
 
   // Commits are listed newest first; a run goes from the older end to the newer.
-  const commits = () => scopes()?.commits ?? [];
+  const commits = () => history.items;
   const between = (a: string | undefined, b: string | undefined): Commit[] => {
     const list = commits();
     const ends = [a, b].map((sha) => list.findIndex((commit) => commit.sha === sha));
@@ -156,13 +186,26 @@ export function ScopePicker() {
     const start = mark() ?? (extend && reviewed().size === 1 ? [...reviewed()][0] : undefined);
     if (extend && !start) return void setMark(sha);
     const run = between(start ?? sha, sha);
+    // The other end is no longer listed (a search found this one): Patch puts the two in order.
+    if (!run.length) return choose({ kind: "commits", from: start!, to: sha });
     choose({ kind: "commits", from: run.at(-1)!.sha, to: run[0]!.sha });
   }
 
   const find = (rows: Row[]) =>
-    search(rows, query())
+    fuzzy(rows, query())
       .slice(0, 100)
       .map(({ entry, marks }): Row => ({ ...entry, marks }));
+  /**
+   * Rows a server found: all of them, in its order, marked where they match. Until it answers a
+   * new search, only those that match it show, so Enter can't take one the last search found.
+   */
+  const found = (rows: Row[], pages: ReturnType<typeof usePages>) => {
+    const matches = new Map(fuzzy(rows, query()).map((match) => [match.entry.id, match.marks]));
+    const answered = (pages.found() ?? "").trim() === query().trim();
+    return rows
+      .filter((row) => answered || !query().trim() || matches.has(row.id))
+      .map((row): Row => ({ ...row, marks: matches.get(row.id) }));
+  };
   const viewRows = () =>
     views.map((view): Row => {
       const { icon, words } = definitionOf(view.action);
@@ -207,25 +250,21 @@ export function ScopePicker() {
     }));
   const pullRows = () => {
     const current = scope();
-    const rows = (pulls() ?? []).map((pull): Row => ({
+    return pulls.items.map((pull): Row => ({
       id: `pull:${pull.number}`,
       label: pull.title,
       icon: "brandGithub",
-      detail: `${pull.draft ? "Draft · " : ""}#${pull.number} · ${pull.author}`,
+      detail: `${pull.draft ? "Draft · " : ""}${pull.state === "open" ? "" : `${pull.state[0]!.toUpperCase()}${pull.state.slice(1)} · `}#${pull.number} · ${pull.author}`,
       words: `${pull.number} ${pull.author} ${pull.head}`,
       hint: `${pull.title}\n${pull.head} → ${pull.base}`,
       checked: current?.kind === "pr" && current.number === pull.number,
       pick: () => choose({ kind: "pr", number: pull.number }),
     }));
-    // GitHub searches. Until it answers, Enter must not take one the last search found.
-    const matches = new Map(find(rows).map((row) => [row.id, row.marks]));
-    return rows
-      .filter((row) => !searching() || matches.has(row.id))
-      .map((row): Row => ({ ...row, marks: matches.get(row.id) }));
   };
+  const branch = () => state.store.review?.branch ?? "this branch";
   const sections = createMemo(() => {
     if (!open()) return [];
-    const { since } = scopes() ?? {};
+    const searched = query().trim() !== "";
     const all = {
       changes: () => [
         { label: "", rows: find(viewRows()) },
@@ -233,27 +272,49 @@ export function ScopePicker() {
       ],
       commits: () => [
         {
-          label: since ? `Since ${since}` : `Recent on ${state.store.review?.branch ?? "this branch"}`,
-          rows: find(commitRows()),
+          label: searched ? `Found in the history of ${branch()}` : `History of ${branch()}`,
+          rows: found(commitRows(), history),
         },
       ],
-      prs: () => [{ label: "", rows: pullRows() }],
+      prs: () => [{ label: "", rows: found(pullRows(), pulls) }],
     }[tab()]();
     return all.filter(({ rows }) => rows.length);
   });
 
-  const error = () => (tab() === "prs" ? pullsError() : scopesError());
-  const loading = () => !error() && (tab() === "prs" ? searching() : !scopes());
+  const pages = () => pagesOf(tab());
+  const error = () => {
+    const shown = pages();
+    return shown ? (shown.status === "error" ? message(shown.error) : "") : scopesError();
+  };
+  const loading = () => !error() && (pages()?.status === "loading" || (!pages() && !scopes()));
   const empty = () => {
     if (error()) return "";
-    if (loading()) return "Loading…";
+    if (loading()) return query().trim() ? "Searching…" : "Loading…";
     if (query().trim()) return "Nothing matches.";
     return tab() === "prs" ? "No open pull requests." : "No commits yet.";
   };
+  /** Below a list of pages: more on the way, more to load, or the end. */
+  const more = () => {
+    const shown = pages();
+    if (!shown?.items.length || error()) return "";
+    if (shown.status === "loading") return "Loading more…";
+    if (shown.hasMore) return "more";
+    return tab() === "prs"
+      ? "No more pull requests."
+      : query().trim()
+        ? "No more commits match."
+        : "The first commit.";
+  };
 
-  // Starts on what is under review, and on the best match after each letter.
+  // Starts on what is under review, and on the best match once each search is answered: never
+  // when a page is added below, which the highlight is on its way to.
   const command = createCommandController();
-  const listed = createMemo(() => `${open()}\n${tab()}\n${query()}\n${loading()}`);
+  // A first page is told by its first row; a page added below leaves that as it was.
+  const head = () =>
+    tab() === "commits" ? (history.items[0]?.sha ?? "") : String(pulls.items[0]?.number ?? "");
+  const listed = createMemo(
+    () => `${open()}\n${tab()}\n${query()}\n${pages()?.found() ?? ""}\n${head()}\n${!pages() && !scopes()}`,
+  );
   createEffect(
     () =>
       listed() &&
@@ -267,6 +328,15 @@ export function ScopePicker() {
   function show(next: Tab) {
     setTab(next);
     setMark(undefined);
+    // What it lists follows the search typed on another tab.
+    const pages = pagesOf(next);
+    if (!pages) return;
+    if (!shownSince.has(next)) {
+      // Shown the first time since the picker opened: afresh, and at once, not after a pause in typing.
+      shownSince.add(next);
+      pages.setQuery(query());
+      pages.reload();
+    } else if (pages.query !== query()) pages.setQuery(query());
   }
   function onKeyDown(event: KeyboardEvent & { currentTarget: HTMLInputElement }) {
     const view = views.find(({ action }) => isPressed(event, action));
@@ -317,8 +387,9 @@ export function ScopePicker() {
             class="scope-body"
             filter={false}
             query={query()}
-            onQueryChange={setQuery}
+            onQueryChange={search}
             onValueChange={setHighlighted}
+            onLoadMore={() => pagesOf(tab())?.loadMore()}
             controller={command}
             status={loading() ? "loading" : "idle"}
           >
@@ -333,7 +404,17 @@ export function ScopePicker() {
               />
             </div>
             {/* The field has focus, and moves through the list. */}
-            <TabsPanel class="scope-panel" value={tab()} tabindex={-1}>
+            {/* It scrolls, not the list in it, which the Command watches for its end. */}
+            <TabsPanel
+              class="scope-panel"
+              value={tab()}
+              tabindex={-1}
+              onScroll={(event: Event & { currentTarget: HTMLElement }) => {
+                const panel = event.currentTarget;
+                if (panel.scrollTop + panel.clientHeight >= panel.scrollHeight - 40)
+                  pagesOf(tab())?.loadMore();
+              }}
+            >
               <Show when={error()}>
                 <p class="menu-error">{error()}</p>
               </Show>
@@ -379,6 +460,15 @@ export function ScopePicker() {
                   )}
                 </For>
               </CommandList>
+              <Show when={more()}>
+                <p class="menu-more">
+                  <Show when={more() === "more"} fallback={more()}>
+                    <button class="link" type="button" onClick={() => pages()?.loadMore()}>
+                      Load more
+                    </button>
+                  </Show>
+                </p>
+              </Show>
             </TabsPanel>
             <footer class="palette-foot">
               <span>

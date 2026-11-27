@@ -369,6 +369,7 @@ dependencies = [
  "axum",
  "flate2",
  "futures-util",
+ "memchr",
  "rustix",
  "serde",
  "serde_json",

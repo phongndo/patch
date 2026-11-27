@@ -27,10 +27,12 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use crate::git::{self, Ref, Review};
-use crate::github;
 use crate::paths::review_paths;
-use crate::protocol::{ChangedPaths, GrepMatch, Mode, ReviewResponse, Scope, ScopesResponse, Submission};
+use crate::protocol::{
+    ChangedPaths, CommitsResponse, GrepMatch, Mode, PullRequestsResponse, ReviewResponse, Scope, ScopesResponse, Submission,
+};
 use crate::tailnet::{self, Account};
+use crate::{github, history, protocol};
 
 /// One file of the page as a release build embeds it: compressed where Vite left
 /// compressed copies (build.rs), else as it is.
@@ -176,7 +178,16 @@ struct App {
     gzip: Mutex<HashMap<String, Bytes>>,
     /// Bumped when the repository changes, so open pages can offer a refresh.
     changes: tokio::sync::watch::Sender<u64>,
+    /// The index of HEAD's history that searches read, once one has asked.
+    history: Mutex<Vec<history::Shared>>,
+    /// `owner/name` on GitHub, once found.
+    repository: Mutex<Option<String>>,
+    /// The page of pull requests after the last one sent, asked for ahead: by its search and cursor.
+    next_pulls: Mutex<Option<NextPulls>>,
 }
+
+type PullsPage = Result<(Vec<protocol::PullRequest>, Option<String>), String>;
+type NextPulls = ((String, Option<String>), tokio::sync::watch::Receiver<Option<PullsPage>>);
 
 pub struct Session {
     /// One port for both addresses, so a link to either names the other.
@@ -262,6 +273,9 @@ pub async fn start(options: Options) -> Result<Session, String> {
         outcome: Mutex::new(Some(sender)),
         gzip: Mutex::new(HashMap::new()),
         changes: tokio::sync::watch::channel(0).0,
+        history: Mutex::default(),
+        repository: Mutex::default(),
+        next_pulls: Mutex::default(),
     });
     tokio::spawn(watch_repository(app.clone()));
     if let Some(grace) = app.options.unopened {
@@ -411,41 +425,135 @@ fn parse_scope(params: &HashMap<String, String>, fallback: &Scope) -> Result<Sco
 
 async fn review(app: &App, scope: &Scope) -> Result<Review, String> {
     let root = &app.options.root;
-    let Scope::Pr { number } = scope else {
-        return git::read_review(root, scope).await;
+    let (label, old, new, (patch, files)) = match scope {
+        Scope::Pr { number } => {
+            let pr = github::read_pull_request(root, *number).await?;
+            (format!("PR #{} {}", pr.number, pr.title), pr.base_sha, pr.head_sha, (pr.patch, pr.files))
+        }
+        // Commits whose contents this partial clone lacks are read from GitHub, which has them.
+        Scope::Commits { from, to } => {
+            let commits = git::commits(root, from, to).await?;
+            if !commits.lacking {
+                return git::read_commits(root, scope, &commits).await;
+            }
+            let read = github::read_commits(root, &commits.parent, &commits.first, &commits.to).await;
+            let read = read.map_err(|why| format!("{} Nor could GitHub give them: {why}", commits.lacking_message()))?;
+            (commits.label(), commits.parent, commits.to, read)
+        }
+        _ => return git::read_review(root, scope).await,
     };
-    let pr = github::read_pull_request(root, *number).await?;
     let (_, branch) = git::current_branch(root).await;
     // GitHub's names for each file, taken only when they are one for one with the patch's files;
     // otherwise none are, and its images are not served.
-    let in_patch = pr.patch.lines().filter(|line| line.starts_with("diff --git ")).count();
+    let in_patch = patch.lines().filter(|line| line.starts_with("diff --git ")).count();
     let side = |path: Option<String>| path.map(|path| git::Side { path, mode: String::new(), oid: String::new() });
-    let changes = (pr.files.len() == in_patch)
-        .then(|| pr.files.into_iter().map(|(old, new)| git::Change { old: side(old), new: side(new) }).collect());
+    let changes = (files.len() == in_patch)
+        .then(|| files.into_iter().map(|(old, new)| git::Change { old: side(old), new: side(new) }).collect());
     Ok(Review {
         repository: git::repository_name(root),
         branch,
         scope: scope.clone(),
-        label: format!("PR #{} {}", pr.number, pr.title),
+        label,
         base: None,
-        old: Ref::Commit(pr.base_sha),
-        new: Ref::Commit(pr.head_sha),
-        patch: pr.patch,
+        old: Ref::Commit(old),
+        new: Ref::Commit(new),
+        patch: git::checked(patch)?,
         changes,
+        remote: true,
     })
+}
+
+/// A file at a commit of a review read from GitHub: from the repository when it has it, else
+/// from GitHub. A partial clone may have the commit but not the file's contents.
+async fn read_remote_side(
+    root: &Path,
+    sha: &str,
+    path: &str,
+    local: Result<Vec<u8>, String>,
+    limit: u64,
+) -> Result<Vec<u8>, String> {
+    match local {
+        Err(message) if message != git::TOO_LARGE => github::read_remote_bytes(root, sha, path, limit).await,
+        local => local,
+    }
+}
+
+/// A page of pull requests. Only a search names the repository; listing them finds it out
+/// meanwhile, for the search to come.
+async fn pulls(app: &Arc<App>, query: &str, after: Option<&str>) -> Result<(Vec<protocol::PullRequest>, Option<String>), String> {
+    if query.is_empty() {
+        let warm = app.clone();
+        tokio::spawn(async move { repository(&warm).await });
+        return github::list_pull_requests(&app.options.root, None, query, after).await;
+    }
+    let repository = repository(app).await?;
+    github::list_pull_requests(&app.options.root, Some(&repository), query, after).await
+}
+
+/// `owner/name` on GitHub, asked of `gh` once.
+async fn repository(app: &App) -> Result<String, String> {
+    if let Some(name) = app.repository.lock().unwrap().clone() {
+        return Ok(name);
+    }
+    let name = github::repository(&app.options.root).await?;
+    *app.repository.lock().unwrap() = Some(name.clone());
+    Ok(name)
+}
+
+/// `/api/commits`: a page of HEAD's history, or of what a search finds in it. The first page
+/// pins HEAD in its cursor (`tip:where`), so the pages after it list the same history.
+async fn commits(app: &App, params: &HashMap<String, String>) -> Result<CommitsResponse, String> {
+    let root = app.options.root.clone();
+    let query = params.get("q").map(|query| query.trim().to_string()).unwrap_or_default();
+    let blocking = async |work: Box<dyn FnOnce() -> Result<CommitsResponse, String> + Send>| {
+        tokio::task::spawn_blocking(work).await.map_err(|error| error.to_string())?
+    };
+    let (tip, from) = match params.get("after").filter(|after| !after.is_empty()) {
+        Some(after) => {
+            let cursor = after.split_once(':').and_then(|(tip, at)| Some((tip.to_string(), at.parse::<usize>().ok()?)));
+            cursor.filter(|(tip, _)| history::is_id(tip)).ok_or("Not a page of commits.")?
+        }
+        None => {
+            let root = root.clone();
+            match tokio::task::spawn_blocking(move || history::head(&root)).await.map_err(|error| error.to_string())? {
+                Some(tip) => (tip, 0),
+                None => return Ok(CommitsResponse { commits: Vec::new(), next: None }),
+            }
+        }
+    };
+    if query.is_empty() {
+        return blocking(Box::new(move || {
+            let (commits, more) = history::browse(&root, &tip, from)?;
+            Ok(CommitsResponse { commits, next: more.then(|| format!("{tip}:{}", from + history::PAGE)) })
+        }))
+        .await;
+    }
+    // A commit named by its id is all that is wanted: found at once, without reading the history.
+    if from == 0 {
+        let (root, query) = (root.clone(), query.clone());
+        let exact = tokio::task::spawn_blocking(move || history::exact(&root, &query)).await.ok().flatten();
+        if let Some(exact) = exact {
+            return Ok(CommitsResponse { commits: vec![exact], next: None });
+        }
+    }
+    let index = history::index(&app.history, &root, &tip).await?;
+    let (commits, next) =
+        tokio::task::spawn_blocking(move || index.search(&query, from)).await.map_err(|error| error.to_string())?;
+    Ok(CommitsResponse { commits, next: next.map(|at| format!("{tip}:{at}")) })
 }
 
 /// What a read of a review keeps for the files the page opens after it, without the diff
 /// itself: its sides, the paths its diff has text for, every path it touches, and which read
 /// it was.
 struct Loaded {
-    scope: Scope,
     old: Ref,
     new: Ref,
     files: HashSet<String>,
     changed: HashSet<String>,
     /// Each changed file's sides, as Git recorded them with the patch; none for a pull request.
     changes: Option<Vec<git::Change>>,
+    /// Read from GitHub: its files are read from GitHub when the repository lacks them.
+    remote: bool,
     /// Names the patch, so a read that finds the same keeps the same number.
     digest: [u8; 32],
     read: u64,
@@ -460,6 +568,9 @@ struct Catalog {
     files: HashMap<String, String>,
     new: Ref,
     changed: Vec<String>,
+    /// Whether every file the tree has is here; a partial clone may lack some, which a search of
+    /// the tree would wait on.
+    complete: bool,
 }
 
 /// The files a review leaves alone, which the page may open for context.
@@ -480,10 +591,11 @@ async fn unchanged(app: &App, key: &str) -> Result<Arc<Catalog>, String> {
     if tree != git::EMPTY_TREE && !git::has_commit(root, &tree).await {
         return Err("Fetch this pull request to open the files it leaves alone.".into());
     }
-    let files = git::unchanged_files(root, &tree, &review.changed).await?;
+    // A partial clone may lack some of them: those it has can be opened.
+    let (files, complete) = git::unchanged_files(root, &tree, &review.changed).await?;
     let mut changed: Vec<String> = review.changed.iter().cloned().collect();
     changed.sort();
-    let catalog = Arc::new(Catalog { read, tree, files, new: review.new.clone(), changed });
+    let catalog = Arc::new(Catalog { read, tree, files, new: review.new.clone(), changed, complete });
     // Kept only while it is still the scope's latest read; a newer one makes its own.
     let latest = app.reviews.lock().unwrap().get(key).is_some_and(|now| now.read == read);
     if latest {
@@ -566,8 +678,11 @@ fn live_stream(app: Arc<App>, page: String) -> Response {
         }
     }
     let changes = app.changes.subscribe();
+    // Which run this is: a page drawn by an earlier one on this port must read its review again.
+    let session = app.session.clone();
     let guard = Connection(app, page);
-    let first = futures_util::stream::once(async { Event::default().retry(Duration::from_secs(1)) });
+    let first =
+        futures_util::stream::once(async move { Event::default().retry(Duration::from_secs(1)).event("session").data(session) });
     let changed = futures_util::stream::unfold(changes, |mut changes| async move {
         changes.changed().await.ok()?;
         let version = *changes.borrow_and_update();
@@ -639,14 +754,11 @@ async fn media(app: &App, params: &HashMap<String, String>, headers: &HeaderMap,
     let Some(changes) = &current.changes else { return unknown() };
     let side = changes.iter().filter_map(|change| if old { change.old.as_ref() } else { change.new.as_ref() });
     let Some(side) = side.into_iter().find(|side| side.path == path) else { return unknown() };
-    let read = match (&current.scope, reference) {
-        // A pull request's side, by its path at its commit: here if the commit is, else from GitHub.
-        (Scope::Pr { .. }, Ref::Commit(sha)) => {
-            let read = if git::has_commit(root, sha).await {
-                git::read_at_commit(root, sha, path, git::MEDIA_LIMIT).await
-            } else {
-                github::read_remote_bytes(root, sha, path, git::MEDIA_LIMIT).await
-            };
+    let read = match (current.remote, reference) {
+        // A side read from GitHub, by its path at its commit: here if the repository has it.
+        (true, Ref::Commit(sha)) => {
+            let local = git::read_at_commit(root, sha, path, git::MEDIA_LIMIT).await;
+            let read = read_remote_side(root, sha, path, local, git::MEDIA_LIMIT).await;
             read.map(|bytes| {
                 use sha2::{Digest, Sha256};
                 let digest: String = Sha256::digest(&bytes).iter().take(16).map(|byte| format!("{byte:02x}")).collect();
@@ -905,12 +1017,12 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                         let same = reviews.get(&scope_key).filter(|last| last.digest == digest).map(|last| last.read);
                         let read = same.unwrap_or_else(|| app.reads.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
                         let loaded = Loaded {
-                            scope: current.scope.clone(),
                             old: current.old,
                             new: current.new,
                             files: named(paths.texts),
                             changed: paths.changed,
                             changes: current.changes,
+                            remote: current.remote,
                             digest,
                             read,
                         };
@@ -944,17 +1056,42 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
             });
             let base = git::find_base(root, requested).await.ok().flatten();
             match git::list_branches(root).await {
-                Ok(branches) => {
-                    let (commits, since) = git::list_commits(root, base.as_deref()).await;
-                    json(StatusCode::OK, &ScopesResponse { base, since, branches, commits })
-                }
+                Ok(branches) => json(StatusCode::OK, &ScopesResponse { base, branches }),
                 Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
             }
         }
+        (Method::GET, "/api/commits") => match commits(&app, &params).await {
+            Ok(page) => {
+                let bytes = serde_json::to_vec(&page).unwrap_or_default();
+                compressed(compress, &headers, json(StatusCode::OK, &()), bytes)
+            }
+            Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
+        },
         (Method::GET, "/api/prs") => {
-            let query = params.get("q").map(String::as_str).unwrap_or("");
-            match github::list_pull_requests(&app.options.root, query).await {
-                Ok(list) => json(StatusCode::OK, &list),
+            let query = params.get("q").map(|query| query.trim().to_string()).unwrap_or_default();
+            let after = params.get("after").filter(|after| !after.is_empty()).cloned();
+            let fetched = app.next_pulls.lock().unwrap().take().filter(|(key, _)| *key == (query.clone(), after.clone()));
+            let ahead = match fetched {
+                Some((_, mut ready)) => ready.wait_for(Option::is_some).await.ok().and_then(|done| done.clone()),
+                None => None,
+            };
+            let listed = match ahead {
+                Some(listed) => listed,
+                None => pulls(&app, &query, after.as_deref()).await,
+            };
+            match listed {
+                Ok((pulls, next)) => {
+                    // The next page is asked for now, so it is likely here when the list reaches its end.
+                    if let Some(next) = &next {
+                        let (send, ready) = tokio::sync::watch::channel(None);
+                        *app.next_pulls.lock().unwrap() = Some(((query.clone(), Some(next.clone())), ready));
+                        let (ahead, query, next) = (app.clone(), query.clone(), next.clone());
+                        tokio::spawn(async move {
+                            let _ = send.send(Some(self::pulls(&ahead, &query, Some(&next)).await));
+                        });
+                    }
+                    json(StatusCode::OK, &PullRequestsResponse { pulls, next })
+                }
                 Err(message) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
             }
         }
@@ -975,17 +1112,17 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                 return error(StatusCode::NOT_FOUND, "Unknown file.");
             }
             let root = &app.options.root;
-            let remote = match (&current.scope, &reference) {
-                // A pull request's commits may not be in the local repository; read them from GitHub then.
-                (Scope::Pr { .. }, Ref::Commit(sha)) if !git::has_commit(root, sha).await => Some(sha.clone()),
-                _ => None,
-            };
             // `max` bounds the read itself, for a preview that would not use more.
-            let read = match (params.get("max").and_then(|max| max.parse::<u64>().ok()), remote) {
-                (Some(max), Some(sha)) => github::read_remote_bytes(root, &sha, &file, max).await.map(lossy),
-                (Some(max), None) => git::read_side_bytes(root, &reference, &file, max).await.map(lossy),
-                (None, Some(sha)) => github::read_remote_file(root, &sha, &file).await,
-                (None, None) => git::read_side(root, &reference, &file).await,
+            let max = params.get("max").and_then(|max| max.parse::<u64>().ok());
+            let read = match (&reference, max) {
+                // A review read from GitHub may name commits, or contents, the repository lacks.
+                (Ref::Commit(sha), max) if current.remote => {
+                    let limit = max.unwrap_or(git::TEXT_LIMIT);
+                    let local = git::read_side_bytes(root, &reference, &file, limit).await;
+                    read_remote_side(root, sha, &file, local, limit).await.map(lossy)
+                }
+                (_, Some(max)) => git::read_side_bytes(root, &reference, &file, max).await.map(lossy),
+                (_, None) => git::read_side(root, &reference, &file).await,
             };
             match read {
                 Ok(contents) => text(compress, &headers, contents),
@@ -1015,6 +1152,10 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                 Ok(catalog) => catalog,
                 Err(message) => return error(StatusCode::UNPROCESSABLE_ENTITY, &message),
             };
+            // Git would look for the missing files in every object it has, minutes in a large one.
+            if !catalog.complete {
+                return error(StatusCode::UNPROCESSABLE_ENTITY, "This partial clone lacks some of the files to search.");
+            }
             let root = &app.options.root;
             // Only what the page may open: the changed files as the review has them now, which
             // /api/file reads, then the files the review leaves alone, as reviewed.
@@ -1052,6 +1193,10 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
             let Ok(submission) = serde_json::from_slice::<Submission>(&body().await) else {
                 return error(StatusCode::BAD_REQUEST, "Not a review.");
             };
+            // Written on a page another run drew, on this port before: its comments are about that review.
+            if submission.session.as_ref().is_some_and(|session| *session != app.session) {
+                return error(StatusCode::CONFLICT, "These comments are about another review.");
+            }
             if settle(&app, Outcome::Submitted(submission)) {
                 json(StatusCode::OK, &serde_json::json!({ "ok": true }))
             } else {

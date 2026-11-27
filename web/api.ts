@@ -1,5 +1,6 @@
 import type {
-  PullRequest,
+  CommitsResponse,
+  PullRequestsResponse,
   ReviewResponse,
   Scope,
   ScopesResponse,
@@ -15,8 +16,15 @@ declare global {
   }
 }
 
+/** A request with no answer at all: the network is down, or the review ended with its server. */
+const UNREACHABLE = "Can't reach this Patch review. Check the connection, or start a new review.";
+
 async function getJson<T>(path: string, request: Promise<Response> = fetch(path)): Promise<T> {
-  const response = await request;
+  const response = await request.catch((error: unknown) => {
+    // A request called off was meant to stop; it says nothing of Patch.
+    if (error instanceof DOMException && error.name === "AbortError") throw error;
+    throw new Error(UNREACHABLE);
+  });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error ?? "Patch could not read that.");
   return body as T;
@@ -41,8 +49,17 @@ export function loadReview(scope?: Scope) {
 export const loadScopes = (base?: string) =>
   getJson<ScopesResponse>(base ? `/api/scopes?${new URLSearchParams({ base })}` : "/api/scopes");
 
-export const loadPullRequests = (query: string) =>
-  getJson<PullRequest[]>(`/api/prs?${new URLSearchParams({ q: query })}`);
+/** A page of commits or pull requests: what `query` finds, from where the last page ended. */
+function listPage<T>(path: string, query: string, after: string | undefined, signal: AbortSignal) {
+  const url = `${path}?${new URLSearchParams({ q: query, ...(after ? { after } : {}) })}`;
+  return getJson<T>(url, fetch(url, { signal }));
+}
+
+export const loadCommits = (query: string, after: string | undefined, signal: AbortSignal) =>
+  listPage<CommitsResponse>("/api/commits", query, after, signal);
+
+export const loadPullRequests = (query: string, after: string | undefined, signal: AbortSignal) =>
+  listPage<PullRequestsResponse>("/api/prs", query, after, signal);
 
 export const loadSide = async (key: string, side: "old" | "new", path: string) => {
   const response = await fetch(`/api/file?${new URLSearchParams({ key, side, path })}`);
@@ -95,6 +112,10 @@ export async function submit(submission: Submission) {
   }).catch(() => {
     throw new Error(gone);
   });
+  if (response.status === 409) {
+    const { error } = await response.json().catch(() => ({ error: "" }));
+    throw new Error(`${error || "This review has already ended."} Copy your feedback to send it yourself.`);
+  }
   if (!response.ok) throw new Error(gone);
 }
 
@@ -103,6 +124,8 @@ export function stayConnected(hear: {
   lost: () => void;
   back: () => void;
   changed: () => void;
+  /** The run of Patch the stream reached, each time it connects. */
+  session: (session: string) => void;
   unsent: () => boolean;
 }) {
   unsent = hear.unsent;
@@ -114,6 +137,7 @@ export function stayConnected(hear: {
     clearTimeout(again);
     source = new EventSource(`/api/live?${new URLSearchParams({ page })}`);
     source.addEventListener("changed", hear.changed);
+    source.addEventListener("session", (event) => hear.session((event as MessageEvent<string>).data));
     source.onopen = () => {
       clearTimeout(silent);
       silent = undefined;
