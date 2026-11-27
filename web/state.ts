@@ -43,9 +43,9 @@ const savedKey = (session: string) => `patch:${session}`;
 /** Reads what this tab wrote in this run, and forgets any other run served from the same address. */
 function readSaved(session: string): Saved | undefined {
   const key = savedKey(session);
-  for (const other of Object.keys(sessionStorage))
-    if (other.startsWith(savedKey("")) && other !== key) sessionStorage.removeItem(other);
   try {
+    for (const other of Object.keys(sessionStorage))
+      if (other.startsWith(savedKey("")) && other !== key) sessionStorage.removeItem(other);
     return JSON.parse(sessionStorage.getItem(key) ?? "null") ?? undefined;
   } catch {
     return undefined;
@@ -817,7 +817,11 @@ function createReviewState() {
     try {
       keepWriting();
       await submit({ comments: snapshot(store).comments, session: store.review.session });
-      sessionStorage.removeItem(savedKey(store.review.session));
+      try {
+        sessionStorage.removeItem(savedKey(store.review.session));
+      } catch {
+        // The server already has the feedback, even when tab storage is unavailable.
+      }
       setStore((s) => {
         s.submitted = true;
       });
