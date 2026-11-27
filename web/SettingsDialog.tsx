@@ -185,13 +185,13 @@ function ThemeStrip(props: { field: "lightTheme" | "darkTheme"; base16: boolean 
   return (
     <Listbox
       class="theme-strip"
-      ref={(element: HTMLElement) =>
-        // Tiles out of view have only an estimated size, so the list's own scrolling misses the chosen one.
-        requestAnimationFrame(() =>
-          element
-            .querySelector(".theme-tile[data-selected]")
-            ?.scrollIntoView({ block: "nearest", inline: "center" }),
-        )
+      ref={(strip: HTMLElement) =>
+        requestAnimationFrame(() => {
+          const tile = strip.querySelector(".theme-tile[data-selected]")?.getBoundingClientRect();
+          if (tile)
+            strip.scrollLeft +=
+              tile.left - strip.getBoundingClientRect().left + (tile.width - strip.clientWidth) / 2;
+        })
       }
       aria-label={dark() ? "Dark theme" : "Light theme"}
       orientation="horizontal"
@@ -816,9 +816,7 @@ export function SettingsDialog(props: { open: boolean; onOpenChange: (open: bool
       (p) => `${p.title} ${p.words}`.toLowerCase().includes(text) || (p.id === "shortcuts" && findsShortcut),
     );
   });
-  const shown = () =>
-    matching().some((p) => p.id === settingsPage()) ? settingsPage() : (matching()[0]?.id ?? settingsPage());
-  const title = () => pages.find((p) => p.id === shown())!.title;
+  const shown = createMemo(() => matching().find((p) => p.id === settingsPage()) ?? matching()[0]);
 
   return (
     <Dialog
@@ -846,6 +844,7 @@ export function SettingsDialog(props: { open: boolean; onOpenChange: (open: bool
             <input
               ref={(element) => (search = element)}
               type="search"
+              aria-label="Search settings"
               placeholder="Search"
               value={query()}
               onInput={(event) => setQuery(event.currentTarget.value)}
@@ -864,7 +863,7 @@ export function SettingsDialog(props: { open: boolean; onOpenChange: (open: bool
               {(candidate) => (
                 <button
                   class="settings-nav-item"
-                  aria-current={shown() === candidate.id ? "page" : undefined}
+                  aria-current={shown()?.id === candidate.id ? "page" : undefined}
                   disabled={!matching().includes(candidate)}
                   onClick={() => setSettingsPage(candidate.id)}
                 >
@@ -880,8 +879,14 @@ export function SettingsDialog(props: { open: boolean; onOpenChange: (open: bool
           <header class="settings-head">
             <DialogTitle class="settings-crumbs">
               <span class="muted">Settings</span>
-              <span class="muted">/</span>
-              {title()}
+              <Show when={shown()}>
+                {(page) => (
+                  <>
+                    <span class="muted">/</span>
+                    {page().title}
+                  </>
+                )}
+              </Show>
             </DialogTitle>
             <button class="settings-restore" onClick={() => preferences.reset()}>
               <Icon name="refresh" />
@@ -891,22 +896,26 @@ export function SettingsDialog(props: { open: boolean; onOpenChange: (open: bool
               <Icon name="x" />
             </DialogClose>
           </header>
-          <div class="settings-body">
-            <Show when={shown() === "themes"}>
-              <ThemesPage />
-            </Show>
-            <Show when={shown() === "typography"}>
-              <TypographyPage />
-            </Show>
-            <Show when={shown() === "general"}>
-              <GeneralPage />
-            </Show>
-            <Show when={shown() === "shortcuts"}>
-              <ShortcutsPage
-                filter={pageWords("shortcuts").includes(query().trim().toLowerCase()) ? "" : query()}
-              />
-            </Show>
-          </div>
+          <Show when={shown()} keyed fallback={<p class="empty">No settings match.</p>}>
+            {(page) => (
+              <div class="settings-body">
+                <Show when={page.id === "themes"}>
+                  <ThemesPage />
+                </Show>
+                <Show when={page.id === "typography"}>
+                  <TypographyPage />
+                </Show>
+                <Show when={page.id === "general"}>
+                  <GeneralPage />
+                </Show>
+                <Show when={page.id === "shortcuts"}>
+                  <ShortcutsPage
+                    filter={pageWords("shortcuts").includes(query().trim().toLowerCase()) ? "" : query()}
+                  />
+                </Show>
+              </div>
+            )}
+          </Show>
         </div>
       </DialogContent>
     </Dialog>

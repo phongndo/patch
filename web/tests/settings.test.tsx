@@ -120,15 +120,30 @@ test("arrows browse the themes and Enter chooses one", async () => {
 });
 
 test("the themes open on the chosen one", async () => {
-  const shown: Array<string | null> = [];
-  vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (this: Element) {
-    shown.push(this.getAttribute("aria-label"));
-  });
   const last = themes.findLast((theme) => theme.dark && theme.group === "community")!;
+  vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+    return new DOMRect(this.getAttribute("aria-label") === last.name ? 800 : 0, 0, 100, 100);
+  });
+  vi.spyOn(Element.prototype, "clientWidth", "get").mockImplementation(function (this: Element) {
+    return this.classList.contains("theme-strip") ? 400 : 0;
+  });
   preferences.chooseTheme(last);
   await page("Themes");
   await settle(60);
-  expect(shown).toContain(last.name);
+  // A 100px tile at 800px, centred in a 400px strip.
+  expect($('[aria-label="Dark theme"]').scrollLeft).toBe(650);
+});
+
+test("switching settings pages starts at the top, and an empty search shows no unrelated settings", async () => {
+  $(".settings-body").scrollTop = 200;
+  await page("Typography");
+  expect($(".settings-body").scrollTop).toBe(0);
+  const search = $<HTMLInputElement>('[aria-label="Search settings"]');
+  await type(search, "no-matching-setting");
+  expect($(".settings-page").textContent).toContain("No settings match.");
+  expect(document.querySelector(".settings-body")).toBeNull();
+  await press(search, "Escape");
+  expect($(".settings-crumbs").textContent).toContain("Typography");
 });
 
 test("an agent can find and change every setting", async () => {
