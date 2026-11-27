@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "bun scripts/dev.ts",
+    "demo": "bun scripts/demo.ts",
     "build": "vite build && cargo build --release --manifest-path cli/Cargo.toml",
     "install:local": "bun run build && ./cli/target/release/patchr install",
     "icons": "bun scripts/icons.ts",
