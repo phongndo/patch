@@ -1047,6 +1047,33 @@ export function App() {
           <p>No changes in {store.review?.label ?? "this view"}.</p>
         </div>
       </Show>
+      <Show
+        when={
+          !store.loading &&
+          !store.error &&
+          state.files().length &&
+          state.isFiltered() &&
+          !shown().items.length &&
+          !store.submitted
+        }
+      >
+        {/* Exploring, the sidebar may list unchanged files that match; one opens from there. */}
+        <Show
+          when={!state.treePaths().length}
+          fallback={
+            <div class="overlay quiet">
+              <p>No changed files match. Open a file from the sidebar.</p>
+            </div>
+          }
+        >
+          <div class="overlay quiet">
+            <p>No files match the current filters.</p>
+            <button class="button" onClick={() => state.clearFilter()}>
+              Clear filters
+            </button>
+          </div>
+        </Show>
+      </Show>
       <Show when={store.submitted}>
         <div class="overlay">
           <p>{sent()} You can close this tab.</p>

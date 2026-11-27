@@ -452,6 +452,15 @@ test("retrying a failed change of scope requests the same scope", async () => {
   expect(asked).toContain("/api/review?scope=staged");
 });
 
+test("a filter with no files explains the empty diff and can be cleared", async () => {
+  await loaded();
+  await type($(".sidebar .side-search"), "missing");
+  expect($(".overlay").textContent).toContain("No files match");
+  await click(named("button", "Clear filters"));
+  expect(state.visibleFiles().map((file) => file.name)).toEqual(["src/a.ts"]);
+  expect(document.querySelector(".overlay")).toBeNull();
+});
+
 test("viewed binary files need review again when their contents change", async () => {
   const loadImage = async (oid: string) => {
     reviewed = {

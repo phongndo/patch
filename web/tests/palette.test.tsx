@@ -233,6 +233,19 @@ test("a changed file chosen while an unchanged one is read is what shows", async
   expect(calls).toContain("scrollToFile");
 });
 
+test("a search that finds only unchanged files does not offer to clear it", async () => {
+  state.setShowUnchanged(true);
+  state.setNameQuery("util");
+  await settle();
+  expect($(".tree").textContent).toBe("lib/util.ts");
+  expect($(".overlay").textContent).toContain("No changed files match");
+  expect(document.querySelector(".overlay button")).toBeNull();
+  state.setNameQuery("nothing-here");
+  await settle();
+  expect($(".overlay").textContent).toContain("No files match the current filters.");
+  state.setNameQuery("");
+});
+
 test("the files can be narrowed to those not viewed, or with comments", async () => {
   const shown = () => state.visibleFiles().map((file) => file.name);
   state.toggleViewed("a.ts");
