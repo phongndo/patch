@@ -200,7 +200,7 @@ pub async fn git(cwd: &Path, args: &[&str]) -> Result<String> {
 }
 
 async fn try_git(cwd: &Path, args: &[&str]) -> Option<String> {
-    git(cwd, args).await.ok().map(|out| out.trim().to_string()).filter(|out| !out.is_empty())
+    git(cwd, args).await.ok().map(|out| out.strip_suffix('\n').unwrap_or(&out).to_string()).filter(|out| !out.is_empty())
 }
 
 pub async fn find_root(directory: &Path) -> Result<PathBuf> {

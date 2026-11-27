@@ -358,10 +358,10 @@ describe("patchr review", () => {
     }
   });
 
-  test("a repository whose path holds a newline shows its untracked files", async () => {
+  test("a repository whose path holds a newline and ends in whitespace shows its own untracked files", async () => {
     const parent = await mkdtemp(join(tmpdir(), "patch-new\nline-"));
     try {
-      const odd = join(parent, "repo");
+      const odd = join(parent, "repo \n");
       const run = (...args: string[]) =>
         Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: odd });
       await Bun.write(join(odd, "kept.txt"), "kept\n");
