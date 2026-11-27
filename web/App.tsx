@@ -387,13 +387,11 @@ export function App() {
         ) : (
           <Composer target={note.target} />
         ),
-      renderMedia: (file, side) => (
-        <MediaPreview
-          file={file}
-          side={side}
-          review={{ key: store.review?.scopeKey ?? "", read: store.review?.read ?? -1 }}
-        />
-      ),
+      renderMedia: (file, side) => {
+        // Keep a mounted preview on the read that supplied its file until CodeView replaces it.
+        const review = { key: store.review?.scopeKey ?? "", read: store.review?.read ?? -1 };
+        return <MediaPreview file={file} side={side} review={review} />;
+      },
       previewed: state.isPreviewed,
       renderHeader: (name) => <FileHeader name={name} />,
       onComment: openComposer,

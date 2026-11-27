@@ -371,11 +371,12 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     ].join("\n"),
     async loadDiffFiles(fileDiff) {
       const key = hooks.scopeKey();
+      const original = files.get(fileDiff.name);
       const [oldText, newText] = await Promise.all([
         fileDiff.type === "new" ? "" : loadSide(key, "old", fileDiff.prevName ?? fileDiff.name),
         fileDiff.type === "deleted" ? "" : loadSide(key, "new", fileDiff.name),
       ]);
-      rememberFile(fileDiff.name, oldText, newText);
+      if (original && files.get(fileDiff.name) === original) rememberFile(fileDiff.name, oldText, newText);
       return {
         oldFile: { name: fileDiff.prevName ?? fileDiff.name, contents: oldText },
         newFile: { name: fileDiff.name, contents: newText },
