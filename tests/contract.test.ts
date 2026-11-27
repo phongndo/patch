@@ -1634,6 +1634,131 @@ esac
     }
   });
 
+  test.skipIf(!Bun.which("jj")).each([
+    ["not colocated", "--no-colocate", "older"],
+    ["colocated", "--colocate", "behind"],
+  ])(
+    "a Jujutsu workspace %s is read through its Git repository, and nothing is written, not even a time",
+    async (_, colocation, index) => {
+      const dir = await mkdtemp(join(tmpdir(), "patch-jj-"));
+      const env = { ...process.env, JJ_CONFIG: "/dev/null", JJ_USER: "t", JJ_EMAIL: "t@t" };
+      const jj = (...args: string[]) => {
+        const run = Bun.spawnSync(["jj", ...args], { cwd: dir, env });
+        if (run.exitCode !== 0) throw new Error(run.stderr.toString());
+        return run.stdout.toString();
+      };
+      try {
+        // Not colocated, there is no `.git` beside the files, only the repository inside `.jj`.
+        jj("git", "init", colocation!);
+        await writeFile(join(dir, "a.ts"), "one\ntwo\n");
+        // An empty file: the object a new file's intent-to-add writes is already in the repository.
+        await writeFile(join(dir, "empty"), "");
+        jj("commit", "-m", "init");
+        jj("bookmark", "create", "main", "-r", "@-");
+        await writeFile(join(dir, "a.ts"), "one\nTWO\n");
+        jj("commit", "-m", "change two");
+        await writeFile(join(dir, "a.ts"), "one\nTWO\nthree\n");
+        await writeFile(join(dir, "new.txt"), "new\n");
+        const files = async () => {
+          const paths = Array.from(new Bun.Glob("**/*").scanSync({ cwd: dir, dot: true, onlyFiles: true }));
+          return Promise.all(
+            paths.toSorted().map(async (path) => {
+              const file = join(dir, path);
+              return [path, Bun.hash(await Bun.file(file).bytes()), (await stat(file)).mtimeMs];
+            }),
+          );
+        };
+        // An index jj must rebuild, from an older jj or behind the last operation: any read rebuilds
+        // it, and the rebuilt one must not land in the repository.
+        const kept = join(dir, ".jj/repo/index");
+        if (index === "older")
+          for (const segment of await readdir(join(kept, "segments")))
+            await writeFile(join(kept, "segments", segment), "");
+        else {
+          const [head] = await readdir(join(dir, ".jj/repo/op_heads/heads"));
+          await rm(join(kept, "op_links", head!));
+        }
+        const before = await files();
+        const review = await startWith({ JJ_CONFIG: "/dev/null" }, dir);
+        try {
+          const get = async (path: string) => (await fetch(`${review.origin}${path}`)).json();
+          // The branch: the commits since main and the files on disk, which jj has not snapshotted.
+          const all = await get("/api/review");
+          expect(all.vcs).toBe("jj");
+          expect(all.label).toEndWith("vs main");
+          expect(all.patch).toContain("-two");
+          expect(all.patch).toContain("+three");
+          expect(all.patch).toContain("new.txt");
+          expect(all.patch).not.toContain(".jj");
+          // The working copy: only what is on disk since its parent.
+          const copy = await get("/api/review?scope=uncommitted");
+          expect(copy.label).toEndWith("· working copy");
+          expect(copy.patch).toContain("+three");
+          expect(copy.patch).not.toContain("-two");
+          expect((await get("/api/review?scope=staged")).error).toContain("no staging area");
+          expect((await get("/api/scopes")).branches).toEqual(["main"]);
+          const history = await get("/api/commits");
+          expect(history.commits.map((commit: { subject: string }) => commit.subject)).toEqual([
+            "change two",
+            "init",
+          ]);
+        } finally {
+          review.child.kill();
+          await review.child.exited;
+        }
+        expect(await files()).toEqual(before);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  test.skipIf(!Bun.which("jj"))(
+    "a Jujutsu merge, a base at the root, and two operations at once are each said plainly, and nothing is written",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "patch-jj-"));
+      const env = { ...process.env, JJ_CONFIG: "/dev/null", JJ_USER: "t", JJ_EMAIL: "t@t" };
+      const jj = (...args: string[]) => {
+        const run = Bun.spawnSync(["jj", ...args], { cwd: dir, env });
+        if (run.exitCode !== 0) throw new Error(run.stderr.toString());
+        return run.stdout.toString().trim();
+      };
+      try {
+        jj("git", "init", "--no-colocate");
+        await writeFile(join(dir, "a.txt"), "a\n");
+        jj("commit", "-m", "a");
+        await writeFile(join(dir, "b.txt"), "b\n");
+        jj("describe", "-m", "b");
+        const b = jj("log", "--no-graph", "-r", "@", "-T", "change_id");
+        jj("new", "@-", "-m", "c");
+        await writeFile(join(dir, "c.txt"), "c\n");
+        const c = jj("log", "--no-graph", "-r", "@", "-T", "change_id");
+        // The working copy merges the two.
+        jj("new", b, c);
+        await writeFile(join(dir, "wc.txt"), "wc\n");
+        const review = await startWith({ JJ_CONFIG: "/dev/null" }, dir);
+        try {
+          const get = async (path: string) => (await fetch(`${review.origin}${path}`)).json();
+          expect((await get("/api/review?scope=uncommitted")).error).toContain("merges several commits");
+          // Everything since the root commit is every file, never only what is on disk.
+          const all = await get(`/api/review?scope=all&base=${encodeURIComponent("root()")}`);
+          for (const name of ["a.txt", "b.txt", "wc.txt"]) expect(all.patch).toContain(`+++ b/${name}`);
+          // Two operations at once: refused, and the folder that records them left as it was.
+          jj("--at-op=@-", "describe", "-m", "elsewhere");
+          const heads = join(dir, ".jj/repo/op_heads/heads");
+          const before = (await stat(heads)).mtimeMs;
+          expect((await get("/api/review")).error).toContain("two operations at once");
+          expect((await stat(heads)).mtimeMs).toBe(before);
+        } finally {
+          review.child.kill();
+          await review.child.exited;
+        }
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
   test("a bad base fails before serving", async () => {
     const child = Bun.spawn([...command, "review", "--no-open", ...local, "--base", "nope"], {
       cwd: repo,

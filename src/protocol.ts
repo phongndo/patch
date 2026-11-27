@@ -3,6 +3,9 @@
 
 export type Mode = "all" | "uncommitted" | "staged";
 
+/** What keeps the repository's history. Jujutsu has no staging area. */
+export type Vcs = "git" | "jj";
+
 /** What is under review: a view of the working tree, a run of commits, or a pull request. */
 export type Scope =
   | { kind: Mode; base?: string }
@@ -54,6 +57,7 @@ export interface ReviewResponse {
   scopeKey: string;
   label: string;
   base?: string;
+  vcs: Vcs;
   patch: string;
   /** Names this run, so a reloaded tab finds its own comments and no other run's. */
   session: string;

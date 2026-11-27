@@ -447,12 +447,21 @@ export function Palette(props: {
     },
   };
 
+  /** A command's label, in the words of the repository's tools. */
+  const labelOf = (action: Action) => {
+    if (action === "reviewUncommitted" && state.store.review?.vcs === "jj") return "Review the working copy";
+    return definitionOf(action).label;
+  };
+
   const commandEntries = (): Entry[] =>
     actionNames
-      .filter((action) => action !== "palette")
+      // Jujutsu has no staging area.
+      .filter(
+        (action) => action !== "palette" && (action !== "reviewStaged" || state.store.review?.vcs !== "jj"),
+      )
       .map((action) => ({
         id: action,
-        label: definitionOf(action).label,
+        label: labelOf(action),
         icon: definitionOf(action).icon,
         group: definitionOf(action).group,
         words: definitionOf(action).words,

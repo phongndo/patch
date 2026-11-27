@@ -9,6 +9,7 @@ mod github;
 mod harness;
 mod history;
 mod install;
+mod jj;
 mod paths;
 mod protocol;
 mod server;
@@ -42,8 +43,9 @@ Usage:
 
 review opens the change in the browser and waits. By default it shows
 everything a pull request would: the branch since it left its base, plus
-uncommitted and untracked files. When the reviewer submits, the feedback is
-printed on stdout as Markdown and patchr exits.
+uncommitted and untracked files. In a Jujutsu repository, --uncommitted is
+the working copy, and --base takes a revset. When the reviewer submits, the
+feedback is printed on stdout as Markdown and patchr exits.
 
 On a machine signed in to Tailscale, the page is also served on its tailnet
 address, and the link printed opens on any of your devices there. --local
@@ -206,6 +208,9 @@ async fn review(args: &[String]) -> Result<(), String> {
         Some(root) => root,
         None => git::find_root(&PathBuf::from(args.directory.clone().unwrap_or_else(|| ".".into()))).await?,
     };
+    if args.mode == Mode::Staged && jj::of(&root).is_some() {
+        return Err("Jujutsu has no staging area: review the working copy with --uncommitted.".into());
+    }
     install::refresh(&root);
     if let Some(base) = &args.base {
         git::find_base(&root, Some(base)).await?;

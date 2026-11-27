@@ -93,6 +93,10 @@ fn command(program: &str, cwd: &Path, args: &[&str], options: &Run<'_>) -> Comma
     } else {
         command.env("GH_PROMPT_DISABLED", "1").env("NO_COLOR", "1");
     }
+    // `gh` finds the repository's remotes through Git too.
+    if program != "jj" {
+        crate::jj::git_env(&mut command, cwd);
+    }
     if let Some(scratch) = options.scratch {
         command
             .args(["-c", "core.splitIndex=false"])
@@ -194,13 +198,18 @@ async fn try_git(cwd: &Path, args: &[&str]) -> Option<String> {
 
 pub async fn find_root(directory: &Path) -> Result<PathBuf> {
     let absolute = std::path::absolute(directory).unwrap_or_else(|_| directory.to_path_buf());
-    match try_git(&absolute, &["rev-parse", "--show-toplevel"]).await {
-        Some(root) => Ok(PathBuf::from(root)),
-        None => Err(format!(
-            "{} is not inside a Git repository. Pass the repository to review: patchr review <directory>",
-            absolute.display()
-        )),
+    let git = try_git(&absolute, &["rev-parse", "--show-toplevel"]).await.map(PathBuf::from);
+    // A Jujutsu workspace not colocated with Git is no Git repository of its own.
+    let canonical = std::fs::canonicalize(&absolute).unwrap_or_else(|_| absolute.clone());
+    if let Some(root) = crate::jj::find_root(&canonical, git.as_deref()) {
+        return Ok(root);
     }
+    git.ok_or_else(|| {
+        format!(
+            "{} is not inside a Git or Jujutsu repository. Pass the repository to review: patchr review <directory>",
+            absolute.display()
+        )
+    })
 }
 
 async fn is_commit(root: &Path, reference: &str) -> bool {
@@ -209,6 +218,18 @@ async fn is_commit(root: &Path, reference: &str) -> bool {
 
 /// The branch a pull request would target: the requested one, else the remote's default, else main/master.
 pub async fn find_base(root: &Path, requested: Option<&str>) -> Result<Option<String>> {
+    // Colocated, Git can say when jj can't (it isn't installed, or ran two operations at once).
+    if let Some(repo) = crate::jj::of(root) {
+        match crate::jj::find_base(root, requested).await {
+            Err(_) if repo.colocated => {}
+            found => return found,
+        }
+    }
+    git_find_base(root, requested).await
+}
+
+/// The base as Git names it.
+async fn git_find_base(root: &Path, requested: Option<&str>) -> Result<Option<String>> {
     if let Some(requested) = requested {
         if !is_commit(root, requested).await {
             return Err(format!("Base {requested} is not a commit in this repository."));
@@ -255,39 +276,49 @@ pub struct Scratch {
 }
 
 impl Scratch {
-    async fn new(root: &Path) -> Result<Scratch> {
+    /// A copy of the repository's index; or for a Jujutsu workspace with none of its own, one read
+    /// from `head`, the commit its working copy sits on.
+    async fn new(root: &Path, head: Option<&str>) -> Result<Scratch> {
         // One at a time: a path may hold a newline, so two in one answer can't be told apart.
         let path = async |name| git(root, &["rev-parse", "--path-format=absolute", "--git-path", name]).await;
         let (index, objects) = tokio::join!(path("index"), path("objects"));
         let (index, objects) = (index?, objects?);
         let dir = TempDir::new("patch-index-")?;
         std::fs::create_dir(dir.0.join("objects")).map_err(|error| error.to_string())?;
-        let _ = std::fs::copy(index.trim(), dir.0.join("index")); // An unborn repository has no index yet.
+        let own_index = crate::jj::of(root).is_none_or(|repo| repo.colocated);
+        if own_index {
+            let _ = std::fs::copy(index.trim(), dir.0.join("index")); // An unborn repository has no index yet.
+        }
         // Quoted, or a colon in the path would end it.
         let objects = objects.trim_end_matches(['\r', '\n']).replace('\\', r"\\").replace('"', "\\\"");
         let mut alternates = format!("\"{objects}\"");
         if let Ok(outer) = std::env::var("GIT_ALTERNATE_OBJECT_DIRECTORIES") {
             alternates += &format!("{}{outer}", if cfg!(windows) { ';' } else { ':' });
         }
-        Ok(Scratch { dir, alternates })
+        let scratch = Scratch { dir, alternates };
+        if let (false, Some(head)) = (own_index, head) {
+            run("git", root, &["read-tree", "--end-of-options", head], Run { scratch: Some(&scratch), ..Run::default() }).await?;
+        }
+        Ok(scratch)
     }
 }
 
 /// A throwaway index with untracked files added as intent-to-add, so a diff of
 /// the working tree shows them as new, and a file removed from the index but
-/// present on disk shows once, as changed.
-async fn worktree_index(root: &Path) -> Result<Scratch> {
-    let prepared = Scratch::new(root).await?;
+/// present on disk shows once, as changed. In a Jujutsu workspace, `copy` is its working copy.
+async fn worktree_index(root: &Path, head: Option<&str>, copy: Option<&crate::jj::WorkingCopy>) -> Result<Scratch> {
+    let prepared = Scratch::new(root, head).await?;
     let scratch = Some(&prepared);
-    // As bytes, exactly: a path that is not UTF-8 must reach `git add` as Git wrote it.
-    let untracked = run_bytes(
-        "git",
-        root,
-        &["ls-files", "--others", "--exclude-standard", "-z"],
-        Run { scratch, ..Run::default() },
-        LIMIT as u64,
-    )
-    .await?;
+    if let Some(copy) = copy {
+        leave_out_of_sparse(root, &prepared, copy).await?;
+    }
+    // As bytes, exactly: a path that is not UTF-8 must reach `git add` as Git wrote it. Git keeps
+    // out of its own folder, but not jj's.
+    let mut args = vec!["ls-files", "--others", "--exclude-standard", "-z"];
+    if crate::jj::of(root).is_some() {
+        args.push("--exclude=/.jj/");
+    }
+    let untracked = run_bytes("git", root, &args, Run { scratch, ..Run::default() }, LIMIT as u64).await?;
     if !untracked.is_empty() {
         // It writes the empty file's object. Were the repository's objects in sight, Git would find
         // that one there instead and touch it (or the pack holding it) to keep it from pruning.
@@ -299,7 +330,85 @@ async fn worktree_index(root: &Path) -> Result<Scratch> {
         )
         .await?;
     }
+    if let Some(copy) = copy {
+        add_tracked_but_ignored(root, &prepared, head, copy, &untracked).await?;
+    }
     Ok(prepared)
+}
+
+/// In a sparse Jujutsu workspace, the files it keeps off disk are as the working copy last
+/// recorded them (a change made before they left disk is kept), and marked as left out of the
+/// working tree, so they are not taken for deleted.
+async fn leave_out_of_sparse(root: &Path, scratch: &Scratch, copy: &crate::jj::WorkingCopy) -> Result<()> {
+    let Some(kept) = crate::jj::sparse(root).await? else { return Ok(()) };
+    let scratch = Some(scratch);
+    let kept_in = |path: &[u8]| {
+        kept.iter().any(|kept| {
+            let kept = kept.as_bytes();
+            path.starts_with(kept) && (path.len() == kept.len() || path[kept.len()] == b'/')
+        })
+    };
+    // Every path off disk, in the working copy or its parent, taken as the working copy has it.
+    let recorded = ["ls-tree", "-r", "-z", "--name-only", "--full-tree", "--end-of-options", copy.commit.as_str()];
+    let (recorded, indexed) = tokio::join!(
+        run_bytes("git", root, &recorded, Run::default(), LIMIT as u64),
+        run_bytes("git", root, &["ls-files", "-z"], Run { scratch, ..Run::default() }, LIMIT as u64),
+    );
+    let (recorded, indexed) = (recorded?, indexed?);
+    let mut off: Vec<&[u8]> = recorded.split(|byte| *byte == 0).chain(indexed.split(|byte| *byte == 0)).collect();
+    off.retain(|path| !path.is_empty() && !kept_in(path));
+    off.sort();
+    off.dedup();
+    if off.is_empty() {
+        return Ok(());
+    }
+    let paths: Vec<u8> = off.iter().flat_map(|path| path.iter().copied().chain([0])).collect();
+    let reset = ["reset", "-q", copy.commit.as_str(), "--pathspec-from-file=-", "--pathspec-file-nul"];
+    run("git", root, &reset, Run { scratch, stdin: Some(&paths), ..Run::default() }).await?;
+    let listed = run_bytes("git", root, &["ls-files", "-z"], Run { scratch, ..Run::default() }, LIMIT as u64).await?;
+    let mut away = Vec::new();
+    for path in listed.split(|byte| *byte == 0).filter(|path| !path.is_empty() && !kept_in(path)) {
+        away.extend_from_slice(path);
+        away.push(0);
+    }
+    if away.is_empty() {
+        return Ok(());
+    }
+    let args = ["update-index", "-z", "--skip-worktree", "--stdin"];
+    run("git", root, &args, Run { scratch, stdin: Some(&away), ..Run::default() }).await.map(|_| ())
+}
+
+/// Files jj tracks in the working copy though `.gitignore` matches them (`jj file track
+/// --include-ignored`): new since its parent, Git would leave them out as ignored.
+async fn add_tracked_but_ignored(
+    root: &Path,
+    scratch: &Scratch,
+    head: Option<&str>,
+    copy: &crate::jj::WorkingCopy,
+    untracked: &[u8],
+) -> Result<()> {
+    let from = head.unwrap_or(EMPTY_TREE);
+    let args = ["diff", "--name-only", "-z", "--no-renames", "--diff-filter=A", from, copy.commit.as_str(), "--"];
+    let added = run_bytes("git", root, &args, Run::default(), LIMIT as u64).await?;
+    let untracked: HashSet<&[u8]> = untracked.split(|byte| *byte == 0).collect();
+    let mut wanted = Vec::new();
+    for path in added.split(|byte| *byte == 0).filter(|path| !path.is_empty() && !untracked.contains(path)) {
+        // Only those still on disk; a path that is not UTF-8 is left out.
+        // A folder now where the file was would be added whole, ignored files and all.
+        let on_disk = std::str::from_utf8(path)
+            .is_ok_and(|path| safe_path(path) && root.join(path).symlink_metadata().is_ok_and(|meta| !meta.is_dir()));
+        if on_disk {
+            wanted.extend_from_slice(path);
+            wanted.push(0);
+        }
+    }
+    if wanted.is_empty() {
+        return Ok(());
+    }
+    let args = ["add", "--force", "--intent-to-add", "--pathspec-from-file=-", "--pathspec-file-nul"];
+    run("git", root, &args, Run { scratch: Some(scratch), scratch_only: true, stdin: Some(&wanted), ..Run::default() })
+        .await
+        .map(|_| ())
 }
 
 const OVER_LIMIT: &str = "This change is over the 64 MB review limit.";
@@ -469,7 +578,45 @@ pub fn repository_name(root: &Path) -> String {
     root.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
+/// The commit the working tree sits on, and what to call it.
+pub struct Head {
+    pub commit: Option<String>,
+    pub name: String,
+    /// In a Jujutsu workspace read through jj, its working copy.
+    pub jj: Option<crate::jj::WorkingCopy>,
+}
+
+/// The working tree's head: in a Jujutsu workspace, its working copy's parent, as `jj` must say
+/// when Git has no HEAD there.
+pub async fn head_and_branch(root: &Path) -> Result<Head> {
+    let git = async || {
+        let (commit, name) = git_branch(root).await;
+        Head { commit, name, jj: None }
+    };
+    let Some(repo) = crate::jj::of(root) else { return Ok(git().await) };
+    if !repo.colocated {
+        let copy =
+            crate::jj::working_copy(root).await.map_err(|why| format!("Reading this Jujutsu workspace needs jj: {why}"))?;
+        return Ok(Head { commit: copy.head.clone(), name: copy.name.clone(), jj: Some(copy) });
+    }
+    let (copy, git) = tokio::join!(crate::jj::working_copy(root), git());
+    match copy {
+        // Colocated, Git's HEAD is the working copy's parent, unless Git has moved it since (a
+        // checkout, a commit) and jj has not looked: then the files on disk are Git's. And when jj
+        // can't say, Git can.
+        Ok(copy) if copy.head == git.commit => Ok(Head { commit: copy.head.clone(), name: copy.name.clone(), jj: Some(copy) }),
+        _ => Ok(git),
+    }
+}
+
 pub async fn current_branch(root: &Path) -> (Option<String>, String) {
+    match head_and_branch(root).await {
+        Ok(head) => (head.commit, head.name),
+        Err(_) => (None, "unborn".into()),
+    }
+}
+
+async fn git_branch(root: &Path) -> (Option<String>, String) {
     let (head, branch) =
         tokio::join!(try_git(root, &["rev-parse", "--verify", "--quiet", "HEAD"]), try_git(root, &["branch", "--show-current"]));
     let branch = match branch {
@@ -530,6 +677,15 @@ pub async fn read_commits(root: &Path, scope: &Scope, commits: &Commits) -> Resu
     if commits.lacking {
         return Err(commits.lacking_message());
     }
+    // jj keeps a commit's conflicts in its tree as files of its own, which Git would show.
+    if crate::jj::of(root).is_some() {
+        let (parent, to) = (commits.parent.as_str(), commits.to.as_str());
+        let parent = async { parent != EMPTY_TREE && crate::jj::is_conflicted(root, parent).await };
+        let (parent, to) = tokio::join!(parent, crate::jj::is_conflicted(root, to));
+        if parent || to {
+            return Err(CONFLICTED.into());
+        }
+    }
     let (_, branch) = current_branch(root).await;
     let (patch, changes) = diff_with_changes(root, &[commits.parent.as_str(), commits.to.as_str(), "--"], None).await?;
     Ok(Review {
@@ -546,6 +702,9 @@ pub async fn read_commits(root: &Path, scope: &Scope, commits: &Commits) -> Resu
     })
 }
 
+const CONFLICTED: &str =
+    "A commit this review compares has conflicts, which jj keeps as files Git would show as changes. Resolve them first.";
+
 pub async fn read_review(root: &Path, scope: &Scope) -> Result<Review> {
     let repository = repository_name(root);
 
@@ -553,36 +712,79 @@ pub async fn read_review(root: &Path, scope: &Scope) -> Result<Review> {
         return read_commits(root, scope, &commits(root, from, to).await?).await;
     }
 
+    let jj = crate::jj::of(root).is_some();
     let (requested, staged, all) = match scope {
         Scope::All { base } => (base.as_deref(), false, true),
+        Scope::Staged { .. } if jj => return Err("Jujutsu has no staging area: review the working copy instead.".into()),
         Scope::Staged { .. } => (None, true, false),
         Scope::Uncommitted { .. } => (None, false, false),
         Scope::Commits { .. } | Scope::Pr { .. } => return Err("Pull requests are read through GitHub.".into()),
     };
-    // Where the diff starts, and the throwaway index for the working tree, side by side.
+    // Where the diff starts, and the throwaway index for the working tree, side by side; a Jujutsu
+    // workspace's index is read from the commit it sits on, so it waits for that.
+    let early = async { if staged || jj { None } else { Some(worktree_index(root, None, None).await) } };
+    let (found, base, early) =
+        tokio::join!(head_and_branch(root), async { if all { find_base(root, requested).await } else { Ok(None) } }, early);
+    let Head { commit: head, name: branch, jj: copy } = found?;
+    // A colocated workspace read through Git (it moved since jj looked) takes Git's base too.
+    let base = if jj && all && copy.is_none() { git_find_base(root, requested).await } else { base };
+    if let Some(copy) = &copy
+        && copy.merge
+        && !all
+    {
+        return Err("The working copy merges several commits, which Git can't compare it with; review the branch instead.".into());
+    }
     let start = async {
-        let (head_and_branch, base) =
-            tokio::join!(current_branch(root), async { if all { find_base(root, requested).await } else { Ok(None) } });
-        let (head, branch) = head_and_branch;
         let mut from = head.clone().unwrap_or_else(|| EMPTY_TREE.to_string());
         // An unborn branch has no base.
         let base = match &head {
             Some(head) if all => {
                 let base = base?;
-                if let Some(base) = &base
-                    && let Some(merge_base) = try_git(root, &["merge-base", base, head]).await
-                {
-                    from = merge_base;
+                // jj names a base by a revset, which Git can't read; one Git found when jj could
+                // not (colocated) is Git's own name.
+                let commit = match &base {
+                    Some(base) if copy.is_some() => crate::jj::base_commit(root, base).await.or_else(|| Some(base.clone())),
+                    base => base.clone(),
+                };
+                // The root commit's tree is empty: everything since it is everything.
+                if commit.as_deref() == Some(EMPTY_TREE) {
+                    from = EMPTY_TREE.to_string();
+                } else if let Some(commit) = &commit {
+                    // A working copy that merges several branches left the base where any of them did.
+                    let mut args = vec!["merge-base", commit.as_str(), head.as_str()];
+                    if let Some(copy) = &copy {
+                        args.extend(copy.other_parents.iter().map(String::as_str));
+                    }
+                    if let Some(merge_base) = try_git(root, &args).await {
+                        from = merge_base;
+                    }
                 }
                 base
             }
             _ => None,
         };
-        Ok::<_, String>((branch, base, from))
+        // jj keeps a commit's conflicts in its tree as files of its own, which Git would show.
+        if let Some(copy) = &copy {
+            let conflicted = if Some(&from) == head.as_ref() {
+                copy.conflicted
+            } else {
+                from != EMPTY_TREE && crate::jj::is_conflicted(root, &from).await
+            };
+            if conflicted {
+                return Err(CONFLICTED.into());
+            }
+        }
+        Ok::<_, String>((base, from))
     };
-    let index = async { if staged { Ok(None) } else { worktree_index(root).await.map(Some) } };
+    let index = async {
+        match early {
+            Some(index) => index.map(Some),
+            None if staged => Ok(None),
+            None => worktree_index(root, head.as_deref(), copy.as_ref()).await.map(Some),
+        }
+    };
     let (start, index) = tokio::join!(start, index);
-    let (branch, base, from) = start?;
+    let (base, from) = start?;
     let (patch, changes) = match index? {
         Some(scratch) => diff_with_changes(root, &[from.as_str(), "--"], Some(&scratch)).await?,
         None => diff_with_changes(root, &["--cached", from.as_str(), "--"], None).await?,
@@ -590,13 +792,26 @@ pub async fn read_review(root: &Path, scope: &Scope) -> Result<Review> {
     let label = if all {
         match &base {
             // On the base branch itself the "branch" is just its uncommitted work.
-            Some(base) if base != &branch && base.trim_start_matches("origin/") != branch => {
+            Some(base)
+                if base != &branch
+                    && base.trim_start_matches("origin/") != branch
+                    && base.strip_suffix("@origin") != Some(&branch) =>
+            {
                 format!("{branch} vs {base}")
             }
             _ => branch.clone(),
         }
     } else {
-        format!("{branch} · {}", if staged { "staged" } else { "uncommitted" })
+        format!(
+            "{branch} · {}",
+            if staged {
+                "staged"
+            } else if jj {
+                "working copy"
+            } else {
+                "uncommitted"
+            }
+        )
     };
     Ok(Review {
         repository,
@@ -614,6 +829,12 @@ pub async fn read_review(root: &Path, scope: &Scope) -> Result<Review> {
 
 /// Local and remote branches, most recently committed first.
 pub async fn list_branches(root: &Path) -> Result<Vec<String>> {
+    if let Some(repo) = crate::jj::of(root) {
+        match crate::jj::bookmarks(root).await {
+            Err(_) if repo.colocated => {}
+            found => return found,
+        }
+    }
     let out = git(
         root,
         &["for-each-ref", "--sort=-committerdate", "--count=300", "--format=%(refname:short)", "refs/heads", "refs/remotes"],
@@ -627,8 +848,15 @@ pub async fn list_branches(root: &Path) -> Result<Vec<String>> {
 /// to an already modified file still counts as a change.
 pub async fn fingerprint(root: &Path) -> String {
     let head = try_git(root, &["rev-parse", "--verify", "--quiet", "HEAD"]).await.unwrap_or_default();
-    let status = git(root, &["status", "--porcelain=v1", "-z", "--untracked-files=all"]).await.unwrap_or_default();
-    let mut out = format!("{head}\n{status}");
+    let mut args = vec!["status", "--porcelain=v1", "-z", "--untracked-files=all"];
+    // Any jj command adds an operation; its own folder is no change to review.
+    let jj = crate::jj::of(root);
+    if jj.is_some() {
+        args.extend(["--", ":(exclude,top).jj"]);
+    }
+    let status = git(root, &args).await.unwrap_or_default();
+    let operations = jj.map(|repo| crate::jj::operations(&repo)).unwrap_or_default();
+    let mut out = format!("{head}\n{operations}\n{status}");
     for entry in status.split('\0') {
         if let Some(path) = entry.get(3..)
             && let Ok(meta) = std::fs::metadata(root.join(path))
@@ -886,7 +1114,9 @@ pub async fn grep(
         args.push("-i");
     }
     args.extend(["-e", text, "--end-of-options", tree, "--"]);
-    let mut child = Command::new("git")
+    let mut command = Command::new("git");
+    crate::jj::git_env(&mut command, root);
+    let mut child = command
         .args(&args)
         .env("GIT_OPTIONAL_LOCKS", "0")
         .env("GIT_TERMINAL_PROMPT", "0")

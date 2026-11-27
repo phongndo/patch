@@ -36,6 +36,7 @@ fn git(root: &Path, args: &[&str]) -> Command {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
+    crate::jj::git_env_blocking(&mut command, root);
     command
 }
 
@@ -119,6 +120,7 @@ fn short_length(root: &Path, tip: &str) -> usize {
 }
 
 /// HEAD's commit, which pins the history the pages list; none on an unborn branch.
+#[cfg(test)]
 pub fn head(root: &Path) -> Option<String> {
     let output = git(root, &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]).output().ok()?;
     let id = String::from_utf8(output.stdout).ok()?.trim().to_string();

@@ -22,6 +22,14 @@ impl Mode {
     }
 }
 
+/// What keeps the repository's history.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Vcs {
+    Git,
+    Jj,
+}
+
 /// What is under review: a view of the working tree, a run of commits, or a pull request.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
@@ -86,6 +94,7 @@ pub struct ReviewResponse {
     pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base: Option<String>,
+    pub vcs: Vcs,
     pub patch: String,
     /// Names this run, so a reloaded tab finds its own comments and no other run's.
     pub session: String,

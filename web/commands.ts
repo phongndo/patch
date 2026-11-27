@@ -112,7 +112,7 @@ export const actions = {
     label: "Review uncommitted changes",
     group: "Scope",
     icon: "pencil",
-    words: "working tree",
+    words: "working tree working copy jj",
   },
   reviewStaged: { label: "Review staged changes", group: "Scope", icon: "plus", words: "index" },
   chooseBase: { label: "Compare against a branch…", group: "Scope", icon: "branch", words: "base" },

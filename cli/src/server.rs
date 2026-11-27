@@ -514,8 +514,8 @@ async fn commits(app: &App, params: &HashMap<String, String>) -> Result<CommitsR
             cursor.filter(|(tip, _)| history::is_id(tip)).ok_or("Not a page of commits.")?
         }
         None => {
-            let root = root.clone();
-            match tokio::task::spawn_blocking(move || history::head(&root)).await.map_err(|error| error.to_string())? {
+            // A Jujutsu workspace's history is its working copy's parent's, which Git can't name.
+            match git::head_and_branch(&root).await?.commit.filter(|tip| history::is_id(tip)) {
                 Some(tip) => (tip, 0),
                 None => return Ok(CommitsResponse { commits: Vec::new(), next: None }),
             }
@@ -1037,6 +1037,7 @@ async fn handle(State(app): State<Arc<App>>, request: Request) -> Response {
                         scope_key,
                         label: current.label,
                         base: current.base,
+                        vcs: if crate::jj::of(&app.options.root).is_some() { protocol::Vcs::Jj } else { protocol::Vcs::Git },
                         patch: current.patch,
                         session: app.session.clone(),
                         read,

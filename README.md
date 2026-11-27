@@ -47,6 +47,10 @@ The review shows what a pull request would: your branch's commits plus any
 uncommitted and untracked files. Press ⌘O to review something else: only
 uncommitted or staged changes, a range of commits, or an open pull request.
 
+Patch reads Git and [Jujutsu](https://jj-vcs.github.io/jj/) repositories,
+colocated or not. In a Jujutsu one, "uncommitted" is the working copy, and there
+is no staging area.
+
 ## Supported agents
 
 | Agent                                                          | Command  |

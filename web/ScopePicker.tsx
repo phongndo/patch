@@ -64,6 +64,18 @@ const views: Array<{ kind: Mode; action: Action; label: string; hint: string }> 
   },
 ];
 
+/** The views a repository has: Jujutsu has no staging area, and calls the rest its working copy. */
+const viewsOf = (jj: boolean) =>
+  jj
+    ? views
+        .filter(({ kind }) => kind !== "staged")
+        .map((view) =>
+          view.kind === "uncommitted"
+            ? { ...view, label: "Working copy", hint: "The working-copy commit, as jj diff shows it" }
+            : view,
+        )
+    : views;
+
 interface Row extends Searchable {
   id: string;
   icon: IconName;
@@ -206,8 +218,9 @@ export function ScopePicker() {
       .filter((row) => answered || !query().trim() || matches.has(row.id))
       .map((row): Row => ({ ...row, marks: matches.get(row.id) }));
   };
+  const jj = () => state.store.review?.vcs === "jj";
   const viewRows = () =>
-    views.map((view): Row => {
+    viewsOf(jj()).map((view): Row => {
       const { icon, words } = definitionOf(view.action);
       // On the base itself there is nothing to compare.
       const against =
@@ -339,7 +352,7 @@ export function ScopePicker() {
     } else if (pages.query !== query()) pages.setQuery(query());
   }
   function onKeyDown(event: KeyboardEvent & { currentTarget: HTMLInputElement }) {
-    const view = views.find(({ action }) => isPressed(event, action));
+    const view = viewsOf(jj()).find(({ action }) => isPressed(event, action));
     const arrow = { ArrowLeft: -1, ArrowRight: 1 }[event.key];
     const modified = event.ctrlKey || event.metaKey || event.altKey || event.shiftKey;
     if (view) chooseView(view.kind);

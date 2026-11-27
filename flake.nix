@@ -76,6 +76,8 @@
               pkgs.clippy
               pkgs.rustc
               pkgs.rustfmt
+              # For the Jujutsu contract tests, which are skipped without it.
+              pkgs.jujutsu
               # For the Git hooks (hk.pkl).
               pkgs.actionlint
               pkgs.hk

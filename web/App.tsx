@@ -687,7 +687,11 @@ export function App() {
     scope: { run: () => setScopeOpen((shown) => !shown), enabled: () => idle() || scopeOpen() },
     reviewBranch: { run: () => void state.load({ kind: "all", base: base() }) },
     reviewUncommitted: { run: () => void state.load({ kind: "uncommitted" }) },
-    reviewStaged: { run: () => void state.load({ kind: "staged" }) },
+    // Jujutsu has no staging area.
+    reviewStaged: {
+      run: () => void state.load({ kind: "staged" }),
+      enabled: () => idle() && store.review?.vcs !== "jj",
+    },
     chooseBase: page("chooseBase"),
     // Commits and pull requests are many: the picker pages and searches them.
     chooseCommit: { run: () => openScope("commits") },
