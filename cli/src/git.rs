@@ -67,6 +67,8 @@ pub struct Review {
 pub struct Run<'a> {
     pub allow_exit_1: bool,
     pub scratch: Option<&'a Scratch>,
+    /// With `scratch`, Git sees only the objects written there, not the repository's.
+    pub scratch_only: bool,
     pub stdin: Option<&'a [u8]>,
 }
 
@@ -95,8 +97,12 @@ fn command(program: &str, cwd: &Path, args: &[&str], options: &Run<'_>) -> Comma
         command
             .args(["-c", "core.splitIndex=false"])
             .env("GIT_INDEX_FILE", scratch.dir.0.join("index"))
-            .env("GIT_OBJECT_DIRECTORY", scratch.dir.0.join("objects"))
-            .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &scratch.alternates);
+            .env("GIT_OBJECT_DIRECTORY", scratch.dir.0.join("objects"));
+        if options.scratch_only {
+            command.env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES");
+        } else {
+            command.env("GIT_ALTERNATE_OBJECT_DIRECTORIES", &scratch.alternates);
+        }
     }
     command
         .args(args)
@@ -283,11 +289,13 @@ async fn worktree_index(root: &Path) -> Result<Scratch> {
     )
     .await?;
     if !untracked.is_empty() {
+        // It writes the empty file's object. Were the repository's objects in sight, Git would find
+        // that one there instead and touch it (or the pack holding it) to keep it from pruning.
         run(
             "git",
             root,
             &["add", "--intent-to-add", "--pathspec-from-file=-", "--pathspec-file-nul"],
-            Run { scratch, stdin: Some(&untracked), ..Run::default() },
+            Run { scratch, scratch_only: true, stdin: Some(&untracked), ..Run::default() },
         )
         .await?;
     }
