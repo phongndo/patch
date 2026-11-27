@@ -23,6 +23,10 @@ env:
   BUN_VERSION: "1.4.5"
   BUN_LINUX_SHA256: 94559b3b528995a49452f9f2404cec74f2efd7d06e0a000a8cd214b02c3666eb
   BUN_MACOS_SHA256: b5d6bc2e13caf14e57c89661e89efd073ff16165b41bfe43882616410609cd10
+  # For the Jujutsu contract tests, which are skipped without it.
+  JJ_VERSION: "0.41.0"
+  JJ_LINUX_SHA256: 42181a80d316ac157874c817c9945e104275114fb461d99e06e2312502f08f99
+  JJ_MACOS_SHA256: e84883b4fb42d1e0cb665efae95b44f387603c1280c893f8cbc7bbac7149ea30
   CARGO_INCREMENTAL: "0"
   CARGO_PROFILE_DEV_DEBUG: "0"
   CARGO_TERM_COLOR: always
@@ -95,13 +99,13 @@ jobs:
         os: [ubuntu-24.04, macos-15]
     steps:
       - id: setup
-        name: Get the source and Bun
+        name: Get the source, Bun and jj
         shell: bash
         run: |
           # At once, and without the actions for them: they take several times as long.
           case "$RUNNER_OS" in
-            Linux) bun=bun-linux-x64 sha=$BUN_LINUX_SHA256 ;;
-            macOS) bun=bun-darwin-aarch64 sha=$BUN_MACOS_SHA256 ;;
+            Linux) bun=bun-linux-x64 sha=$BUN_LINUX_SHA256 jj=x86_64-unknown-linux-musl jjsha=$JJ_LINUX_SHA256 ;;
+            macOS) bun=bun-darwin-aarch64 sha=$BUN_MACOS_SHA256 jj=aarch64-apple-darwin jjsha=$JJ_MACOS_SHA256 ;;
           esac
           git init -q . && git fetch -q --depth 1 "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$GITHUB_SHA" && git checkout -q FETCH_HEAD &
           source=$!
@@ -113,6 +117,11 @@ jobs:
           echo "$sha  $bun.zip" | shasum -a 256 --check --quiet
           unzip -q "$bun.zip"
           echo "$RUNNER_TEMP/$bun" >> "$GITHUB_PATH"
+          jj="jj-v$JJ_VERSION-$jj.tar.gz"
+          curl -fsSLO --retry 3 "https://github.com/jj-vcs/jj/releases/download/v$JJ_VERSION/$jj"
+          echo "$jjsha  $jj" | shasum -a 256 --check --quiet
+          mkdir jj && tar -xzf "$jj" -C jj
+          echo "$RUNNER_TEMP/jj" >> "$GITHUB_PATH"
           wait "$source"
           echo "rust=$(rustc --version | tr -c 'a-z0-9.\n' -)" >> "$GITHUB_OUTPUT"
       - id: cache
