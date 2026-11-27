@@ -4,23 +4,49 @@
 
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import type { Comment } from "../src/protocol.ts";
+import { FileIcon } from "./FileIcon.tsx";
 import { Icon } from "./Icon.tsx";
 import { SearchField } from "./SearchField.tsx";
 import { aboutLabel, Composer, removeComment, Tags } from "./Notes.tsx";
 import { preferences } from "./settings.ts";
 import { globalTarget, state } from "./state.ts";
+import { touchOnly } from "./ui.ts";
 
 const split = (path: string) => {
   const at = path.lastIndexOf("/") + 1;
   return { name: path.slice(at), folder: path.slice(0, Math.max(0, at - 1)) };
 };
 
-function FileName(props: { path: string }) {
+/** A group's heading: the file, or the review as a whole, and how many comments it has. */
+function GroupHead(props: { path: string; count?: number }) {
   return (
-    <h3 class="comment-file" title={props.path}>
-      {split(props.path).name}
+    <h3 class="comment-file" title={props.path || undefined}>
+      <Show when={props.path} fallback={<Icon name="comment" />}>
+        <FileIcon path={props.path} />
+      </Show>
+      <span class="comment-name">{props.path ? split(props.path).name : "Global"}</span>
       <span class="comment-folder">{split(props.path).folder}</span>
+      <Show when={props.count}>
+        <span class="comment-count">{props.count}</span>
+      </Show>
     </h3>
+  );
+}
+
+/** The lines a comment is about, as they read when it was written: a few, without their indent. */
+function Excerpt(props: { lines: string[] }) {
+  const shown = () => {
+    const lines = props.lines.slice(0, 3);
+    const indent = Math.min(...lines.filter((l) => l.trim()).map((l) => l.length - l.trimStart().length));
+    return lines.map((line) => line.slice(Number.isFinite(indent) ? indent : 0));
+  };
+  return (
+    <span class="comment-code" aria-hidden="true">
+      <For each={shown()}>{(line) => <span class="comment-code-line">{line || " "}</span>}</For>
+      <Show when={props.lines.length > 3}>
+        <span class="comment-code-more">{props.lines.length - 3} more lines</span>
+      </Show>
+    </span>
   );
 }
 
@@ -59,10 +85,15 @@ export function CommentsPanel(props: { search: string; onOpen: (comment: Comment
                 title={state.lineOf(row.comment) === undefined ? "Edit" : "Show in the diff"}
                 onClick={() => props.onOpen(row.comment)}
               >
-                <span class="comment-about">
-                  {aboutLabel(row.comment)}
-                  <Tags comment={row.comment} />
-                </span>
+                <Show when={row.comment.file || row.comment.scope}>
+                  <span class="comment-about">
+                    <Show when={row.comment.file}>{aboutLabel(row.comment)}</Show>
+                    <Tags comment={row.comment} />
+                  </span>
+                </Show>
+                <Show when={row.comment.excerpt.length}>
+                  <Excerpt lines={row.comment.excerpt} />
+                </Show>
                 <span class="comment-body">{row.comment.body}</span>
               </button>
               <button
@@ -86,9 +117,7 @@ export function CommentsPanel(props: { search: string; onOpen: (comment: Comment
       <Show when={starting()}>
         {(target) => (
           <section class="comment-group">
-            <Show when={target().file}>
-              <FileName path={target().file} />
-            </Show>
+            <GroupHead path={target().file} />
             <Composer target={target()} />
           </section>
         )}
@@ -96,9 +125,7 @@ export function CommentsPanel(props: { search: string; onOpen: (comment: Comment
       <For each={groups()} keyed={([file]) => file}>
         {(group) => (
           <section class="comment-group">
-            <Show when={group()[0]}>
-              <FileName path={group()[0]} />
-            </Show>
+            <GroupHead path={group()[0]} count={group()[1].length} />
             <ul>
               <For each={group()[1]}>{(comment) => <Row comment={comment} />}</For>
             </ul>
@@ -109,10 +136,21 @@ export function CommentsPanel(props: { search: string; onOpen: (comment: Comment
         <p class="empty">No comments match.</p>
       </Show>
       <Show when={!state.store.comments.length && !starting()}>
-        <p class="empty">
-          Click a line number's + in the diff, or select lines and{" "}
-          {preferences.keyText("comment") ? `press ${preferences.keyText("comment")}` : "run Comment"}.
-        </p>
+        <div class="comments-empty">
+          <span class="comments-empty-icon">
+            <Icon name="comment" />
+          </span>
+          <strong>No comments yet</strong>
+          <p class="empty">
+            <Show
+              when={!touchOnly()}
+              fallback="Tap a line number in the diff, or slide along the numbers for several lines."
+            >
+              Click a line number's + in the diff, or select lines and{" "}
+              {preferences.keyText("comment") ? `press ${preferences.keyText("comment")}` : "run Comment"}.
+            </Show>
+          </p>
+        </div>
       </Show>
     </div>
   );
@@ -134,18 +172,26 @@ export function CommentsSide(props: { onOpen: (comment: Comment) => void; onClos
   return (
     <aside class="comments-side" id="comments" aria-label="Comments">
       <div class="side-head">
-        <SearchField
-          class="comments-search"
-          value={query()}
-          onInput={setQuery}
-          onEnter={() => {
-            const first = query().trim() && findComments(query())[0];
-            if (first) props.onOpen(first);
-          }}
-          placeholder="Search comments"
-          label="Search comments"
-          title="Filter the comments · Enter opens the first"
-        />
+        <h2 class="side-title">
+          Comments
+          <Show when={state.store.comments.length}>
+            <span class="side-count">{state.store.comments.length}</span>
+          </Show>
+        </h2>
+        <Show when={state.store.comments.length || query()}>
+          <SearchField
+            class="comments-search"
+            value={query()}
+            onInput={setQuery}
+            onEnter={() => {
+              const first = query().trim() && findComments(query())[0];
+              if (first) props.onOpen(first);
+            }}
+            placeholder="Search comments"
+            label="Search comments"
+            title="Filter the comments · Enter opens the first"
+          />
+        </Show>
         <button
           class="icon-button"
           title={preferences.hint("Global comment", "globalComment")}

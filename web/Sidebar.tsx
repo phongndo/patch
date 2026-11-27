@@ -21,6 +21,8 @@ import { filterOpen, setFilterOpen } from "./ui.ts";
 export function Sidebar(props: {
   /** Opens a file: exploring, on its own; otherwise a changed one in the review, an unchanged one on its own. */
   onOpen: (path: string) => void;
+  /** Closes it where it is a drawer over the diff. */
+  onClose: () => void;
 }) {
   const query = state.nameQuery;
   const setQuery = state.setNameQuery;
@@ -81,6 +83,7 @@ export function Sidebar(props: {
   return (
     <aside class="sidebar" id="sidebar" aria-label="Files">
       <div class="side-head">
+        <h2 class="side-title">Files</h2>
         <SearchField
           value={query()}
           onInput={setQuery}
@@ -190,6 +193,9 @@ export function Sidebar(props: {
             </Show>
           </PopoverContent>
         </Popover>
+        <button class="icon-button narrow-only" title="Hide the files" onClick={() => props.onClose()}>
+          <Icon name="x" />
+        </button>
       </div>
 
       {/* The tree takes focus inside its shadow root, where the panel can't see it. */}

@@ -1580,11 +1580,11 @@ a.media-frame:hover img {
   flex: 1;
   min-width: 0;
   overflow: auto;
-  padding: 0 8px 12px;
+  padding: 0 10px 16px;
 }
 
 .comment-group + .comment-group {
-  margin-top: 14px;
+  margin-top: 12px;
 }
 
 .comment-group ul {
@@ -1595,45 +1595,83 @@ a.media-frame:hover img {
   list-style: none;
 }
 
+/* A group's file, held at the top while its comments scroll under it. */
 .comment-file {
   position: sticky;
   top: 0;
   z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin: 0;
-  padding: 4px 2px 6px;
+  padding: 8px 2px;
   background: var(--panel);
-  font-size: var(--text-meta);
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  font-size: var(--text);
+  font-weight: 600;
   white-space: nowrap;
 }
 
-.comment-folder {
-  margin-left: 6px;
+.comment-file > :is(.icon, svg) {
+  flex: none;
+  width: var(--icon-meta);
+  height: var(--icon-meta);
   color: var(--muted);
+}
+
+.comment-name,
+.comment-folder {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.comment-name {
+  flex: 0 1 auto;
+}
+
+.comment-folder {
+  flex: 0 100 auto;
+  color: var(--muted);
+  font-size: var(--text-meta);
   font-weight: 400;
+}
+
+.comment-count {
+  flex: none;
+  margin-left: auto;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--hover);
+  color: var(--muted);
+  font-size: var(--text-meta);
+  font-weight: 500;
+  line-height: 20px;
+  text-align: center;
 }
 
 .comment-card {
   position: relative;
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--fg) 3%, var(--panel));
   transition: border-color 100ms ease;
 }
 
 .comment-card:hover {
-  border-color: var(--muted);
+  border-color: var(--line-strong);
 }
 
 .comment-card .note-delete {
   position: absolute;
-  top: 3px;
+  top: 4px;
   right: 4px;
 }
 
 .comment-item {
-  display: block;
+  display: grid;
+  gap: 8px;
   width: 100%;
-  padding: 0 0 10px;
+  padding: 10px 12px 12px;
   border: 0;
   border-radius: inherit;
   background: transparent;
@@ -1641,26 +1679,83 @@ a.media-frame:hover img {
   cursor: pointer;
 }
 
+/* Where it is, clear of Delete. */
 .comment-about {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 2px 6px;
-  min-height: 30px;
-  /* Clear of Delete. */
-  padding: 4px 30px 4px 10px;
+  min-height: 20px;
+  padding-right: 28px;
   color: var(--muted);
   font-size: var(--text-meta);
+  font-weight: 500;
+}
+
+/* What it is about, as a few lines of the code. */
+.comment-code {
+  display: grid;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 5%, var(--bg));
+  color: var(--muted);
+  font: var(--text-meta) / 1.5 var(--mono);
+  overflow: hidden;
+}
+
+.comment-code-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.comment-code-more {
+  font-family: var(--font);
+  opacity: 0.8;
 }
 
 .comment-body {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  margin: 0 10px;
+  -webkit-line-clamp: 4;
   overflow-wrap: anywhere;
   white-space: pre-line;
+}
+
+/* A global comment has no lines to name: its words start beside Delete. */
+.comment-item > .comment-body:first-child {
+  padding-right: 28px;
+}
+
+.comments-empty {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  margin: 56px 24px;
+  text-align: center;
+}
+
+.comments-empty .empty {
+  max-width: 260px;
+  margin: 0;
+}
+
+.comments-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin-bottom: 4px;
+  border-radius: 50%;
+  background: var(--hover);
+  color: var(--muted);
+}
+
+/* A panel's name, and Close, are for where it is a drawer or a touch screen's. */
+.side-title,
+.narrow-only {
+  display: none;
 }
 
 .tag {

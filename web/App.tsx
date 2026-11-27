@@ -960,7 +960,14 @@ export function App() {
         </div>
       </header>
 
-      <Sidebar onOpen={(path) => (state.showUnchanged() ? void browse(path) : openFile(path))} />
+      <Sidebar
+        onClose={() => setSidebar(() => false)}
+        onOpen={(path) => {
+          if (narrow()) setOwnFiles(false);
+          if (state.showUnchanged()) void browse(path);
+          else openFile(path);
+        }}
+      />
 
       <Splitter
         class="resizer"
