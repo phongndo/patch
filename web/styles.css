@@ -201,6 +201,10 @@ input {
   border-right: 1px solid var(--line);
 }
 
+.sidebar-right .bar [aria-controls="sidebar"] .icon {
+  transform: scaleX(-1);
+}
+
 .app.sidebar-right .resizer {
   left: auto;
   right: calc(var(--sidebar) - 3px);
@@ -423,11 +427,6 @@ input {
   overflow: hidden;
 }
 
-.sidebar {
-  display: flex;
-  flex-direction: column;
-}
-
 .side-head {
   display: flex;
   align-items: center;
@@ -439,6 +438,10 @@ input {
   }
 
   flex: none;
+}
+
+.comments-side .side-head {
+  justify-content: flex-end;
 }
 
 .icon-button.active,
@@ -1220,6 +1223,10 @@ a.media-frame:hover img {
     width: min(360px, 92vw);
     border-left: 1px solid var(--line);
     box-shadow: var(--shadow);
+  }
+  .app.sidebar-right .comments-side {
+    left: 0;
+    right: auto;
   }
   .app.no-comments .comments-side {
     display: none;
@@ -2930,8 +2937,27 @@ kbd {
 }
 
 @media (max-width: 480px) {
-  /* Comments take the phone's width: a sliver of diff beside them is too small to use. */
+  .bar .fold-all,
+  .bar .wide-only,
+  .bar .refresh-label {
+    display: none;
+  }
+  .bar .refresh {
+    justify-content: center;
+    width: var(--control);
+    padding: 0;
+  }
+  .bar .icon-button,
+  .bar .refresh {
+    flex: none;
+  }
+  .actions > .button.primary {
+    min-width: 5em;
+  }
+  .scope-trigger {
+    overflow: hidden;
+  }
   .comments-side {
-    width: 100vw !important;
+    width: 100vw;
   }
 }

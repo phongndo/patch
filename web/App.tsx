@@ -851,6 +851,8 @@ export function App() {
           <button
             class="icon-button"
             title={preferences.hint(sidebar() ? "Hide the sidebar" : "Show the sidebar", "sidebar")}
+            aria-expanded={sidebar() ? "true" : "false"}
+            aria-controls="sidebar"
             onClick={() => setSidebar((shown) => !shown)}
           >
             <Icon name="sidebarLeft" />
@@ -860,12 +862,13 @@ export function App() {
         <div class="end">
           <Show when={stale()}>
             <button
-              class="button quiet"
+              class="button quiet refresh"
+              aria-label="Refresh"
               title={preferences.hint("The repository changed", "refresh")}
               onClick={() => void refresh()}
             >
               <Icon name="refresh" />
-              Refresh
+              <span class="refresh-label">Refresh</span>
             </button>
           </Show>
           <Popover openOnHover delay={250} closeDelay={150}>
@@ -904,7 +907,7 @@ export function App() {
           </Popover>
           <div class="actions">
             <button
-              class="icon-button"
+              class="icon-button fold-all"
               title={preferences.hint(
                 allCollapsed() ? "Expand every file" : "Collapse every file",
                 "foldAll",
