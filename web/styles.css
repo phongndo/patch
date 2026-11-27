@@ -635,6 +635,11 @@ input {
   color: var(--muted);
 }
 
+/* Only the path gives way to a narrow header: its buttons keep their size and their place. */
+.file-head > :not(.file-path, .file-spacer) {
+  flex: none;
+}
+
 .file-head .icon-button:hover {
   color: var(--fg);
 }
@@ -697,6 +702,10 @@ input {
 }
 
 .file-action {
+  /* Its icon and its count side by side, not one over the other as an icon button's grid has it. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   gap: 3px;
   width: auto !important;
   min-width: 26px;

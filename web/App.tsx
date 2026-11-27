@@ -319,17 +319,7 @@ export function App() {
             </span>
           )}
         </Show>
-        <button
-          class={{ "icon-button": true, "file-action": true, counted: count() > 0 }}
-          title={preferences.hint("Comment on the file", "fileComment")}
-          aria-label="Comment on the file"
-          onClick={() => compose(wholeFile(props.name))}
-        >
-          <Icon name="comment" />
-          <Show when={count()}>
-            <span class="file-count">{count()}</span>
-          </Show>
-        </button>
+        {/* What only some files have goes first, so the rest line up from file to file. */}
         <Show when={diffFile() && previewToggles(diffFile()!)}>
           <button
             class="icon-button file-action"
@@ -343,6 +333,17 @@ export function App() {
             <Icon name={state.isPreviewed(props.name) ? "code" : "eye"} />
           </button>
         </Show>
+        <button
+          class={{ "icon-button": true, "file-action": true, counted: count() > 0 }}
+          title={preferences.hint("Comment on the file", "fileComment")}
+          aria-label="Comment on the file"
+          onClick={() => compose(wholeFile(props.name))}
+        >
+          <Icon name="comment" />
+          <Show when={count()}>
+            <span class="file-count">{count()}</span>
+          </Show>
+        </button>
         <Show when={diffFile()}>
           <button
             class={{ "icon-button": true, "file-action": true, done: viewed() }}

@@ -219,30 +219,6 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
    * `@@` line. It goes at the end of the row's last column, which split leaves empty; CodeView
    * draws rows afresh, so this runs after each render.
    */
-  function decorateGaps(container: HTMLElement) {
-    const file = files.get(container.querySelector(".file-path")?.textContent ?? "");
-    if (!file || !container.shadowRoot) return;
-    for (const cell of container.shadowRoot.querySelectorAll<HTMLElement>(
-      "[data-separator][data-expand-index]",
-    )) {
-      if (!cell.closest("[data-content]") || !cell.closest("[data-additions],[data-unified]")) continue;
-      // Without the brace that opens its body: "export function route91(request: Request)".
-      const context = file.hunks[Number(cell.getAttribute("data-expand-index"))]?.hunkContext
-        ?.trim()
-        .replace(/\s*\{$/, "");
-      let tag = cell.querySelector<HTMLElement>(":scope > [data-patch-context]");
-      if (!context) {
-        tag?.remove();
-        continue;
-      }
-      if (!tag) {
-        tag = document.createElement("span");
-        tag.setAttribute("data-patch-context", "");
-        cell.append(tag);
-      }
-      if (tag.textContent !== context) tag.textContent = context;
-    }
-  }
   const annotate = (name: string) => {
     const annotations = annotationsOf(name);
     signatures.set(name, annotations.map((annotation) => noteKey(annotation.metadata)).join("|"));
@@ -327,38 +303,45 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
     // A gap opens whole, in one click: never in steps.
     expansionLineCount: Number.MAX_SAFE_INTEGER,
     parseDiffOptions: { preferredDiffLib: "@pierre/patches" },
-    layout: { paddingTop: 0, paddingBottom: 160, gap: 0 },
-    // Comment rows sit on the editor's background; how strongly changes are
-    // tinted comes from the page (settings.ts, tint) through these variables.
+    // The last file ends at the foot of the window: nothing scrolls past it.
+    layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
+    // How strongly changes are tinted comes from the page (settings.ts, tint) through these
+    // variables.
     unsafeCSS: [
       findBar,
+      // Every file's numbers take the room of four digits, so code starts at one place in every
+      // file, and a gap's row lays out on the same column: its chevron in the numbers' column, its
+      // words where the code starts.
+      "[data-line-number-content]{display:inline-block;min-width:4ch;text-align:right}",
+      "[data-separator=line-info-basic] [data-separator-wrapper]{grid-template-columns:100% auto}",
+      "[data-separator=line-info-basic] [data-expand-button]{width:100%}",
       // Nothing pulls past its end and springs back, as on the page.
       "[data-code]{overscroll-behavior:none}",
-      "[data-line-annotation],[data-gutter-buffer=annotation]{--diffs-annotation-bg:var(--diffs-bg)}",
+      // What is the review's and not the file's (comments, folded lines) sits on a band of its
+      // own, lifted from the code as the file's header is.
+      "[data-line-annotation],[data-gutter-buffer=annotation]{--diffs-annotation-bg:color-mix(in srgb,var(--diffs-fg) 4%,var(--diffs-bg))}",
       // Files run edge to edge, so each one's header is a band, lifted from the chrome in case a
       // theme's chrome and editor match, with a rule between it and the file above.
       "[data-diffs-header]{display:block;height:44px;background:color-mix(in srgb,var(--fg) 4%,var(--panel))!important;box-shadow:inset 0 -1px var(--line),inset 0 1px var(--line)}",
-      // What is folded away is a quiet line of text, not a bar.
-      "[data-separator],[data-separator] *{background:transparent!important;border-color:transparent!important}",
+      "[data-separator]{background:color-mix(in srgb,var(--diffs-fg) 4%,var(--diffs-bg))!important}",
+      "[data-separator] *{background:transparent!important;border-color:transparent!important}",
       // A gap's row opens whole from anywhere on it: its words reach across the row (CodeView takes
       // a click there as theirs, and gapRow, below, sends it clicks on the rest), and say so on hover.
-      "[data-separator=line-info-basic] [data-unmodified-lines]::before{content:'';position:absolute;inset:0 -100vw 0 100%;cursor:pointer}",
+      "[data-separator=line-info-basic] [data-unmodified-lines]::before{content:'';position:absolute;inset:0 calc(100% - 100cqw) 0 100%;cursor:pointer}",
+      // (It ends at the edge of the file's code, measured as a container: past it, the file would
+      // scroll sideways, and where scrollbars take room, show an empty track under it.)
+      "[data-code]{container-type:inline-size}",
       "[data-separator=line-info-basic][data-patch-hover] [data-unmodified-lines]::after{content:' · show all';color:var(--diffs-fg-number)}",
       "[data-separator=line-info-basic] [data-expand-button]{cursor:pointer}",
       "[data-separator-content]:hover{text-decoration:none}",
-      // Where a gap leads: the function the next hunk is in, as Git names it (decorateGaps).
-      "[data-patch-context]{position:absolute;top:0;right:16px;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:32px;font-family:var(--diffs-font-family,var(--mono));font-size:0.92em;color:var(--diffs-fg-number);opacity:0.8;pointer-events:none}",
-      "[data-separator][data-patch-hover] [data-patch-context]{opacity:1}",
       // Lit as one block, gutters and chevrons too, while pointed at (gapRow, below).
-      "[data-separator][data-patch-hover]{background:color-mix(in srgb,var(--diffs-fg) 6%,var(--diffs-bg))!important}",
+      "[data-separator][data-patch-hover]{background:color-mix(in srgb,var(--diffs-fg) 8%,var(--diffs-bg))!important}",
       "[data-separator][data-patch-hover] [data-separator-content]{color:var(--diffs-fg);text-decoration:none}",
       // A change is an edge and a tint that runs through its line number; nothing is hatched.
       "[data-column-number],[data-gutter-buffer]{border-right-color:transparent!important}",
       "[data-indicators=bars] [data-column-number][data-line-type=change-deletion]::before{background:var(--diffs-deletion-base)}",
-      // Where a split side has fewer lines, it is padded with empty rows: empty in the gutter too,
-      // not a grey bar beside them.
-      "[data-content-buffer]{background-image:none}",
-      "[data-gutter-buffer=buffer]{--diffs-line-bg:var(--diffs-bg)}",
+      // Where a split side has fewer lines, its empty rows are hatched (pierre's own look), so
+      // what is missing reads as missing, not as blank lines.
       // A file with no lines on screen (an image, or a file shown as its preview) has nothing to
       // number: its preview runs edge to edge, as a line of code does.
       "[data-code]:not(:has([data-line]))>[data-gutter]{display:none}",
@@ -368,6 +351,9 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
       // Code scrolls sideways only when a line is wider than it: always-visible scrollbars
       // would otherwise draw an empty track under every file. CodeView's own override still wins.
       "[data-code]{overflow-x:var(--diffs-overflow-override,auto)}",
+      // Where scrollbars take room, a file that scrolls sideways shows a slim handle, not a dark
+      // track along its foot.
+      "[data-code]{scrollbar-width:thin;scrollbar-color:color-mix(in srgb,var(--diffs-fg) 25%,transparent) transparent}",
       // Split, a preview's tint fills its whole side of the row (MediaPreview.tsx), so a short
       // side meets the other's end as a short side of code does.
       "[data-diff-type=split]:not(:has([data-line])) [data-line-annotation]{position:relative;--patch-pane-anchor:static}",
@@ -390,9 +376,6 @@ export function createDiffView(root: HTMLElement, hooks: DiffViewHooks) {
         oldFile: { name: fileDiff.prevName ?? fileDiff.name, contents: oldText },
         newFile: { name: fileDiff.name, contents: newText },
       };
-    },
-    onPostRender(container: HTMLElement) {
-      decorateGaps(container);
     },
     renderAnnotation(annotation: { metadata: Note }) {
       const note = annotation.metadata;
